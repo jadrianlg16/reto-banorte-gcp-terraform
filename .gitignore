@@ -1,0 +1,27 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Archivos que generan los laboratorios al hacer apply
+labs/**/*.txt
+
+# Documentación local (plan y documento de Banorte): no se versiona
+/docs/
+/labs/README.md
+
+# Variables con datos reales (los ejemplos sí se versionan como *.tfvars.example)
+*.tfvars
+!*.tfvars.example
+
+# Office / sistema
+~$*
+.DS_Store
+Thumbs.db
