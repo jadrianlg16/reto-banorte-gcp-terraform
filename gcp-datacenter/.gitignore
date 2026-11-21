@@ -1,0 +1,3 @@
+# scripts/check.sh corre terraform init en cada módulo y ejemplo. Los módulos no versionan
+# .terraform.lock.hcl; las raíces de stages/ sí lo versionan (CONTRATO §4.1).
+modules/**/.terraform.lock.hcl

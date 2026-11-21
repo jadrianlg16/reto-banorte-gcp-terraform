@@ -1,0 +1,335 @@
+# Revisión de pull requests (CONTRATO §9.3).
+#
+# Sin GCP (siempre): fmt, validate, tflint, checkov y terraform test con scripts/check.sh;
+# conftest verify sobre policies/; terraform-docs al día.
+#
+# Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada,
+# Conftest sobre el plan y un comentario en el PR con el resumen y el costo (Infracost).
+# Autenticación por Workload Identity Federation; sin llaves. Variables de repositorio:
+#   GCP_ENABLED                     "true" para activar los trabajos que tocan GCP.
+#   GCP_WORKLOAD_IDENTITY_PROVIDER  nombre completo del proveedor (salida
+#                                   workload_identity_provider de 0-bootstrap).
+#   GCP_STAGE_SERVICE_ACCOUNTS      JSON etapa -> correo (salida stage_service_accounts de
+#                                   0-bootstrap), por ejemplo {"1-org": "...", ...}.
+#   GCP_STATE_BUCKET                bucket de estado (salida state_bucket de 0-bootstrap).
+#   GCP_TFVARS_JSON                 JSON con los valores de las variables para el plan:
+#                                   {"common": {...}, "stages/1-org": {...}, ...}. Para cada
+#                                   raíz se combinan "common" y la llave de la raíz.
+# Secreto opcional: INFRACOST_API_KEY (sin él se omite el costo).
+
+name: pr
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.16.5"
+  TFLINT_VERSION: "v0.65.0"
+  CHECKOV_VERSION: "3.4.6"
+  CONFTEST_VERSION: "0.71.1"
+  TERRAFORM_DOCS_VERSION: "v0.25.1"
+  TF_IN_AUTOMATION: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: gcp-datacenter
+
+jobs:
+  static:
+    name: estático (terraform ${{ matrix.terraform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.9.8: versión mínima del contrato (§4.1). 1.16.5: la que usa el equipo.
+        terraform: ["1.9.8", "1.16.5"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Instalar checkov
+        run: python -m pip install --disable-pip-version-check "checkov==${CHECKOV_VERSION}"
+
+      - name: Caché de proveedores y plugins de tflint
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ~/.tflint.d/plugins
+          key: tf-${{ runner.os }}-${{ matrix.terraform }}-${{ hashFiles('gcp-datacenter/**/versions.tf', 'gcp-datacenter/.tflint.hcl') }}
+          restore-keys: |
+            tf-${{ runner.os }}-${{ matrix.terraform }}-
+
+      - name: scripts/check.sh
+        env:
+          # tflint --init descarga los plugins de GitHub; con el token no hay límite anónimo.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash scripts/check.sh
+
+  conftest:
+    name: conftest verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar conftest
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          file="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep "  ${file}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${file}" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          conftest --version
+
+      - name: conftest verify
+        run: |
+          if [ -z "$(find policies -name '*.rego' -type f 2>/dev/null | head -n 1)" ]; then
+            echo "policies/ todavía no tiene archivos .rego: no hay pruebas que verificar."
+            exit 0
+          fi
+          conftest verify --policy policies --no-color
+
+  docs:
+    name: terraform-docs al día
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar terraform-docs
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/terraform-docs/terraform-docs/releases/download/${TERRAFORM_DOCS_VERSION}"
+          file="terraform-docs-${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/terraform-docs-${TERRAFORM_DOCS_VERSION}.sha256sum"
+          grep "  ${file}\$" "terraform-docs-${TERRAFORM_DOCS_VERSION}.sha256sum" | sha256sum -c -
+          tar -xzf "${file}" terraform-docs
+          sudo install -m 0755 terraform-docs /usr/local/bin/terraform-docs
+          terraform-docs --version
+
+      - name: scripts/docs.sh --check
+        run: bash scripts/docs.sh --check
+
+  # ---------------------------------------------------------------------------------------
+  # Trabajos con GCP: se omiten mientras GCP_ENABLED no sea "true".
+
+  affected:
+    name: raíces afectadas
+    if: vars.GCP_ENABLED == 'true'
+    needs: [static, conftest]
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.roots.outputs.roots }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: roots
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bash scripts/affected-roots.sh "${BASE_SHA}" "${HEAD_SHA}" | tee -a "${GITHUB_OUTPUT}"
+
+  plan:
+    name: plan ${{ matrix.root }}
+    if: vars.GCP_ENABLED == 'true' && needs.affected.outputs.roots != '[]'
+    needs: affected
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.affected.outputs.roots) }}
+    env:
+      ROOT: ${{ matrix.root }}
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Autenticar con Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[matrix.stage] }}
+
+      - name: Instalar conftest
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          file="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep "  ${file}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${file}" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+
+      - name: Variables del plan
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: |
+          cd "${ROOT}"
+          if [ -f terraform.tfvars.example ]; then
+            cp terraform.tfvars.example terraform.tfvars
+          fi
+          # Los *.auto.tfvars.json se cargan después de terraform.tfvars y lo sobrescriben.
+          printf '%s' "${TFVARS_JSON:-"{}"}" |
+            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          cd "${ROOT}"
+          terraform init -input=false -no-color -backend-config="bucket=${STATE_BUCKET}"
+
+      - name: terraform plan
+        run: |
+          cd "${ROOT}"
+          terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
+          terraform show -json tfplan > plan.json
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Conftest sobre el plan
+        id: conftest
+        run: |
+          if [ -z "$(find policies -name '*.rego' -type f 2>/dev/null | head -n 1)" ]; then
+            echo "policies/ no tiene archivos .rego todavía." | tee "${ROOT}/conftest.txt"
+            exit 0
+          fi
+          set -o pipefail
+          conftest test "${ROOT}/plan.json" --policy policies --no-color 2>&1 | tee "${ROOT}/conftest.txt"
+
+      - name: Instalar Infracost
+        if: env.INFRACOST_API_KEY != ''
+        uses: infracost/actions/setup@v5
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Costo con Infracost
+        if: env.INFRACOST_API_KEY != ''
+        run: |
+          infracost breakdown --path "${ROOT}/plan.json" --format table --no-color \
+            --out-file "${ROOT}/infracost.txt"
+
+      - name: Resumen de la raíz
+        if: always()
+        env:
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+        run: |
+          out="${RUNNER_TEMP}/summary"
+          mkdir -p "${out}"
+          f="${out}/summary.md"
+          {
+            echo "### \`${ROOT}\`"
+            echo
+            if [ -f "${ROOT}/plan.txt" ]; then
+              line="$(grep -E '^(Plan:|No changes\.)' "${ROOT}/plan.txt" | head -n 1 || true)"
+              echo "- Plan: ${line:-ver registro del trabajo}"
+            else
+              echo "- Plan: falló (ver registro del trabajo)"
+            fi
+            echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
+            if [ -f "${ROOT}/conftest.txt" ]; then
+              echo
+              echo "<details><summary>Conftest</summary>"
+              echo
+              echo '```'
+              cat "${ROOT}/conftest.txt"
+              echo '```'
+              echo "</details>"
+            fi
+            if [ -f "${ROOT}/infracost.txt" ]; then
+              echo
+              echo "<details><summary>Costo (Infracost)</summary>"
+              echo
+              echo '```'
+              cat "${ROOT}/infracost.txt"
+              echo '```'
+              echo "</details>"
+            else
+              echo "- Costo: sin INFRACOST_API_KEY o no se calculó"
+            fi
+            echo
+          } > "${f}"
+          cat "${f}" >> "${GITHUB_STEP_SUMMARY}"
+          # Nombre de artefacto sin "/".
+          echo "ARTIFACT_NAME=plan-$(printf '%s' "${ROOT}" | tr '/' '-')" >> "${GITHUB_ENV}"
+
+      - name: Subir resumen
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/summary/summary.md
+          retention-days: 7
+
+  comment:
+    name: comentario del plan
+    if: always() && vars.GCP_ENABLED == 'true' && needs.affected.result == 'success' && needs.affected.outputs.roots != '[]'
+    needs: [affected, plan]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: plan-*
+          path: summaries
+
+      - name: Publicar o actualizar el comentario
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const marker = '<!-- gcp-datacenter-plan -->';
+            const dirs = fs.existsSync('summaries') ? fs.readdirSync('summaries').sort() : [];
+            let body = `${marker}\n## Plan por raíz afectada\n\n`;
+            for (const d of dirs) {
+              const f = path.join('summaries', d, 'summary.md');
+              if (fs.existsSync(f)) body += fs.readFileSync(f, 'utf8') + '\n';
+            }
+            if (dirs.length === 0) body += 'No se generaron resúmenes (ver los registros del flujo).\n';
+            if (body.length > 65000) body = body.slice(0, 65000) + '\n\n(recortado; ver el resumen del flujo)\n';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const previous = comments.find(c => c.body && c.body.startsWith(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
