@@ -48,13 +48,42 @@ output "internal_lb_ip_addresses" {
 }
 
 output "internal_lb_dns_authorization_records" {
-  description = "Registros DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa."
-  value       = try(module.internal_lb[local.active_key].dns_authorization_records, {})
+  description = "Dominio → registro DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa."
+  value = {
+    for k, a in google_certificate_manager_dns_authorization.internal : a.domain => {
+      name = a.dns_resource_record[0].name
+      type = a.dns_resource_record[0].type
+      data = a.dns_resource_record[0].data
+    } if local.internal_cert_authorizations[k].region_key == local.active_key
+  }
 }
 
 output "internal_lb_dns_authorization_records_by_region" {
-  description = "Mapa región → registros DNS de autorización del certificado de cada balanceador interno (con dr_active incluye dr_region)."
-  value       = { for k, lb in module.internal_lb : local.compute_regions[k] => lb.dns_authorization_records }
+  description = "Mapa región → dominio → registro DNS de autorización del certificado interno de esa región. Con enable_dr incluye dr_region aunque dr_active sea false: esos registros se crean antes de un incidente."
+  value = {
+    for region_key, region in local.internal_cert_regions : region => {
+      for k, a in google_certificate_manager_dns_authorization.internal : a.domain => {
+        name = a.dns_resource_record[0].name
+        type = a.dns_resource_record[0].type
+        data = a.dns_resource_record[0].data
+      } if local.internal_cert_authorizations[k].region_key == region_key
+    }
+  }
+}
+
+output "internal_lb_certificate_ids" {
+  description = "Mapa región → ID del certificado de Certificate Manager del balanceador interno (la de DR existe con enable_dr, antes de dr_active). Vacío sin enable_internal_lb."
+  value       = { for k, c in google_certificate_manager_certificate.internal : local.regions[k] => c.id }
+}
+
+output "internal_lb_dns_records" {
+  description = "Registros A que deben existir en el DNS interno (fuera de este repositorio) para internal_domain_names: nombre → type y rrdatas con la IP del balanceador interno de la región activa. Cambia con dr_active; moverlos es el paso manual de DNS del runbook 04. Vacío sin enable_internal_lb."
+  value = {
+    for d in var.internal_domain_names : d => {
+      type    = "A"
+      rrdatas = [module.internal_lb[local.active_key].ip_address]
+    } if contains(keys(module.internal_lb), local.active_key)
+  }
 }
 
 output "gke_workload_identity_member" {

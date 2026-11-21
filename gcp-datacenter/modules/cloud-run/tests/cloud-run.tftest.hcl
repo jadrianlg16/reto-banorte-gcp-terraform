@@ -103,6 +103,32 @@ run "exige_configuracion_de_la_especificacion" {
   }
 }
 
+run "prod_retiro_deliberado_quita_la_proteccion" {
+  command = plan
+
+  variables {
+    teardown = true
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_service.this.deletion_protection == false
+    error_message = "Con teardown la protección contra borrado se quita también en prod (vuelta de DR, runbook 04)."
+  }
+}
+
+run "prod_sin_retiro_no_puede_apagar_la_proteccion" {
+  command = plan
+
+  variables {
+    deletion_protection = false
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_service.this.deletion_protection == true
+    error_message = "En prod, sin teardown, deletion_protection debe seguir en true."
+  }
+}
+
 run "secretos_por_referencia" {
   command = plan
 

@@ -11,8 +11,9 @@ locals {
   subnet_region = regex("regions/([^/]+)/subnetworks/", var.subnet)[0]
   kms_location  = regex("locations/([^/]+)/keyRings/", var.kms_key)[0]
 
-  # En prod la protección contra borrado es fija.
-  deletion_protection = var.environment == "prod" ? true : var.deletion_protection
+  # En prod la protección contra borrado es fija, salvo el retiro deliberado (teardown) de una
+  # instancia que se va a destruir, como el clúster de DR en la vuelta a la región primaria.
+  deletion_protection = var.teardown ? false : (var.environment == "prod" ? true : var.deletion_protection)
 
   workload_pool = "${var.project_id}.svc.id.goog"
 

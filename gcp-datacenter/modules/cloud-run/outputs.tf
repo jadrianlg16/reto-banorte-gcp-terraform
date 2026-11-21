@@ -37,3 +37,8 @@ output "location" {
   description = "Región del servicio."
   value       = google_cloud_run_v2_service.this.location
 }
+
+output "deletion_protection" {
+  description = "Protección contra borrado efectiva del servicio (true en prod salvo teardown)."
+  value       = google_cloud_run_v2_service.this.deletion_protection
+}

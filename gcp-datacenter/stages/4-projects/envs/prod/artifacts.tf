@@ -24,6 +24,13 @@ locals {
     }
   ]...)
 
+  # "<app>/<miembro>" → quién publica imágenes en el repositorio de la aplicación.
+  artifact_writers = merge([
+    for app, members in var.artifact_registry_publishers : {
+      for m in members : "${app}/${m}" => { app = app, member = m }
+    }
+  ]...)
+
   # Sin atestadores: se niega todo lo que no esté en la lista de permitidos. Con atestadores:
   # además de la lista, cualquier imagen con la atestación de todos ellos.
   binauthz_evaluation_mode = length(var.binary_authorization_attestors) > 0 ? "REQUIRE_ATTESTATION" : "ALWAYS_DENY"
@@ -58,6 +65,18 @@ resource "google_artifact_registry_repository_iam_member" "reader" {
   location   = google_artifact_registry_repository.this[each.value.app].location
   repository = google_artifact_registry_repository.this[each.value.app].repository_id
   role       = "roles/artifactregistry.reader"
+  member     = each.value.member
+}
+
+# Publicación: writer solo sobre el repositorio de su aplicación (no sobre el proyecto). Es la
+# única vía para que una imagen llegue al registro que Binary Authorization admite.
+resource "google_artifact_registry_repository_iam_member" "writer" {
+  for_each = local.artifact_writers
+
+  project    = google_artifact_registry_repository.this[each.value.app].project
+  location   = google_artifact_registry_repository.this[each.value.app].location
+  repository = google_artifact_registry_repository.this[each.value.app].repository_id
+  role       = "roles/artifactregistry.writer"
   member     = each.value.member
 }
 

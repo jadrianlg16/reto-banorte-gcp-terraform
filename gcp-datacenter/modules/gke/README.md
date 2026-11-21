@@ -73,7 +73,7 @@ No modules.
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crea el clúster. | `string` | n/a | yes |
 | <a name="input_services_range"></a> [services\_range](#input\_services\_range) | Nombre del rango secundario de la subred para los servicios (VPC nativa). | `string` | n/a | yes |
 | <a name="input_subnet"></a> [subnet](#input\_subnet) | Self link (o ruta projects/<host>/regions/<región>/subnetworks/<subred>) de la subred compartida donde viven los nodos. | `string` | n/a | yes |
-| <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor. | `bool` | `false` | no |
+| <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor (salvo teardown). | `bool` | `false` | no |
 | <a name="input_enable_backup_agent"></a> [enable\_backup\_agent](#input\_enable\_backup\_agent) | Habilita el complemento de Backup for GKE (lo necesita el plan de respaldo del módulo backup-dr). | `bool` | `true` | no |
 | <a name="input_enable_private_endpoint"></a> [enable\_private\_endpoint](#input\_enable\_private\_endpoint) | Si es true, el plano de control solo tiene IP privada (sin endpoint público). Si es false (solo dev y qa), el endpoint público queda limitado a master\_authorized\_networks, que no puede estar vacío. | `bool` | `true` | no |
 | <a name="input_maintenance_start_time"></a> [maintenance\_start\_time](#input\_maintenance\_start\_time) | Hora de inicio (UTC, HH:MM) de la ventana diaria de mantenimiento. | `string` | `"08:00"` | no |
@@ -82,6 +82,7 @@ No modules.
 | <a name="input_node_resource_manager_tags"></a> [node\_resource\_manager\_tags](#input\_node\_resource\_manager\_tags) | Etiquetas seguras de los nodos de todos los pools (tagKeys/<id> → tagValues/<id>), por ejemplo la de lb\_backend de la etapa 3. Vacío: sin etiquetas seguras. | `map(string)` | `{}` | no |
 | <a name="input_region_codes"></a> [region\_codes](#input\_region\_codes) | Mapa región → código corto que se agrega a los nombres (§4.2 del contrato). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_release_channel"></a> [release\_channel](#input\_release\_channel) | Canal de versiones de GKE: RAPID, REGULAR o STABLE. En prod no se admite RAPID. | `string` | `"REGULAR"` | no |
+| <a name="input_teardown"></a> [teardown](#input\_teardown) | Retiro deliberado del clúster: deletion\_protection = false también en prod, para que un apply posterior lo pueda destruir. Solo para una instancia que se va a quitar (el clúster de DR en la vuelta a la región primaria, runbook 04); nunca en el clúster que atiende el tráfico normal. | `bool` | `false` | no |
 
 ## Outputs
 
@@ -89,6 +90,7 @@ No modules.
 | ---- | ----------- |
 | <a name="output_cluster_id"></a> [cluster\_id](#output\_cluster\_id) | ID del clúster (projects/<p>/locations/<l>/clusters/<nombre>); lo usa backup-dr como gke\_cluster\_id. |
 | <a name="output_cluster_name"></a> [cluster\_name](#output\_cluster\_name) | Nombre del clúster. |
+| <a name="output_deletion_protection"></a> [deletion\_protection](#output\_deletion\_protection) | Protección contra borrado efectiva del clúster (true en prod salvo teardown). |
 | <a name="output_endpoint"></a> [endpoint](#output\_endpoint) | IP del plano de control (privada si enable\_private\_endpoint = true). |
 | <a name="output_kms_key"></a> [kms\_key](#output\_kms\_key) | Llave KMS del cifrado de secretos de Kubernetes en la capa de aplicación. |
 | <a name="output_location"></a> [location](#output\_location) | Ubicación del clúster (región si es regional). |

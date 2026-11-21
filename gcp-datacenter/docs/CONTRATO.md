@@ -526,8 +526,12 @@ la Shared VPC** (VPC-SC exige que el host esté en el mismo perímetro que sus p
 servicio), con el recurso normal o el de dry-run según `vpc_sc_enforced` de la etapa 2; por
 aplicación, un repositorio Docker de Artifact Registry
 `<prefix>-<env>-app-<app>-images-<ubicación>` en `artifact_registry_location` (`us` por
-defecto) con CMEK y lectura para `gke_nodes`, `mig` y el agente de Cloud Run, y una política de
-Binary Authorization del proyecto que solo admite ese repositorio (ADR 0024); los permisos de la
+defecto) con CMEK, lectura para `gke_nodes`, `mig` y el agente de Cloud Run y escritura para
+los publicadores de `artifact_registry_publishers` (solo `serviceAccount:` y `group:`), y una
+política de Binary Authorization del proyecto que solo admite ese repositorio (ADR 0024); en
+prod, una regla de entrada del perímetro por aplicación con publicadores, limitada a
+`artifactregistry.googleapis.com` en su proyecto de servicio (normal o de dry-run según
+`vpc_sc_enforced`; requiere que el perímetro de la etapa 2 ignore sus `ingress_policies`); los permisos de la
 cuenta de la etapa 5 sobre cada proyecto de servicio (`workloads_project_roles` y
 `projectIamAdmin` condicionado a `roles/cloudsql.client` y `roles/cloudsql.instanceUser`),
 `serviceAccountAdmin` solo sobre la cuenta `workload` (enlace de Workload Identity) y
@@ -536,8 +540,9 @@ cuenta de la etapa 5 sobre cada proyecto de servicio (`workloads_project_roles` 
 Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `environment`,
 `primary_region`, `dr_region`, `applications` (map nombre → `{ apis, secrets }`),
 `workloads_service_account`, `artifact_registry_location`,
-`binary_authorization_allowlist_patterns`, `binary_authorization_attestors`, `deletion_policy`,
-`labels`, `state_bucket`.
+`binary_authorization_allowlist_patterns`, `binary_authorization_attestors`,
+`artifact_registry_publishers` (map aplicación → miembros), `deletion_policy`, `labels`,
+`state_bucket`.
 
 | Salida | Tipo | Contenido |
 |---|---|---|
@@ -557,13 +562,19 @@ réplica de Cloud SQL en la región de DR, bucket de doble región con turbo rep
 Backup for GKE. Con `dr_active = true` (conmutación): cómputo en la región de DR, backends del
 balanceador externo hacia ella (GKE sale del externo mientras `gke_lb_negs.dr` esté vacío) y un
 segundo balanceador interno en DR (`module.internal_lb` es uno por región, con
-`allow_global_access`; ADR 0022). Con GKE, la cuenta de Kubernetes
+`allow_global_access`; ADR 0022). El certificado del balanceador interno y sus autorizaciones
+DNS los crea la raíz por región: con `enable_dr`, también el de la región de DR aunque
+`dr_active` sea false, para que esté emitido antes de un incidente. El registro DNS interno no
+lo administra ninguna etapa: la salida `internal_lb_dns_records` da los registros A de la región
+activa. `dr_teardown = true` (exige `enable_dr`) quita la protección contra borrado solo del
+clúster de GKE y del servicio de Cloud Run de DR, para que la vuelta (`dr_active = false`) los
+pueda destruir en prod. Con GKE, la cuenta de Kubernetes
 `<gke_workload_namespace>/<gke_workload_ksa_name>` se enlaza a la cuenta `workload` por Workload
 Identity. Las subredes y los rangos reservados salen del estado de la etapa 3 (`subnets`,
 `reserved_cidrs`); la raíz no tiene `subnet_cidrs`.
 
 Entradas: `prefix`, `environment`, `primary_region`, `dr_region`, `enable_dr`, `dr_active`,
-`application`, los interruptores, `gke_node_pools`, `gke_workload_namespace`,
+`dr_teardown`, `application`, los interruptores, `gke_node_pools`, `gke_workload_namespace`,
 `gke_workload_ksa_name`, `gke_lb_negs`, `cloud_run_image`, `sql_tier`, `sql_database_version`,
 `domain_names` (certificado), `internal_domain_names`, `notification_emails`, `labels`,
 `state_bucket` (más los ajustes de cada carga, con valor por defecto; lista completa en el README
@@ -577,11 +588,13 @@ de la raíz).
 | `bucket_names` | map(string) | |
 | `internal_lb_ip_address` | string | IP del balanceador interno de la región activa |
 | `internal_lb_ip_addresses` | map(string) | región → IP de cada balanceador interno |
-| `internal_lb_dns_authorization_records_by_region` | map | región → registros DNS de autorización del certificado interno |
+| `internal_lb_dns_authorization_records_by_region` | map | región → registros DNS de autorización del certificado interno (con `enable_dr`, las dos regiones) |
+| `internal_lb_dns_records` | map | dominio de `internal_domain_names` → registro A (`type`, `rrdatas`) con la IP del balanceador interno de la región activa |
 | `gke_workload_identity_member` | string | miembro de Workload Identity enlazado a la cuenta `workload` |
 
 Salidas adicionales: `sql_replica_connection_name`, `cloud_run_service_names`,
-`mig_instance_groups`, `internal_lb_dns_authorization_records`, `redis_host`,
+`mig_instance_groups`, `internal_lb_dns_authorization_records`, `internal_lb_certificate_ids`,
+`redis_host`,
 `filestore_ip_address`, `backup_vault_id`, `backup_plan_ids`, `active_region`.
 
 ---
@@ -607,8 +620,8 @@ que se pueda apagar en prod.
 | `dns` | Zonas privadas, de reenvío y de peering; política de servidor entrante | Zonas privadas por entorno; reenvío condicional a on-premises | `project_id`, `zones` (map con `type`: `private`, `forwarding`, `peering`), `networks` | `zone_names`, `inbound_forwarder_ips`, `zones`, `records` |
 | `hybrid-connectivity` | HA VPN, túneles, sesiones BGP; opcional Interconnect | 2 túneles y BGP; Interconnect opcional | `project_id`, `network`, `router`, `peer` (gateway externo o de otra VPC), `advertised_ranges`, `bgp_sessions`, `shared_secret_overrides` (secreto por túnel, para rotar de a uno) | `gateway_self_link`, `tunnel_names`, `bgp_peers` |
 | `compute-mig` | Plantilla, MIG regional, autoescalador, verificación de salud | Shielded VM; imagen por variable (endurecida); autoescalado y autocuración; sin IP pública (`stack_type = "IPV4_ONLY"`) | `project_id`, `subnet`, `image`, `machine_type`, `min_replicas`, `max_replicas`, `service_account`, `kms_key` | `instance_group`, `health_check_id`, `subnetwork`, `kms_key` |
-| `gke` | Clúster y pools de nodos | Nodos privados; Workload Identity; Binary Authorization; regional si `environment = "prod"` (validación) | `project_id`, `network`, `subnet`, `pods_range`, `services_range`, `master_cidr`, `gke_node_pools`, `node_service_account`, `kms_key` | `cluster_name`, `cluster_id`, `workload_pool`, `subnetwork`, `kms_key`, `master_cidr` |
-| `cloud-run` | Servicio v2 con salida directa a la VPC | Solo tráfico interno y del balanceador; cuenta de servicio propia | `project_id`, `region`, `image`, `subnet`, `service_account`, `kms_key` | `service_name`, `service_uri`, `subnetwork`, `kms_key` |
+| `gke` | Clúster y pools de nodos | Nodos privados; Workload Identity; Binary Authorization; regional si `environment = "prod"` (validación); protección contra borrado fija en prod salvo `teardown` | `project_id`, `network`, `subnet`, `pods_range`, `services_range`, `master_cidr`, `gke_node_pools`, `node_service_account`, `kms_key`, `teardown` | `cluster_name`, `cluster_id`, `workload_pool`, `subnetwork`, `kms_key`, `master_cidr`, `deletion_protection` |
+| `cloud-run` | Servicio v2 con salida directa a la VPC | Solo tráfico interno y del balanceador; cuenta de servicio propia; protección contra borrado fija en prod salvo `teardown` | `project_id`, `region`, `image`, `subnet`, `service_account`, `kms_key`, `teardown` | `service_name`, `service_uri`, `subnetwork`, `kms_key`, `deletion_protection` |
 | `storage` | Bucket | CMEK; versionado; reglas de ciclo de vida; acceso uniforme; sin acceso público | `project_id`, `location`, `kms_key`, `lifecycle_rules`, `dual_region` (objeto opcional con turbo replication) | `bucket_name` |
 | `filestore` | Instancia | CMEK; red por PSA | `project_id`, `location`, `tier`, `capacity_gb`, `network`, `kms_key` | `instance_name`, `ip_address` |
 | `cloud-sql` | Instancia, bases, usuarios IAM, réplica | IP privada únicamente; HA regional si prod (validación); PITR; réplica en DR si `enable_dr`; SSL obligatorio; CMEK; autenticación IAM | `project_id`, `region`, `dr_region`, `enable_dr`, `sql_tier`, `database_version`, `network`, `kms_key`, `dr_kms_key`, `iam_users`, `backup_plan_managed` (Backup and DR es dueño del horario y la retención) | `instance_name`, `connection_name`, `private_ip`, `replica_name` |
@@ -629,7 +642,8 @@ apagado de dev fuera de horario (mitigación de costo opcional, no construida).
 El repositorio de Artifact Registry y la política de Binary Authorization no tienen módulo: los
 crea la raíz de la etapa 4 (`artifacts.tf`), un recurso de cada uno por aplicación (ADR 0024).
 El balanceador interno (`load-balancer` con `type = "internal"`) pone `allow_global_access` en
-sus reglas de reenvío.
+sus reglas de reenvío. La etapa 5 le pasa su certificado por `certificate_manager_certificates`
+(lo crea la raíz por región, ver §7.6); el módulo solo lo crea si no recibe ninguno.
 
 Si un recurso no existe en el proveedor 6.x con el nombre que esperas, no lo inventes:
 consulta el registro, y si la función no existe en 6.x, repórtalo.
@@ -652,11 +666,11 @@ Se evalúan sobre el plan en JSON (`terraform show -json`). Mínimas:
 7. Asignación de IAM a `user:`: rechazada.
 
 Cada regla tiene pruebas en Rego (`conftest verify`) y al menos dos planes de ejemplo en
-`policies/fixtures/` (uno que pasa y uno que viola). Hay 25 planes; 11 son recortes de un
+`policies/fixtures/` (uno que pasa y uno que viola). Hay 27 planes; 13 son recortes de un
 `terraform show -json` real de ejemplos sin GCP (nombre con `_real_`; por ejemplo, la regla de IP
 pública sobre un MIG de doble pila y sobre nodos de GKE públicos). Comprobado el 21 nov 2026
 desde `gcp-datacenter/` con `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh`: "83 tests,
-83 passed" y "RESULTADO: 25 planes con el resultado esperado". Así el criterio "el pipeline
+83 passed" y "RESULTADO: 27 planes con el resultado esperado". Así el criterio "el pipeline
 bloquea un PR que viola una política" se demuestra sin GCP en las pruebas; que bloquee un PR de
 verdad depende de configurar `plan-gate` y las comprobaciones de §9.3 como obligatorias en
 GitHub.

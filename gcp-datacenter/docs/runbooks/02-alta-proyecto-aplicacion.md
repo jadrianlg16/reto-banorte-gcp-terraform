@@ -80,6 +80,10 @@ Rutas relativas a `gcp-datacenter/`.
        secrets = ["<nombre-secreto>"]            # deben existir en secret_ids[<env>] de la etapa 2
      }
    }
+   # Quién publica las imágenes de <app> (paso 3): cuenta o grupo del pipeline de la aplicación.
+   artifact_registry_publishers = {
+     <app> = ["serviceAccount:<cuenta-del-pipeline>@<proyecto>.iam.gserviceaccount.com"]
+   }
    ```
 
    ```bash
@@ -93,12 +97,16 @@ Rutas relativas a `gcp-datacenter/`.
    los agentes de servicio (incluido el de Artifact Registry), los permisos de subred, de llaves
    KMS, de secretos y de etiquetas seguras; el repositorio Docker
    `<prefix>-<env>-app-<app>-images-us` (`google_artifact_registry_repository.this["<app>"]`) con
-   lectura para `gke-nodes`, `mig` y el agente de Cloud Run, y la política de Binary
+   lectura para `gke-nodes`, `mig` y el agente de Cloud Run y escritura
+   (`google_artifact_registry_repository_iam_member.writer["<app>/<miembro>"]`) para cada
+   publicador, y la política de Binary
    Authorization del proyecto (`google_binary_authorization_policy.this["<app>"]`); los permisos
    de la cuenta de la etapa 5 sobre el proyecto (`workloads_project_roles`, `projectIamAdmin`
    condicionado a los dos roles de Cloud SQL y `serviceAccountAdmin` sobre la cuenta `workload`)
    y `compute.networkViewer` en el host; y, en prod, una alta en el perímetro de VPC-SC
-   (`service/<app>`; el host ya estaba dado de alta). No debe cambiar nada de las aplicaciones
+   (`service/<app>`; el host ya estaba dado de alta) y la regla de entrada de sus publicadores
+   (`..._ingress_policy.artifact_publishers["<app>"]`, o `..._dry_run_ingress_policy` con el
+   perímetro en dry-run). No debe cambiar nada de las aplicaciones
    existentes. Si falla una postcondición de `remote_state.tf` ("Algún secreto de
    applications[*].secrets no existe…"), falta el paso 1.
 
@@ -113,8 +121,14 @@ Rutas relativas a `gcp-datacenter/`.
    repositorio de la aplicación (y los patrones de `binary_authorization_allowlist_patterns`;
    ADR 0024): una imagen de otro registro, incluida la pública de ejemplo
    `us-docker.pkg.dev/cloudrun/container/hello`, se rechaza. Antes de encender GKE o Cloud Run,
-   el equipo de la aplicación sube la imagen con su propia identidad (la etapa 4 no le da permiso
-   de escritura a nadie; definir quién publica es una propuesta pendiente):
+   el pipeline de la aplicación sube la imagen con una identidad declarada en
+   `artifact_registry_publishers["<app>"]` de la etapa 4 (`serviceAccount:` o `group:`, nunca
+   `user:`): recibe `roles/artifactregistry.writer` solo sobre ese repositorio y, en prod, entra
+   al perímetro de VPC-SC por la regla `<prefix>-prod-<app>-artifact-push`, limitada a
+   `artifactregistry.googleapis.com` en el proyecto de servicio de la aplicación (pendiente 53:
+   depende de un cambio en 2-security). Sin publicadores declarados nadie puede escribir en el
+   repositorio. La etiqueta es una versión (o se usa el digest), nunca `latest`: el repositorio
+   tiene etiquetas inmutables y una etiqueta publicada no se puede mover a otra imagen.
 
    ```bash
    REPO="$(terraform -chdir="$R" output -json artifact_registry_repositories | jq -r '.["<app>"]')"

@@ -15,7 +15,7 @@ Contenido:
 3. [Otros pendientes detectados al documentar](#3-otros-pendientes-detectados-al-documentar),
    puntos 19 a 30; y
    [3.5 Agregados por la ronda de correcciones del 21 nov 2026](#35-agregados-por-la-ronda-de-correcciones-del-21-nov-2026),
-   puntos 31 a 51.
+   puntos 31 a 54.
 4. [Marcadores `VERIFICAR-EN-APPLY` del código](#4-marcadores-verificar-en-apply-del-código),
    por etapa y módulo.
 5. [Alcance no cubierto y limitaciones conocidas](#5-alcance-no-cubierto-y-limitaciones-conocidas).
@@ -413,7 +413,7 @@ por defecto la imagen pública `us-docker.pkg.dev/cloudrun/container/hello`, que
 rechaza (§5).
 Dónde: `stages/4-projects/envs/*/artifacts.tf:68`.
 Si falla: revisar `binary_authorization_allowlist_patterns`; para las pruebas, copiar la imagen
-al repositorio de la aplicación (propuesta).
+al repositorio de la aplicación con una identidad de `artifact_registry_publishers` (punto 53).
 
 **43. `networkViewer` en el host basta a la etapa 5 (ADR 0023).**
 Qué: que `compute.networkViewer` en el host más `networkUser` por subred basten para crear Cloud
@@ -485,6 +485,44 @@ corrida de los flujos corregidos en GitHub (no comprobado).
 Dónde: `.github/workflows/pr.yml`; [`pipeline.md`](pipeline.md) §1.1.
 Si falla: corregir el flujo antes de marcar las comprobaciones como obligatorias (punto 12).
 
+**52. Vuelta de DR con `dr_teardown` (runbook 04).**
+Qué: que el apply con `dr_active = true` y `dr_teardown = true` cambie en el lugar
+`deletion_protection` a `false` en `module.gke["dr"]` y `module.cloud_run["dr"]` (y solo en
+ellos), y que el apply siguiente con `dr_active = false` destruya el cómputo y el balanceador
+interno de DR sin el error de protección del proveedor. El proveedor 6.50.0 trae los mensajes
+"Cannot destroy cluster because deletion_protection is set to true" y "cannot destroy service
+without setting deletion_protection=false and running `terraform apply`" (comprobado con `grep`
+sobre el binario, 21 nov 2026); que la comprobación lea el valor del estado es HYPOTHESIS. Las
+pruebas solo planean los dos pasos con proveedores simulados.
+Dónde: `stages/5-workloads/envs/*/compute.tf` (`teardown`), `modules/gke/main.tf:16`,
+`modules/cloud-run/main.tf:18`; sin marcador en el código.
+Si falla: sin indicación en el código; el clúster o el servicio de DR quedan en el estado y el
+plan sigue proponiendo destruirlos hasta que se resuelva.
+
+**53. Publicación de imágenes a través del perímetro (ADR 0024).**
+Qué: que una identidad de `artifact_registry_publishers` haga `docker push` al repositorio de su
+aplicación (writer sobre el repositorio) y, en prod, que la regla de entrada
+`<prefix>-prod-<app>-artifact-push` (solo `artifactregistry.googleapis.com`, solo el proyecto de
+servicio) lo deje pasar con el perímetro forzado y lo registre en dry-run; que un `group:` se
+acepte en `identities` (VPC-SC documenta límites para grupos en reglas de entrada). **Bloqueado
+por un cambio fuera de la etapa 4**: el perímetro de 2-security debe ignorar sus
+`ingress_policies` (`lifecycle` del módulo `vpc-sc`) y su regla de las cuentas de etapa debe
+pasar a un recurso `..._ingress_policy` aparte; sin eso, el apply siguiente de 2-security quita
+la regla de los publicadores.
+Dónde: `stages/4-projects/envs/*/vpc_sc.tf:53`, `stages/4-projects/envs/*/artifacts.tf`
+(`writer`).
+Si falla: sin indicación en el código; con un grupo rechazado, usar cuentas de servicio.
+
+**54. Certificado interno de DR emitido antes de un incidente (ADR 0022).**
+Qué: que con `enable_dr = true` y `dr_active = false` el certificado regional de Certificate
+Manager de `dr_region` quede `ACTIVE` sin un balanceador que lo use, después de crear los
+registros de `internal_lb_dns_authorization_records_by_region`; y si los registros
+`PER_PROJECT_RECORD` de las dos regiones coinciden para el mismo dominio y proyecto
+(HYPOTHESIS: no comprobado).
+Dónde: `stages/5-workloads/envs/*/load_balancing.tf:241`.
+Si falla: crear los registros que falten; si el certificado no se emite sin balanceador, el
+paso 7 del runbook 04 vuelve a contar su emisión dentro del RTO.
+
 ---
 
 ## 4. Marcadores `VERIFICAR-EN-APPLY` del código
@@ -492,17 +530,17 @@ Si falla: corregir el flujo antes de marcar las comprobaciones como obligatorias
 Conteo al 21 nov 2026, desde `gcp-datacenter/`:
 
 ```bash
-grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 105
+grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 108
 grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                      # 51 archivos
 grep -rn "VERIFICAR-EN-APPLY" modules --include=*.tf | wc -l                              # 44
 grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep -v /envs/ | wc -l              # 19
-grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep /envs/ | wc -l                 # 42 (14 por entorno)
+grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep /envs/ | wc -l                 # 45 (15 por entorno)
 ```
 
 Las raíces de `envs/{dev,qa,prod}` tienen sus marcadores en las mismas líneas (comprobado el
-21 nov 2026 comparando archivo y línea de los tres entornos: 14 líneas, cada una presente en los
-tres), así que se listan una vez con `envs/*` y "(x3)": las 105 líneas son 77 marcadores
-distintos (44 en módulos y 33 en etapas). Fuera de los `.tf`, los README de algunas raíces
+21 nov 2026 comparando archivo y línea de los tres entornos: 15 líneas, cada una presente en los
+tres), así que se listan una vez con `envs/*` y "(x3)": las 108 líneas son 78 marcadores
+distintos (44 en módulos y 34 en etapas). Fuera de los `.tf`, los README de algunas raíces
 tienen marcadores propios (al final de esta sección); `tests/` tiene otros cuatro en sus `.tf`,
 fuera de este conteo. "Si falla" cita el código cuando lo dice; si no, la entrada dice "sin
 indicación".
@@ -557,22 +595,23 @@ indicación".
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `artifacts.tf:32` (x3) | CMEK del repositorio de Artifact Registry (punto 41) | Ver punto 41 |
-| `artifacts.tf:68` (x3) | Binary Authorization: la imagen del repositorio pasa y otra se rechaza (punto 42) | Ver punto 42 |
+| `artifacts.tf:39` (x3) | CMEK del repositorio de Artifact Registry (punto 41) | Ver punto 41 |
+| `artifacts.tf:87` (x3) | Binary Authorization: la imagen del repositorio pasa y otra se rechaza (punto 42) | Ver punto 42 |
 | `iam.tf:213` (x3) | `networkViewer` en el host más `networkUser` por subred bastan a la etapa 5 para PSA (punto 43) | `networkUser` en el host, decidido en revisión |
 | `iam.tf:274` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
 | `service_agents.tf:10` (x3) | Que `generateServiceIdentity` acepte `sqladmin`, `file`, `redis` y `gkebackup` | Quitar el servicio de la lista (su agente existe al habilitar la API) |
 | `service_agents.tf:12` (x3) | Que los agentes de `container`, `compute` y `run` existan justo después de habilitar sus APIs | Agregar esos servicios a la lista |
 | `service_agents.tf:59` (x3) | Que la API de Cloud Storage acepte el número del proyecto de servicio al consultar su agente (punto 27) | Ver punto 27 |
 | `vpc_sc.tf:10` (x3) | CMEK de `security` con el perímetro forzado (punto 4) | Ver punto 4 |
+| `vpc_sc.tf:53` (x3) | `docker push` de un publicador por la regla de entrada de Artifact Registry; grupos en `identities` (punto 53) | Ver punto 53 |
 
 ### Etapa 5 (`stages/5-workloads/envs/*`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
 | `load_balancing.tf:98` (x3) | Que el mismo grupo de instancias y el mismo NEG sin servidor sirvan a la vez al balanceador externo y al interno | Sin indicación |
-| `load_balancing.tf:172` (x3) | El certificado administrado se activa cuando los registros A de `domain_names` apuntan a `lb_ip_address` | Crear los registros en la zona pública (fuera del repositorio) |
-| `load_balancing.tf:201` (x3) | Registros de `dns_authorization_records` para emitir el certificado interno, uno por región (`internal_lb_dns_authorization_records_by_region`) | Crearlos en la zona DNS pública del dominio |
+| `load_balancing.tf:193` (x3) | El certificado administrado se activa cuando los registros A de `domain_names` apuntan a `lb_ip_address` | Crear los registros en la zona pública (fuera del repositorio) |
+| `load_balancing.tf:241` (x3) | Registros de `internal_lb_dns_authorization_records_by_region` (las dos regiones con `enable_dr`) y certificado interno de DR `ACTIVE` sin balanceador (punto 54) | Ver punto 54 |
 | `operations.tf:54` (x3) | Formato del recurso de Cloud SQL en la asociación de Backup and DR y roles de la cuenta de la bóveda | Sin indicación |
 
 ### Módulos
@@ -585,7 +624,7 @@ indicación".
 | `backup-dr/main.tf:51` | `log_retention_days` aceptado y recuperación a un punto en el tiempo de esos días (punto 45) | Ver punto 45 |
 | `backup-dr/main.tf:85` | Backup for GKE en otra región, complemento activo y permiso del agente de `gkebackup` sobre la llave | Sin indicación |
 | `cloud-run/main.tf:9` | Salida directa a la VPC con red y subred del host como `projects/<host>/...` | Sin indicación |
-| `cloud-run/main.tf:32` | `invoker_iam_disabled` frente a la política de organización (punto 16) | Ver punto 16 |
+| `cloud-run/main.tf:34` | `invoker_iam_disabled` frente a la política de organización (punto 16) | Ver punto 16 |
 | `cloud-sql/main.tf:10` | `pgaudit.log` con varias clases; la réplica acepta las mismas banderas | Ver punto 14 |
 | `cloud-sql/main.tf:98` | Segundo plan sin cambios en `backup_configuration` con el plan de Backup and DR asociado (punto 45) | `ignore_changes` sobre ese bloque (lo dice el código) |
 | `cloud-sql/main.tf:201` | Agente de Cloud SQL con permiso sobre `kms_key` (lo da la etapa 4) | Sin indicación |
@@ -598,10 +637,10 @@ indicación".
 | `filestore/main.tf:48` | Permiso del agente sobre la llave, PSA desde el proyecto de servicio sobre la red del host, `deletion_protection_enabled` en el tier | Sin indicación |
 | `firewall/main.tf:21` | Formato de `purpose_data` y etiquetas de organización en la política jerárquica | Sin indicación |
 | `firewall/main.tf:26` | Si la API admite `enable_logging` en `goto_next` | Sin indicación |
-| `gke/main.tf:46` | Plano de control con Private Service Connect (punto 8) | Ver punto 8 |
-| `gke/main.tf:58` | Endpoint privado alcanzable desde la Shared VPC y los rangos autorizados | Bastión en el spoke o endpoint por DNS (no construido, README del módulo) |
-| `gke/main.tf:143` | `node_config` del pool por defecto eliminado sin diferencias en el segundo plan | Ya se ignora en `lifecycle` |
-| `gke/main.tf:230` | Nodos con etiquetas seguras del proyecto host | Ver `iam.tf:274` de la etapa 4 |
+| `gke/main.tf:47` | Plano de control con Private Service Connect (punto 8) | Ver punto 8 |
+| `gke/main.tf:59` | Endpoint privado alcanzable desde la Shared VPC y los rangos autorizados | Bastión en el spoke o endpoint por DNS (no construido, README del módulo) |
+| `gke/main.tf:144` | `node_config` del pool por defecto eliminado sin diferencias en el segundo plan | Ya se ignora en `lifecycle` |
+| `gke/main.tf:231` | Nodos con etiquetas seguras del proyecto host | Ver `iam.tf:274` de la etapa 4 |
 | `hybrid-connectivity/main.tf:143` | Interfaces y sesiones BGP de los attachments DEDICATED y PARTNER | Sin indicación |
 | `load-balancer/main.tf:187` | Certificado administrado ACTIVE cuando los registros A apuntan a la IP; puede tardar hasta 60 min | Crear los registros A |
 | `load-balancer/main.tf:357` | Certificado interno tras los registros de `dns_authorization_records`; una CA pública no emite para `*.internal` | Usar `certificate_manager_certificates` |
@@ -690,9 +729,9 @@ cláusula `resource.type == "storage.googleapis.com/Bucket"` que permite listar 
 nombres (no el contenido) de todos los prefijos (contrato §6.2, ADR 0010). Si importa: carpetas
 administradas.
 
-**Planes de ejemplo de Conftest, parte escritos a mano.** `policies/fixtures/` tiene 25 planes;
-11 son recortes de un `terraform show -json` real de un ejemplo sin GCP (`ls policies/fixtures
-| grep -c _real_` → 11, 21 nov 2026) y los demás están escritos a mano. Ninguno sale de un plan
+**Planes de ejemplo de Conftest, parte escritos a mano.** `policies/fixtures/` tiene 27 planes;
+13 son recortes de un `terraform show -json` real de un ejemplo sin GCP (`ls policies/fixtures
+| grep -c _real_` → 13, 21 nov 2026) y los demás están escritos a mano. Ninguno sale de un plan
 contra GCP: con GCP, regenerar al menos uno por regla desde un plan real.
 
 **Recursos no administrados sin correr.** El trabajo de `drift.yml` que compara Cloud Asset

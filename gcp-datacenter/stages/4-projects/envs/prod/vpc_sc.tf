@@ -39,3 +39,73 @@ resource "google_access_context_manager_service_perimeter_dry_run_resource" "thi
   perimeter_name = local.perimeter_name
   resource       = each.value
 }
+
+# Publicación de imágenes a través del perímetro (solo prod): artifactregistry.googleapis.com
+# está restringido y la regla de entrada de la etapa 2 solo admite a las cuentas de las etapas.
+# Una regla por aplicación con publicadores: sus identidades (artifact_registry_publishers),
+# desde cualquier origen de red (igual que la regla de las cuentas de etapa: el pipeline corre
+# fuera de GCP), solo hacia el proyecto de servicio de esa aplicación y solo Artifact Registry.
+# Mismo patrón de modo que las altas: forzado → ..._ingress_policy (status); dry-run →
+# ..._dry_run_ingress_policy (spec).
+# Requiere que el perímetro de la etapa 2 ignore sus ingress_policies (lifecycle del módulo
+# vpc-sc) y que la regla de las cuentas de etapa pase a un recurso de política aparte; sin eso,
+# el siguiente apply de la etapa 2 quitaría estas reglas (pendientes-apply).
+# VERIFICAR-EN-APPLY: docker push de una cuenta publicadora al repositorio de prod con el
+# perímetro forzado (y su entrada en el registro de infracciones en dry-run), y que un grupo en
+# identities se acepte (VPC-SC tiene límites para grupos en reglas de entrada).
+locals {
+  artifact_ingress = local.is_prod ? {
+    for app, members in var.artifact_registry_publishers : app => {
+      identities = sort(distinct(members))
+      resource   = "projects/${module.project[app].project_number}"
+    } if length(members) > 0
+  } : {}
+}
+
+resource "google_access_context_manager_service_perimeter_ingress_policy" "artifact_publishers" {
+  for_each = local.vpc_sc_enforced ? local.artifact_ingress : {}
+
+  perimeter = local.perimeter_name
+  title     = "${var.prefix}-${var.environment}-${each.key}-artifact-push"
+
+  ingress_from {
+    identities = each.value.identities
+    sources {
+      access_level = "*"
+    }
+  }
+
+  ingress_to {
+    resources = [each.value.resource]
+    operations {
+      service_name = "artifactregistry.googleapis.com"
+      method_selectors {
+        method = "*"
+      }
+    }
+  }
+}
+
+resource "google_access_context_manager_service_perimeter_dry_run_ingress_policy" "artifact_publishers" {
+  for_each = local.vpc_sc_enforced ? {} : local.artifact_ingress
+
+  perimeter = local.perimeter_name
+  title     = "${var.prefix}-${var.environment}-${each.key}-artifact-push"
+
+  ingress_from {
+    identities = each.value.identities
+    sources {
+      access_level = "*"
+    }
+  }
+
+  ingress_to {
+    resources = [each.value.resource]
+    operations {
+      service_name = "artifactregistry.googleapis.com"
+      method_selectors {
+        method = "*"
+      }
+    }
+  }
+}

@@ -549,6 +549,129 @@ run "prod_conmutacion_solo_gke_sin_neg_de_dr" {
   }
 }
 
+# Vuelta a la región primaria (runbook 04, reversión), paso 1: con dr_active todavía en true,
+# dr_teardown quita la protección contra borrado solo del cómputo de DR (cambio en el lugar). El
+# proveedor solo destruye un clúster o un servicio cuya protección ya está en false en el estado.
+run "prod_vuelta_paso_1_retiro_del_computo_de_dr" {
+  command = plan
+
+  variables {
+    dr_active   = true
+    dr_teardown = true
+  }
+
+  assert {
+    condition     = module.gke["dr"].deletion_protection == false && module.cloud_run["dr"].deletion_protection == false
+    error_message = "Con dr_teardown el clúster y el servicio de DR deben quedar sin protección contra borrado."
+  }
+  assert {
+    condition     = module.gke["primary"].deletion_protection == true && module.cloud_run["primary"].deletion_protection == true
+    error_message = "dr_teardown nunca quita la protección del cómputo de la región primaria."
+  }
+  assert {
+    condition     = toset(keys(module.gke)) == toset(["primary", "dr"]) && toset(keys(module.internal_lb)) == toset(["primary", "dr"])
+    error_message = "El paso 1 no destruye nada: el cómputo y el balanceador interno de DR siguen."
+  }
+  assert {
+    condition     = output.active_region == "us-east4"
+    error_message = "El paso 1 no mueve el tráfico: sigue en la región de DR."
+  }
+}
+
+# Paso 2: dr_active = false (dr_teardown puede seguir en true). Planea destruir solo el cómputo
+# de DR y su balanceador interno; la primaria queda protegida y los datos de DR no se tocan.
+run "prod_vuelta_paso_2_sin_dr_active" {
+  command = plan
+
+  variables {
+    dr_active   = false
+    dr_teardown = true
+  }
+
+  assert {
+    condition     = keys(module.gke) == ["primary"] && keys(module.cloud_run) == ["primary"] && keys(module.mig) == ["primary"] && keys(module.internal_lb) == ["primary"]
+    error_message = "Con dr_active = false solo queda el cómputo y el balanceador interno de la región primaria."
+  }
+  assert {
+    condition     = module.gke["primary"].deletion_protection == true && module.cloud_run["primary"].deletion_protection == true
+    error_message = "La región primaria sigue protegida durante la vuelta."
+  }
+  assert {
+    condition     = output.active_region == "us-central1" && module.cloud_sql.replica_name == "bnt-prod-data-sql-use4"
+    error_message = "El tráfico vuelve a la primaria y la réplica de Cloud SQL (enable_dr) no se destruye."
+  }
+  assert {
+    condition     = toset(keys(google_certificate_manager_certificate.internal)) == toset(["primary", "dr"])
+    error_message = "El certificado interno de DR depende de enable_dr, no de dr_active: la vuelta no lo destruye."
+  }
+}
+
+# Certificado interno de DR antes de un incidente: con enable_dr y sin dr_active existen la
+# autorización DNS y el certificado de us-east4, pero no el balanceador interno de DR.
+run "prod_certificado_interno_de_dr_antes_del_incidente" {
+  command = plan
+
+  override_resource {
+    target          = module.internal_lb["primary"].google_compute_address.this["this"]
+    override_during = plan
+    values          = { address = "10.10.0.50" }
+  }
+
+  assert {
+    condition     = keys(module.internal_lb) == ["primary"]
+    error_message = "Sin dr_active no existe el balanceador interno de DR."
+  }
+  assert {
+    condition = (
+      google_certificate_manager_certificate.internal["primary"].location == "us-central1" &&
+      google_certificate_manager_certificate.internal["dr"].location == "us-east4" &&
+      startswith(google_certificate_manager_certificate.internal["dr"].name, "bnt-prod-app-app-ilb-use4-cert-")
+    )
+    error_message = "Con enable_dr debe existir el certificado interno de cada región, con el nombre de §4.2."
+  }
+  assert {
+    condition = (
+      google_certificate_manager_dns_authorization.internal["dr/app-prod-example-com"].location == "us-east4" &&
+      google_certificate_manager_dns_authorization.internal["dr/app-prod-example-com"].domain == "app.prod.example.com" &&
+      google_certificate_manager_dns_authorization.internal["primary/app-prod-example-com"].location == "us-central1"
+    )
+    error_message = "Cada región debe tener la autorización DNS de cada dominio interno."
+  }
+  assert {
+    condition     = toset(keys(output.internal_lb_dns_authorization_records_by_region)) == toset(["us-central1", "us-east4"])
+    error_message = "Los registros de autorización de DR deben publicarse antes de un incidente."
+  }
+  assert {
+    condition     = output.internal_lb_dns_records == { "app.prod.example.com" = { type = "A", rrdatas = ["10.10.0.50"] } }
+    error_message = "El registro DNS interno debe apuntar a la IP del balanceador interno de la región activa."
+  }
+}
+
+# Sin enable_dr solo existe el certificado interno de la región primaria.
+run "sin_dr_solo_certificado_interno_primario" {
+  command = plan
+
+  variables {
+    enable_dr = false
+  }
+
+  assert {
+    condition     = keys(google_certificate_manager_certificate.internal) == ["primary"] && keys(google_certificate_manager_dns_authorization.internal) == ["primary/app-prod-example-com"]
+    error_message = "Sin enable_dr no se crea el certificado interno de la región de DR."
+  }
+}
+
+run "rechaza_dr_teardown_sin_enable_dr" {
+  command = plan
+
+  variables {
+    enable_dr   = false
+    dr_teardown = true
+  }
+
+  expect_failures = [var.dr_teardown]
+}
+
 run "dev_solo_cloud_run_y_sql" {
   command = plan
 

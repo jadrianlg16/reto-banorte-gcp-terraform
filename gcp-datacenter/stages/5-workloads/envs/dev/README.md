@@ -21,7 +21,7 @@ Nombres con `prefix = "bnt"`, `application = "app"` y región primaria `us-centr
 | Cloud Storage | siempre | `storage` | `bnt-<env>-data-app-usc1` | llave `storage`; con `enable_dr`, doble región `bnt-<env>-data-app-usc1-use4` en `US` con turbo replication y la llave `storage` de la multirregión `us` |
 | Cloud Armor | con el balanceador externo | `cloud-armor` | `bnt-<env>-app-app-armor` | OWASP (SQLi, XSS y demás), límite de tasa |
 | Balanceador externo | hay al menos un backend | `load-balancer` (`external`) | `bnt-<env>-app-app-xlb-*` | HTTPS global, certificado administrado para `domain_names`, redirección de HTTP, Cloud Armor (ADR 0005) |
-| Balanceador interno | `enable_internal_lb` | `load-balancer` (`internal`) | `bnt-<env>-app-app-ilb-<usc1\|use4>-*` | uno por región con cómputo (con `dr_active` se agrega el de `dr_region`), IP en la subred `app` de su región, subred proxy-only del spoke, acceso global en las reglas de reenvío, certificado de Certificate Manager para `internal_domain_names` |
+| Balanceador interno | `enable_internal_lb` | `load-balancer` (`internal`) | `bnt-<env>-app-app-ilb-<usc1\|use4>-*` | uno por región con cómputo (con `dr_active` se agrega el de `dr_region`), IP en la subred `app` de su región, subred proxy-only del spoke, acceso global en las reglas de reenvío; el certificado de Certificate Manager para `internal_domain_names` y sus autorizaciones DNS los crea la raíz (`load_balancing.tf`) por región: la primaria y, con `enable_dr`, también `dr_region` aunque `dr_active` sea false |
 | Observabilidad | siempre | `observability` | — | canales para `notification_emails`, verificación de disponibilidad del primer dominio, alertas, tablero y SLO de 99.9 % filtrado por el mapa de URL del balanceador externo |
 | Respaldo | `enable_backup` (true) | `backup-dr` | `bnt-<env>-bkp-vault-use4` | bóveda en `dr_region`, plan diario de Cloud SQL con 30 días de retención y 7 días de registros (`log_retention_days`, ventana de PITR) y la instancia asociada; con `enable_gke` y `enable_dr`, plan de Backup for GKE del clúster primario en `dr_region` con la llave `backup` de DR |
 
@@ -73,6 +73,21 @@ fija el `Service` de Kubernetes, fuera de Terraform.
   global, así que on-premises llega a cualquiera de los dos. El registro DNS interno se cambia a
   `internal_lb_ip_address` (la IP del de la región activa; todas en `internal_lb_ip_addresses`).
   El `moved` de `load_balancing.tf` lleva el estado anterior (`["internal"]`) a `["primary"]`.
+- Certificado interno de DR: con `enable_dr` la autorización DNS y el certificado de
+  `dr_region` existen desde el primer apply (sin el balanceador de DR), así que el certificado
+  se emite antes de un incidente con los registros de
+  `internal_lb_dns_authorization_records_by_region`. El registro DNS interno no lo administra
+  ninguna etapa (la cuenta de la etapa no tiene `dns.admin` y la zona no está en este
+  repositorio): la salida `internal_lb_dns_records` da los registros A que deben existir para la
+  región activa, y moverlos es el único paso manual de DNS de la conmutación (runbook 04).
+- Vuelta a la región primaria: en prod el clúster de GKE y el servicio de Cloud Run tienen la
+  protección contra borrado fija y el proveedor se niega a destruirlos. `dr_teardown = true`
+  (exige `enable_dr`) la quita solo de la instancia `dr`: primero un apply con
+  `dr_active = true` y `dr_teardown = true` (cambio en el lugar), después `dr_active = false`
+  (destruye el cómputo y el balanceador interno de DR) y al final `dr_teardown = false`. El MIG
+  y el balanceador interno no tienen protección contra borrado; la réplica de Cloud SQL, el
+  certificado interno de DR y los planes de respaldo dependen de `enable_dr`/`enable_backup`,
+  no de `dr_active`, y la vuelta no los toca.
 - **Promoción de la réplica de Cloud SQL**: es un paso del runbook de conmutación a DR, no de
   Terraform (`gcloud sql instances promote-replica`). Después hay que reconciliar el estado
   (la réplica promovida deja de ser réplica) antes del siguiente `apply`.
@@ -102,16 +117,20 @@ terraform apply tfplan
 Orden: después de `4-projects/envs/<env>`. Con GKE detrás del balanceador externo: primer
 apply sin `gke_lb_negs`, despliegue de la carga en el clúster, segundo apply con los NEG.
 Prueba sin GCP: `terraform test` (proveedores simulados; `tests/workloads.tftest.hcl` cubre
-prod normal, prod en conmutación con y sin NEG de DR, solo GKE en conmutación, dev con solo
+prod normal, prod en conmutación con y sin NEG de DR, solo GKE en conmutación, los dos pasos de
+la vuelta con `dr_teardown`, el certificado interno de DR antes del incidente, dev con solo
 Cloud Run y SQL, qa, puertos de backend y entradas rechazadas).
 
 Pasos fuera de Terraform: registros DNS A de `domain_names` hacia `lb_ip_address` (el
-certificado se activa entonces); registros de `internal_lb_dns_authorization_records` en la
-zona pública del dominio interno; `CREATE EXTENSION pgaudit;` en cada base; la cuenta de
+certificado se activa entonces); registros de `internal_lb_dns_authorization_records_by_region`
+(las dos regiones con `enable_dr`) en la zona pública del dominio interno; registros A de
+`internal_lb_dns_records` en el DNS interno; `CREATE EXTENSION pgaudit;` en cada base; la cuenta de
 Kubernetes `gke_workload_namespace`/`gke_workload_ksa_name` con la anotación
 `iam.gke.io/gcp-service-account` = correo de la cuenta `workload`. Las imágenes de Cloud Run y
 de GKE deben estar en el repositorio de la etapa 4 (`artifact_registry_repositories`): Binary
-Authorization niega las demás.
+Authorization niega las demás. Se referencian con una etiqueta de versión o un digest
+(`@sha256:...`), nunca `latest`: el repositorio tiene etiquetas inmutables y una etiqueta ya
+publicada no se puede mover a otra imagen.
 
 ## Roles de la cuenta `<prefix>-tf-5-workloads`
 
@@ -167,6 +186,8 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 
 | Name | Type |
 | ---- | ---- |
+| [google_certificate_manager_certificate.internal](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/certificate_manager_certificate) | resource |
+| [google_certificate_manager_dns_authorization.internal](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/certificate_manager_dns_authorization) | resource |
 | [google_service_account_iam_member.workload_identity](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account_iam_member) | resource |
 | [terraform_data.upstream_checks](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_remote_state.network](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/data-sources/remote_state) | data source |
@@ -191,6 +212,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado de Cloud SQL, Filestore, GKE y Cloud Run fuera de prod. En prod debe ser true (los módulos además la fijan). | `bool` | `true` | no |
 | <a name="input_dr_active"></a> [dr\_active](#input\_dr\_active) | Conmutación a DR: crea el cómputo (GKE, MIG, Cloud Run) también en dr\_region y apunta los backends de los balanceadores a esa región. Exige enable\_dr. La promoción de la réplica de Cloud SQL es un paso del runbook, no de Terraform. | `bool` | `false` | no |
 | <a name="input_dr_region"></a> [dr\_region](#input\_dr\_region) | Región de DR (ADR 0002). Siempre se declara: la bóveda de respaldos vive ahí aunque enable\_dr = false. | `string` | `"us-east4"` | no |
+| <a name="input_dr_teardown"></a> [dr\_teardown](#input\_dr\_teardown) | Vuelta a la región primaria (runbook 04): quita la protección contra borrado solo del clúster<br/>de GKE y del servicio de Cloud Run de la región de DR (llave "dr"), también en prod; los de<br/>la región primaria siguen protegidos. Se aplica primero con dr\_active = true (cambio en el<br/>lugar) y después dr\_active = false destruye el cómputo de DR. Sin este paso el proveedor se<br/>niega a destruirlos. Volver a false al terminar. | `bool` | `false` | no |
 | <a name="input_enable_backup"></a> [enable\_backup](#input\_enable\_backup) | Crea la bóveda de Backup and DR en dr\_region y los planes diarios (retención de 30 días). | `bool` | `true` | no |
 | <a name="input_enable_cloud_run"></a> [enable\_cloud\_run](#input\_enable\_cloud\_run) | Crea el servicio de Cloud Run (ADR 0012) en la región primaria (y en la de DR con dr\_active). | `bool` | `false` | no |
 | <a name="input_enable_dr"></a> [enable\_dr](#input\_enable\_dr) | DR de datos (prod): réplica de Cloud SQL en dr\_region, bucket de doble región con turbo replication y plan de Backup for GKE. Exige que el spoke de la etapa 3 tenga enable\_dr = true. | `bool` | `false` | no |
@@ -239,8 +261,10 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="output_filestore_ip_address"></a> [filestore\_ip\_address](#output\_filestore\_ip\_address) | IP privada del servidor NFS de Filestore (null con enable\_filestore = false). |
 | <a name="output_gke_cluster_names"></a> [gke\_cluster\_names](#output\_gke\_cluster\_names) | Mapa región → nombre del clúster de GKE (vacío con enable\_gke = false; con dr\_active incluye dr\_region). |
 | <a name="output_gke_workload_identity_member"></a> [gke\_workload\_identity\_member](#output\_gke\_workload\_identity\_member) | Miembro serviceAccount:<proyecto>.svc.id.goog[<namespace>/<cuenta>] que actúa como la cuenta workload (null sin enable\_gke). |
-| <a name="output_internal_lb_dns_authorization_records"></a> [internal\_lb\_dns\_authorization\_records](#output\_internal\_lb\_dns\_authorization\_records) | Registros DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa. |
-| <a name="output_internal_lb_dns_authorization_records_by_region"></a> [internal\_lb\_dns\_authorization\_records\_by\_region](#output\_internal\_lb\_dns\_authorization\_records\_by\_region) | Mapa región → registros DNS de autorización del certificado de cada balanceador interno (con dr\_active incluye dr\_region). |
+| <a name="output_internal_lb_certificate_ids"></a> [internal\_lb\_certificate\_ids](#output\_internal\_lb\_certificate\_ids) | Mapa región → ID del certificado de Certificate Manager del balanceador interno (la de DR existe con enable\_dr, antes de dr\_active). Vacío sin enable\_internal\_lb. |
+| <a name="output_internal_lb_dns_authorization_records"></a> [internal\_lb\_dns\_authorization\_records](#output\_internal\_lb\_dns\_authorization\_records) | Dominio → registro DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa. |
+| <a name="output_internal_lb_dns_authorization_records_by_region"></a> [internal\_lb\_dns\_authorization\_records\_by\_region](#output\_internal\_lb\_dns\_authorization\_records\_by\_region) | Mapa región → dominio → registro DNS de autorización del certificado interno de esa región. Con enable\_dr incluye dr\_region aunque dr\_active sea false: esos registros se crean antes de un incidente. |
+| <a name="output_internal_lb_dns_records"></a> [internal\_lb\_dns\_records](#output\_internal\_lb\_dns\_records) | Registros A que deben existir en el DNS interno (fuera de este repositorio) para internal\_domain\_names: nombre → type y rrdatas con la IP del balanceador interno de la región activa. Cambia con dr\_active; moverlos es el paso manual de DNS del runbook 04. Vacío sin enable\_internal\_lb. |
 | <a name="output_internal_lb_ip_address"></a> [internal\_lb\_ip\_address](#output\_internal\_lb\_ip\_address) | IP interna del balanceador interno de la región activa (active\_region): la que debe tener el registro DNS interno. null sin enable\_internal\_lb. |
 | <a name="output_internal_lb_ip_addresses"></a> [internal\_lb\_ip\_addresses](#output\_internal\_lb\_ip\_addresses) | Mapa región → IP interna del balanceador interno de esa región (la de DR solo con dr\_active). Vacío sin enable\_internal\_lb. |
 | <a name="output_lb_ip_address"></a> [lb\_ip\_address](#output\_lb\_ip\_address) | IP pública global del balanceador HTTPS externo (para los registros DNS A de domain\_names). null si no hay ningún backend habilitado. |

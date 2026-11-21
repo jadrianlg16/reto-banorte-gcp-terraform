@@ -138,6 +138,24 @@ variable "dr_active" {
   }
 }
 
+variable "dr_teardown" {
+  description = <<-EOT
+    Vuelta a la región primaria (runbook 04): quita la protección contra borrado solo del clúster
+    de GKE y del servicio de Cloud Run de la región de DR (llave "dr"), también en prod; los de
+    la región primaria siguen protegidos. Se aplica primero con dr_active = true (cambio en el
+    lugar) y después dr_active = false destruye el cómputo de DR. Sin este paso el proveedor se
+    niega a destruirlos. Volver a false al terminar.
+  EOT
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = !var.dr_teardown || var.enable_dr
+    error_message = "dr_teardown = true exige enable_dr = true (solo hay cómputo de DR con enable_dr)."
+  }
+}
+
 variable "multi_region" {
   description = "Multirregión del bucket de doble región con enable_dr (anillo de llaves de la etapa 2 de esa ubicación). Debe contener primary_region y dr_region."
   type        = string

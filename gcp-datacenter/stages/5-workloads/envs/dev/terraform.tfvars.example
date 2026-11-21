@@ -25,8 +25,10 @@ enable_backup       = true
 deletion_protection = false
 
 # Imagen del repositorio de la aplicación (salida artifact_registry_repositories de la etapa 4):
-# la política de Binary Authorization del proyecto niega las imágenes de otros registros.
-cloud_run_image = "us-docker.pkg.dev/example-dev-app/bnt-dev-app-app-images-us/api:latest"
+# la política de Binary Authorization del proyecto niega las imágenes de otros registros. Una
+# etiqueta de versión o un digest (@sha256:...), nunca latest: el repositorio tiene etiquetas
+# inmutables, así que latest no se puede mover a una imagen nueva.
+cloud_run_image = "us-docker.pkg.dev/example-dev-app/bnt-dev-app-app-images-us/api:1.0.0"
 
 sql_tier             = "db-custom-1-3840"
 sql_database_version = "POSTGRES_16"

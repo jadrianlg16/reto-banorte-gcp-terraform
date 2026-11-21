@@ -285,7 +285,14 @@ variable "maintenance_start_time" {
 }
 
 variable "deletion_protection" {
-  description = "Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor."
+  description = "Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor (salvo teardown)."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "teardown" {
+  description = "Retiro deliberado del clúster: deletion_protection = false también en prod, para que un apply posterior lo pueda destruir. Solo para una instancia que se va a quitar (el clúster de DR en la vuelta a la región primaria, runbook 04); nunca en el clúster que atiende el tráfico normal."
   type        = bool
   default     = false
   nullable    = false

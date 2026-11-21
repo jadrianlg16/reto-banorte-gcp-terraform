@@ -64,7 +64,7 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 | `stages/3-networks/envs/{dev,qa,prod}` | Un spoke por entorno, con las zonas de las APIs de Google hacia el VIP |
 | `stages/4-projects/envs/{dev,qa,prod}` | Proyectos de servicio, cuentas de ejecución, Artifact Registry y Binary Authorization, permisos (incluidos los de la etapa 5), alta en el perímetro |
 | `stages/5-workloads/envs/{dev,qa,prod}` | Cómputo, Workload Identity, datos, balanceadores, observabilidad y respaldo |
-| `policies/` | Siete políticas de Conftest (Rego), sus pruebas y 25 planes de ejemplo en `fixtures/` |
+| `policies/` | Siete políticas de Conftest (Rego), sus pruebas y 27 planes de ejemplo en `fixtures/` |
 | `scripts/` | `check.sh`, `policy-check.sh`, `docs.sh`, `affected-roots.sh`, `selftest.sh`, `plan-fingerprint.py`, `unmanaged-resources.py` y otros auxiliares del pipeline |
 | `tests/` | Terratest y prueba de extremo a extremo (paquete 13: compilan y sus fixtures validan, sin ejecutar contra GCP) |
 | `docs/` | Contrato, ADR, pipeline, runbooks, diagramas y `pendientes-apply.md` |
@@ -191,7 +191,7 @@ bash scripts/check.sh                 # fmt, validate, tflint, checkov y terrafo
 bash scripts/check.sh --skip test     # lo mismo sin terraform test (lo que corre con Terraform 1.9)
 bash scripts/check.sh --list          # objetivos: 24 módulos, 24 ejemplos y 13 raíces (61)
 bash scripts/check.sh --skip checkov stages/5-workloads/envs/prod
-bash scripts/policy-check.sh          # conftest verify y los 25 planes de ejemplo (14 pasan, 11 se rechazan)
+bash scripts/policy-check.sh          # conftest verify y los 27 planes de ejemplo (15 pasan, 12 se rechazan)
 bash scripts/selftest.sh              # autopruebas de los scripts del pipeline
 bash scripts/docs.sh --check          # READMEs de terraform-docs al día (24 módulos y 13 raíces)
 bash scripts/docs.sh                  # regenerarlos
@@ -203,9 +203,9 @@ Los números de los comentarios salen de correr estos comandos el 21 nov 2026 de
 - `bash scripts/check.sh --list` → 61 líneas: 24 `modules/<m>`, 24 `.../examples/basic` y 13
   `stages/...` (contadas con `grep -c`).
 - `bash scripts/policy-check.sh` → "83 tests, 83 passed, 0 warnings, 0 failures" y
-  "RESULTADO: 25 planes con el resultado esperado." (14 con resultado `pasa` y 11 con
-  `rechaza`; 11 de los 25 son recortes de planes reales sin GCP, `ls policies/fixtures | grep -c _real_` → 11).
-- `bash scripts/selftest.sh` → 18 líneas `OK`, 0 `FAIL` y "RESULTADO: todas las comprobaciones
+  "RESULTADO: 27 planes con el resultado esperado." (15 con resultado `pasa` y 12 con
+  `rechaza`; 13 de los 27 son recortes de planes reales sin GCP, `ls policies/fixtures | grep -c _real_` → 13).
+- `bash scripts/selftest.sh` → 44 líneas `OK`, 0 `FALLA` y "RESULTADO: todas las comprobaciones
   pasaron."
 - `bash scripts/docs.sh --check` → "Resultado: PASS (37)".
 - `ls modules/*/tests/*.tftest.hcl | wc -l` → 24.
@@ -256,7 +256,7 @@ apply. Los números de pendientes remiten a [`docs/pendientes-apply.md`](docs/pe
 | Despliegue limpio de las etapas 0 a 5 | Orden fijo; interfaces de §7 del contrato; `remote_state.tf` con postcondiciones; `apply.yml` encadenado | **Pendiente del primer apply.** Sin GCP solo se demuestra que cada raíz valida y planea con proveedores simulados (`bash scripts/check.sh`) |
 | Segundo `plan` sin cambios | `ignore_changes` donde hay altas externas (perímetro, pool por defecto de GKE); `drift.yml` diario con `-detailed-exitcode` | **Pendiente del primer apply** (pendiente 11) |
 | `destroy` de dev sin huérfanos | `project_deletion_policy` / `deletion_policy = "DELETE"` y `deletion_protection = false` admitidos fuera de prod | **Pendiente del primer apply** (pendiente 11; la bóveda de respaldos con retención forzada puede bloquearlo) |
-| El pipeline bloquea un PR que viola una política | Siete reglas Rego; `pr.yml` corre `policy-check.sh` siempre y Conftest sobre el plan real con `GCP_ENABLED`; `plan-gate` falla si falla un plan | **Demostrado sin GCP para las reglas:** `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` (21 nov 2026) → 83 pruebas de Rego y 25 planes de ejemplo (11 recortados de planes reales sin GCP) con el resultado esperado. Que un PR real quede bloqueado depende de configurar en GitHub la protección de `main` con `plan-gate` y las demás comprobaciones como obligatorias, del plan de GitHub (pendiente 12) y de la primera corrida de `pr.yml` (pendiente 51) |
+| El pipeline bloquea un PR que viola una política | Siete reglas Rego; `pr.yml` corre `policy-check.sh` siempre y Conftest sobre el plan real con `GCP_ENABLED`; `plan-gate` falla si falla un plan | **Demostrado sin GCP para las reglas:** `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` (21 nov 2026) → 83 pruebas de Rego y 27 planes de ejemplo (13 recortados de planes reales sin GCP) con el resultado esperado. Que un PR real quede bloqueado depende de configurar en GitHub la protección de `main` con `plan-gate` y las demás comprobaciones como obligatorias, del plan de GitHub (pendiente 12) y de la primera corrida de `pr.yml` (pendiente 51) |
 | Una VM de prod alcanza on-premises y resuelve su DNS | Dos HA VPN con BGP, anuncios del hub, peering con exportación de rutas, zona de reenvío en el hub y de peering DNS en el spoke; en modo simulado, firewall de `onprem-sim` y delegación del rango de DNS ya construidos | **Pendiente del primer apply** (pendientes 6, 7, 36 y 37). En modo simulado falta crear a mano la VM DNS en `onprem-sim` |
 | Sin hallazgos críticos ni altos en Security Command Center | Políticas de organización, checkov en cada PR, notificación de hallazgos altos y críticos a Pub/Sub | **Pendiente del primer apply** y de activar SCC (pendiente 2). checkov sin GCP no equivale a SCC |
 | Simulacro de DR dentro del RTO | Réplica de Cloud SQL, bucket de doble región, `dr_active`; estado multirregional, VPN de DR y balanceador interno por región (ADR 0022); [runbook 04](docs/runbooks/04-conmutacion-a-dr.md) con tabla de tiempos | **Pendiente del primer apply.** RTO ≤ 4 h y RPO ≤ 15 min son objetivos sin medir |

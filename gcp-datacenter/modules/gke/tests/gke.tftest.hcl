@@ -172,6 +172,19 @@ run "prod_no_puede_apagar_la_proteccion_contra_borrado" {
   }
 }
 
+run "prod_retiro_deliberado_quita_la_proteccion" {
+  command = plan
+
+  variables {
+    teardown = true
+  }
+
+  assert {
+    condition     = google_container_cluster.this.deletion_protection == false
+    error_message = "Con teardown la protección contra borrado se quita también en prod (vuelta de DR, runbook 04)."
+  }
+}
+
 run "dev_zonal_sin_proteccion" {
   command = plan
 

@@ -34,6 +34,23 @@ En la etapa 4 (`stages/4-projects/envs/<env>/artifacts.tf`), por cada aplicació
   cuenta `gke_nodes`, a la cuenta `mig` y al agente de Cloud Run (Cloud Run descarga la imagen
   con su agente). La salida `artifact_registry_repositories` publica
   `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>` por aplicación.
+- **Publicación.** `roles/artifactregistry.writer` sobre el repositorio de cada aplicación a los
+  miembros de `artifact_registry_publishers[<app>]`, validados: solo `serviceAccount:` y
+  `group:` (nunca `user:`, `allUsers` ni `allAuthenticatedUsers`) y solo llaves de
+  `applications`. En prod, `artifactregistry.googleapis.com` es servicio restringido y la regla
+  de entrada de la etapa 2 solo admite a las cuentas de las etapas, así que la etapa 4 (que ya
+  tiene `policyEditor` sobre la política para las altas) agrega una regla de entrada por
+  aplicación con publicadores: sus identidades, desde cualquier origen de red (como la regla de
+  la etapa 2), solo hacia el proyecto de servicio de la aplicación y solo
+  `artifactregistry.googleapis.com`; con el mismo criterio de modo que las altas
+  (`..._ingress_policy` con el perímetro forzado, `..._dry_run_ingress_policy` en dry-run).
+  `identities` admite cuentas de servicio, grupos e identidades de terceros individuales (no
+  `principalSet://`), según la descripción del esquema del proveedor 6.50.0. Esa regla solo
+  convive con el perímetro de la etapa 2 si este ignora sus `ingress_policies` y la regla de
+  las cuentas de etapa pasa a un recurso de política aparte: es un cambio pendiente en
+  `modules/vpc-sc` y `stages/2-security` (pendiente 53). Las imágenes se referencian con una
+  versión o un digest, nunca `latest`: con etiquetas inmutables una etiqueta publicada no se
+  mueve.
 - **Política.** `google_binary_authorization_policy.this` con
   `global_policy_evaluation_mode = "ENABLE"`; regla por defecto `ALWAYS_DENY` con
   `ENFORCED_BLOCK_AND_AUDIT_LOG`; lista de permitidos con `<ruta del repositorio>/**` más
@@ -63,12 +80,14 @@ En la etapa 4 (`stages/4-projects/envs/<env>/artifacts.tf`), por cada aplicació
 - Negativas: cualquier imagen pública (incluida la de muestra `us-docker.pkg.dev/cloudrun/container/hello`
   que usa `tests/e2e/config.example.json`) se rechaza al desplegar, salvo que se copie al
   repositorio o se agregue su patrón a `binary_authorization_allowlist_patterns`. El proceso de
-  la aplicación tiene que publicar en el repositorio antes de desplegar.
+  la aplicación tiene que publicar en el repositorio antes de desplegar, con una identidad de
+  `artifact_registry_publishers`.
 - Sin comprobar: que la etapa 4, como creadora del proyecto, pueda crear el repositorio, su IAM
   y la política (si no, necesita `roles/artifactregistry.admin` y
   `roles/binaryauthorization.policyEditor` en él), y que Artifact Registry funcione con el
   perímetro de prod forzado (`artifactregistry.googleapis.com` es servicio restringido;
   `binaryauthorization.googleapis.com` no está en la lista).
 - Primer apply: la llave del repositorio (punto 41), la política con una imagen permitida y otra
-  rechazada en Cloud Run y GKE (punto 42) y los permisos de la etapa 4 (punto 47) de
+  rechazada en Cloud Run y GKE (punto 42), los permisos de la etapa 4 (punto 47) y la
+  publicación a través del perímetro (punto 53) de
   [`docs/pendientes-apply.md`](../pendientes-apply.md).

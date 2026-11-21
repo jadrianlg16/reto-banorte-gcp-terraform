@@ -28,11 +28,21 @@ real puede probar está marcado **VERIFICAR**.
 | `scripts (autopruebas)` | `scripts/selftest.sh`: los scripts de los flujos con datos de `scripts/testdata/` |
 | `terraform-docs al día` | `scripts/docs.sh --check` |
 | `raíces afectadas`, `plan <raíz>` (uno por raíz), `comentario del plan` | Solo con GCP. El nombre de cada plan cambia con el PR: no se puede exigir uno por uno |
-| `plan-gate` | Siempre (`if: always()`). Falla si `raíces afectadas` o algún `plan <raíz>` (que incluye Conftest sobre el plan real) terminó en `failure` o `cancelled`, o si con GCP habilitado no corrió lo que debía. Pasa cuando la omisión es legítima: `GCP_ENABLED` distinto de `true`, o ninguna raíz afectada |
+| `plan-gate` | Siempre (`if: always()`). Decide `scripts/plan-gate.sh` (probado en `scripts/selftest.sh`). Falla si `raíces afectadas` o algún `plan <raíz>` (que incluye Conftest sobre el plan real) terminó en `failure` o `cancelled`, si con GCP habilitado no corrió lo que debía, o si el PR viene de un fork y toca raíces (abajo). Pasa cuando la omisión es legítima: `GCP_ENABLED` distinto de `true` (y el PR no es de un fork que toque raíces), o ninguna raíz afectada |
 
 `plan-gate` es lo que hace que una violación de política en el plan real bloquee el merge: sin
 él, un trabajo de plan fallido no bloquea nada porque su nombre no se puede marcar como
 obligatorio, y un trabajo omitido cuenta como aprobado.
+
+**PR desde un fork.** HIPÓTESIS (documentación de GitHub, no probado): un `pull_request` desde
+un fork corre con un token de solo lectura, sin token OIDC (no hay Workload Identity) y sin las
+variables del repositorio, así que `GCP_ENABLED` llegaría vacío y, sin una regla propia,
+`plan-gate` pasaría como si GCP estuviera apagado. Por eso `raíces afectadas` corre también en
+forks (no necesita GCP), `plan <raíz>` y `comentario del plan` no corren en forks, y
+`plan-gate` falla con un mensaje explícito si el fork toca alguna raíz, aunque `GCP_ENABLED`
+esté apagado (no se puede distinguir de las variables ocultas). Un fork que no toca raíces
+pasa. Para un cambio de Terraform que llega por fork, una persona con escritura sube la rama al
+repositorio y abre el PR desde ahí.
 
 ### 1.2 `apply.yml`
 
@@ -51,6 +61,10 @@ Cada raíz llama a `_terraform-root.yml`, que tiene dos trabajos:
 
 **`plan <raíz>`** (sin entorno de GitHub):
 
+0. `scripts/check-main-tip.sh "$GITHUB_SHA"`: el commit de la ejecución tiene que seguir siendo
+   la punta de `main` (`git ls-remote origin refs/heads/main`). Si no lo es, falla sin planear.
+   Ver "Ejecuciones viejas" abajo. Además guarda la huella (SHA-256) de `GCP_TFVARS_JSON`,
+   `GCP_STAGE_SERVICE_ACCOUNTS` y `GCP_STATE_BUCKET` para compararla en el apply (§2).
 1. Autenticación por Workload Identity Federation con la cuenta de la etapa
    (`GCP_STAGE_SERVICE_ACCOUNTS[<etapa>]`). Los spokes usan la de `3-networks`.
 2. `terraform.tfvars.example` → `terraform.tfvars`, y encima `zz-ci.auto.tfvars.json` con
@@ -70,12 +84,28 @@ Cada raíz llama a `_terraform-root.yml`, que tiene dos trabajos:
 
 1. El entorno aplica sus reglas antes de que el trabajo empiece (revisores en `common` y
    `prod`). Sin cambios, el trabajo se omite: no hay pedido de aprobación.
-2. Mismos pasos 1 a 4 sobre el mismo commit, y huella del plan nuevo. Si no es igual a la
+2. Huella de las tres variables igual a la del trabajo `plan`; si no, falla antes de `init`
+   con un mensaje que nombra el entorno (§2).
+3. Mismos pasos 1 a 4 sobre el mismo commit, y huella del plan nuevo. Si no es igual a la
    revisada (algo cambió entre el plan y la aprobación), falla sin aplicar nada: hay que volver
    a correr el flujo y revisar el plan nuevo.
-3. Conftest sobre ese plan.
-4. `terraform apply tfplan`: el archivo que revisó Conftest en este mismo trabajo, cuyo
+4. Conftest sobre ese plan.
+5. Otra vez `scripts/check-main-tip.sh "$GITHUB_SHA"`, justo antes del apply: `main` pudo
+   avanzar mientras se esperaba la aprobación.
+6. `terraform apply tfplan`: el archivo que revisó Conftest en este mismo trabajo, cuyo
    contenido es el que se aprobó.
+
+**Ejecuciones viejas.** `github.sha` queda fijo en una ejecución: un "Re-run jobs" de una
+ejecución anterior, o una aprobación que llega después de otro merge, planearía y aplicaría el
+código de ese commit encima de lo que ya aplicó una ejecución más nueva. Por eso el trabajo
+`plan` y el `apply` (justo antes de `terraform apply`) exigen que `github.sha` sea la punta de
+`origin/main`; si no, fallan sin tocar nada. Se aplica igual a un push y a `workflow_dispatch`:
+la ejecución manual sobre `main` toma la punta del momento en que se lanza, así que pasa salvo
+que `main` avance antes de su apply; en ese caso hay que lanzarla de nuevo (o dejar correr la
+ejecución del push nuevo, que la `concurrency` pone en cola). `check-main-tip.sh` usa
+`git ls-remote` con la credencial que deja `actions/checkout` (no se pone
+`persist-credentials: false` en esos trabajos). Probado sin GitHub en `scripts/selftest.sh` con
+un remoto local; **VERIFICAR** en la primera ejecución real.
 
 Por qué se vuelve a planear en vez de pasar `tfplan` entre trabajos: el archivo del plan y su
 JSON llevan los valores sensibles en claro, y un artefacto de Actions lo descarga cualquiera con
@@ -92,7 +122,10 @@ revisado).
 nada: lee las salidas de `3-networks` (hub), `3-networks/envs/dev` y `5-workloads/envs/dev` desde
 el bucket de estado y corre las Connectivity Tests de dev (dev → Cloud SQL por IP privada,
 Internet → balanceador de dev en 443, dev → on-premises simulado). Falla si no hay ninguna prueba
-expresable, si alguna no da lo esperado o si la prueba se omite (máximo de omitidas 0 en
+expresable, si alguna no da lo esperado (se exige REACHABLE o UNREACHABLE; UNDETERMINED,
+AMBIGUOUS o un paso `abort` fallan siempre), si no se puede leer una salida o describir la
+instancia de Cloud SQL (una salida en null por un recurso deshabilitado solo omite su prueba),
+o si la prueba se omite (máximo de omitidas 0 en
 `scripts/go-test-report.sh`). Solo se salta en una ejecución manual con la entrada
 `omitir_prueba_de_humo = true`, que queda como advertencia y en el resumen con el nombre de quien
 la pidió.
@@ -127,8 +160,9 @@ Reglas:
 
 La incidencia no se cierra sola cuando el drift desaparece: se cierra a mano al resolverlo.
 
-**Recursos no administrados** (`recursos no administrados (<entorno>)`, uno por dev, qa y prod):
-objetivo "cero recursos manuales, verificado con Cloud Asset Inventory".
+**Recursos no administrados** (`recursos no administrados (<carpeta>)`, uno por cada carpeta
+de `1-org`: common, dev, qa y prod; common tiene los proyectos del hub de red, seguridad,
+registros y respaldo): objetivo "cero recursos manuales, verificado con Cloud Asset Inventory".
 
 1. Con `GCP_AUDIT_SERVICE_ACCOUNT`, descarga todos los estados del bucket
    (`gs://$GCP_STATE_BUCKET/**/default.tfstate`) a la carpeta temporal del runner; llevan
@@ -140,8 +174,13 @@ objetivo "cero recursos manuales, verificado con Cloud Asset Inventory".
    proyectos por número, cuentas de servicio por ID único y APIs habilitadas), hijo de uno
    administrado (versiones de llaves, revisiones de Cloud Run, versiones de secretos, que se
    cargan a mano por diseño, ADR 0015), VM o disco de un MIG administrado, o permitido por una
-   regla de `scripts/unmanaged-allowlist.txt` (recursos que crean Google o GKE). Lo que queda se
-   lista en el resumen y el trabajo falla.
+   regla de `scripts/unmanaged-allowlist.txt` (recursos que crean Google o GKE; de las APIs
+   habilitadas, solo una lista cerrada de dependencias que ninguna raíz declara). Lo que queda
+   se lista en el resumen y el trabajo falla.
+4. Un listado que no permite concluir nada es error (código 2, el trabajo falla): vacío, mal
+   formado (`[]`, `{}`, `{"results": []}`, elementos sin `name`) o sin ninguno de los proyectos
+   de los estados (otra carpeta, listado incompleto, permisos que faltan). Así "0 no
+   administrados" solo sale de un listado que cubre la carpeta.
 
 Un recurso creado a mano no aparece en ningún plan, así que el drift no lo ve: por eso es un
 trabajo aparte. Probado sin GCP con `scripts/testdata/unmanaged/` (`scripts/selftest.sh`).
@@ -196,6 +235,15 @@ en ningún lado.
 `GCP_TFVARS_JSON` tiene que llevar todos los valores reales: lo que no traiga se toma de
 `terraform.tfvars.example`, que solo tiene valores de ejemplo.
 
+**Solo variables de repositorio, nunca de entorno.** `GCP_TFVARS_JSON`,
+`GCP_STAGE_SERVICE_ACCOUNTS` y `GCP_STATE_BUCKET` (y en general todas las de esta tabla) se
+definen solo a nivel de repositorio. El trabajo `apply` corre en un entorno de GitHub y el de
+`plan` no: una variable con el mismo nombre en Settings → Environments → `<entorno>` le daría
+al apply otro valor que al plan revisado, y la huella del plan nunca coincidiría (o, peor, el
+apply usaría otra cuenta u otro bucket). `_terraform-root.yml` compara la huella de esas tres
+variables entre los dos trabajos y falla antes de `init` con un mensaje que nombra el entorno;
+el mensaje de huella de plan distinta también lo recuerda.
+
 **Secretos** (Settings → Secrets and variables → Actions → Secrets):
 
 | Secreto | Uso |
@@ -227,7 +275,7 @@ Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se 
    las cuentas de etapa), y estos roles de solo lectura (**VERIFICAR** con la documentación y
    la primera corrida):
    - `roles/storage.objectViewer` en el bucket de estado (lee todos los prefijos);
-   - `roles/cloudasset.viewer` en las carpetas dev, qa y prod (`search-all-resources`);
+   - `roles/cloudasset.viewer` en las carpetas common, dev, qa y prod (`search-all-resources`);
    - `roles/networkmanagement.admin` en el proyecto host de dev (crear y borrar las
      Connectivity Tests), `roles/compute.networkViewer` en los proyectos host de dev y del hub,
      y `roles/cloudsql.viewer` en los proyectos de servicio de dev;

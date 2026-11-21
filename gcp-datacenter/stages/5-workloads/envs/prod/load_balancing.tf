@@ -134,6 +134,27 @@ locals {
 
   internal_lb_enabled = var.enable_internal_lb && anytrue(values(local.internal_backend_enabled))
 
+  # Certificado del balanceador interno por región, separado del balanceador: existe en la
+  # región primaria y, con enable_dr, también en la de DR aunque dr_active sea false. Así el
+  # certificado de DR se emite antes de un incidente y la conmutación solo crea el balanceador.
+  internal_cert_regions = local.internal_lb_enabled ? (var.enable_dr ? local.regions : { primary = var.primary_region }) : {}
+
+  # "<región>/<dominio con guiones>" → región y dominio de cada autorización DNS.
+  internal_cert_authorizations = merge([
+    for region_key in keys(local.internal_cert_regions) : {
+      for d in var.internal_domain_names : "${region_key}/${replace(d, ".", "-")}" => {
+        region_key = region_key
+        domain     = d
+      }
+    }
+  ]...)
+
+  # Mismo nombre base que el balanceador interno de cada región (§4.2, módulo load-balancer).
+  internal_lb_base_names = {
+    for k, r in local.regions : k => "${var.prefix}-${var.environment}-app-${var.application}-ilb-${var.region_codes[r]}"
+  }
+  internal_cert_suffix = substr(sha256(join(",", sort(var.internal_domain_names))), 0, 8)
+
   # El mismo backend por defecto que el externo si el interno lo tiene; si no, run o mig.
   internal_default_backend = (
     lookup(local.internal_backend_enabled, coalesce(var.lb_default_backend, "run"), false)
@@ -198,8 +219,9 @@ module "internal_lb" {
   backends        = local.internal_backends[each.key]
   default_backend = local.internal_default_backend
 
-  # VERIFICAR-EN-APPLY: crear en la zona DNS pública del dominio los registros de dns_authorization_records para que se emita el certificado interno (uno por región).
-  domain_names = var.internal_domain_names
+  # Certificado de su región, creado abajo y no por el módulo: el de DR ya existe (y está
+  # emitido) antes de que dr_active cree este balanceador.
+  certificate_manager_certificates = [google_certificate_manager_certificate.internal[each.key].id]
 
   labels = local.labels
 
@@ -210,4 +232,45 @@ module "internal_lb" {
 moved {
   from = module.internal_lb["internal"]
   to   = module.internal_lb["primary"]
+}
+
+# Autorizaciones DNS y certificado administrado por Google del balanceador interno, uno por
+# región de local.internal_cert_regions (primaria y, con enable_dr, DR). Mismos nombres que
+# creaba el módulo load-balancer cuando no recibía certificados (sin moved: no hay estado
+# aplicado de la etapa).
+# VERIFICAR-EN-APPLY: crear en la zona DNS pública del dominio los registros de la salida
+# internal_lb_dns_authorization_records_by_region (los de las dos regiones, antes de un
+# incidente) y que el certificado regional de DR quede ACTIVE sin balanceador que lo use.
+resource "google_certificate_manager_dns_authorization" "internal" {
+  for_each = local.internal_cert_authorizations
+
+  project  = local.project_id
+  location = local.regions[each.value.region_key]
+  name     = "${local.internal_lb_base_names[each.value.region_key]}-dnsauth-${substr(sha256(each.value.domain), 0, 8)}"
+  domain   = each.value.domain
+  type     = "PER_PROJECT_RECORD"
+  labels   = local.labels
+
+  depends_on = [terraform_data.upstream_checks]
+}
+
+resource "google_certificate_manager_certificate" "internal" {
+  for_each = local.internal_cert_regions
+
+  project  = local.project_id
+  location = each.value
+  name     = "${local.internal_lb_base_names[each.key]}-cert-${local.internal_cert_suffix}"
+  labels   = local.labels
+
+  managed {
+    domains = var.internal_domain_names
+    dns_authorizations = [
+      for k, a in local.internal_cert_authorizations : google_certificate_manager_dns_authorization.internal[k].id if a.region_key == each.key
+    ]
+  }
+
+  # El nombre cambia con los dominios: el nuevo se emite antes de soltar el anterior.
+  lifecycle {
+    create_before_destroy = true
+  }
 }

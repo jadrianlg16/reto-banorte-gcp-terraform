@@ -184,6 +184,33 @@ variable "binary_authorization_attestors" {
   }
 }
 
+variable "artifact_registry_publishers" {
+  description = <<-EOT
+    Identidades que publican imágenes en el repositorio de cada aplicación: llave de
+    applications → miembros con roles/artifactregistry.writer sobre ese repositorio. Solo
+    serviceAccount:<cuenta>@<...>.gserviceaccount.com o group:<correo>; nunca user:, allUsers ni
+    allAuthenticatedUsers (la publicación es del pipeline de la aplicación, no de personas). En
+    prod las mismas identidades entran por una regla de entrada del perímetro de VPC-SC limitada a
+    artifactregistry.googleapis.com en el proyecto de servicio de la aplicación (vpc_sc.tf).
+  EOT
+  type        = map(list(string))
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for app in keys(var.artifact_registry_publishers) : contains(keys(var.applications), app)])
+    error_message = "Cada llave de artifact_registry_publishers debe ser una llave de applications."
+  }
+  validation {
+    condition = alltrue(flatten([
+      for members in values(var.artifact_registry_publishers) : [
+        for m in members : can(regex("^(serviceAccount:[a-z0-9][a-z0-9.-]*@[a-z0-9.-]+\\.gserviceaccount\\.com|group:[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})$", m))
+      ]
+    ]))
+    error_message = "Cada publicador debe ser serviceAccount:<cuenta>@<...>.gserviceaccount.com o group:<correo>; no se admiten user:, allUsers ni allAuthenticatedUsers."
+  }
+}
+
 variable "deletion_policy" {
   description = "deletion_policy de los proyectos de servicio: PREVENT (falla al destruir), ABANDON o DELETE. En prod solo PREVENT (lo exige project-factory); en dev se puede usar DELETE para el destroy de prueba."
   type        = string

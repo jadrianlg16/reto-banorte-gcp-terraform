@@ -423,6 +423,9 @@ run "prod_perimetro_en_dry_run_y_dr" {
   variables {
     environment     = "prod"
     deletion_policy = "PREVENT"
+    artifact_registry_publishers = {
+      app = ["serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com", "group:app-release@example.com"]
+    }
   }
 
   override_data {
@@ -490,6 +493,26 @@ run "prod_perimetro_en_dry_run_y_dr" {
     condition     = contains(keys(module.iam.bindings), "subnet/app/run_dr/run") && contains(keys(module.iam.bindings), "subnet/workloads/app_dr")
     error_message = "El agente de Cloud Run y el pipeline deben poder usar las subredes de DR."
   }
+  # Publicación a través del perímetro en dry-run: regla en el spec, solo Artifact Registry y
+  # solo el proyecto de servicio de la aplicación.
+  assert {
+    condition = (
+      length(google_access_context_manager_service_perimeter_ingress_policy.artifact_publishers) == 0 &&
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.artifact_publishers["app"].perimeter == "accessPolicies/000000000000/servicePerimeters/bnt_prod_sec_perimeter" &&
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.artifact_publishers["app"].ingress_from[0].identities == tolist(["group:app-release@example.com", "serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com"]) &&
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.artifact_publishers["app"].ingress_to[0].resources == tolist(["projects/123456789012"]) &&
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.artifact_publishers["app"].ingress_to[0].operations[0].service_name == "artifactregistry.googleapis.com"
+    )
+    error_message = "En dry-run los publicadores entran al spec del perímetro solo hacia Artifact Registry del proyecto de servicio."
+  }
+  assert {
+    condition = (
+      google_artifact_registry_repository_iam_member.writer["app/serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com"].role == "roles/artifactregistry.writer" &&
+      google_artifact_registry_repository_iam_member.writer["app/group:app-release@example.com"].repository == "bnt-prod-app-app-images-us" &&
+      length(google_artifact_registry_repository_iam_member.writer) == 2
+    )
+    error_message = "Cada publicador recibe writer solo sobre el repositorio de su aplicación."
+  }
 }
 
 run "prod_perimetro_forzado" {
@@ -498,6 +521,9 @@ run "prod_perimetro_forzado" {
   variables {
     environment     = "prod"
     deletion_policy = "PREVENT"
+    artifact_registry_publishers = {
+      app = ["serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com", "group:app-release@example.com"]
+    }
   }
 
   override_data {
@@ -524,6 +550,15 @@ run "prod_perimetro_forzado" {
   assert {
     condition     = google_access_context_manager_service_perimeter_resource.this["service/app"].resource == "projects/123456789012" && google_access_context_manager_service_perimeter_resource.this["host"].resource == "projects/987654321098" && length(google_access_context_manager_service_perimeter_dry_run_resource.this) == 0
     error_message = "Con vpc_sc_enforced = true el proyecto entra con el recurso de alta forzada."
+  }
+  assert {
+    condition = (
+      length(google_access_context_manager_service_perimeter_dry_run_ingress_policy.artifact_publishers) == 0 &&
+      google_access_context_manager_service_perimeter_ingress_policy.artifact_publishers["app"].ingress_to[0].resources == tolist(["projects/123456789012"]) &&
+      google_access_context_manager_service_perimeter_ingress_policy.artifact_publishers["app"].ingress_to[0].operations[0].service_name == "artifactregistry.googleapis.com" &&
+      google_access_context_manager_service_perimeter_ingress_policy.artifact_publishers["app"].title == "bnt-prod-app-artifact-push"
+    )
+    error_message = "Con el perímetro forzado la regla de los publicadores va en status (recurso de política de entrada forzada)."
   }
 }
 
@@ -570,6 +605,56 @@ run "binary_authorization_con_atestadores_y_patrones" {
     )
     error_message = "Con atestadores la regla por defecto exige atestación y los patrones extra se suman al repositorio propio."
   }
+}
+
+# Fuera de prod no hay perímetro: los publicadores solo reciben writer sobre el repositorio.
+run "dev_publicadores_sin_perimetro" {
+  command = plan
+
+  variables {
+    artifact_registry_publishers = {
+      app = ["serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com"]
+    }
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.writer["app/serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com"].repository == "bnt-dev-app-app-images-us"
+    error_message = "El publicador recibe writer sobre el repositorio de dev."
+  }
+  assert {
+    condition     = length(google_access_context_manager_service_perimeter_ingress_policy.artifact_publishers) == 0 && length(google_access_context_manager_service_perimeter_dry_run_ingress_policy.artifact_publishers) == 0
+    error_message = "Fuera de prod no hay reglas de entrada de VPC-SC."
+  }
+}
+
+run "rechaza_publicador_persona" {
+  command = plan
+
+  variables {
+    artifact_registry_publishers = { app = ["user:alguien@example.com"] }
+  }
+
+  expect_failures = [var.artifact_registry_publishers]
+}
+
+run "rechaza_publicador_publico" {
+  command = plan
+
+  variables {
+    artifact_registry_publishers = { app = ["allUsers"] }
+  }
+
+  expect_failures = [var.artifact_registry_publishers]
+}
+
+run "rechaza_publicador_de_aplicacion_inexistente" {
+  command = plan
+
+  variables {
+    artifact_registry_publishers = { otra = ["group:release@example.com"] }
+  }
+
+  expect_failures = [var.artifact_registry_publishers]
 }
 
 run "rechaza_patron_que_admite_todo" {

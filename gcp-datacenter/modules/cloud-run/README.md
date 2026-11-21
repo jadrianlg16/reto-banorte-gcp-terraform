@@ -67,7 +67,7 @@ No modules.
 | <a name="input_concurrency"></a> [concurrency](#input\_concurrency) | Solicitudes simultáneas máximas por instancia. | `number` | `80` | no |
 | <a name="input_container_port"></a> [container\_port](#input\_container\_port) | Puerto en el que escucha el contenedor. | `number` | `8080` | no |
 | <a name="input_cpu"></a> [cpu](#input\_cpu) | Límite de CPU del contenedor (por ejemplo, 1 o 2). | `string` | `"1"` | no |
-| <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor. | `bool` | `false` | no |
+| <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor (salvo teardown). | `bool` | `false` | no |
 | <a name="input_enable_binary_authorization"></a> [enable\_binary\_authorization](#input\_enable\_binary\_authorization) | Aplica la política de Binary Authorization del proyecto a las revisiones del servicio. | `bool` | `true` | no |
 | <a name="input_env_vars"></a> [env\_vars](#input\_env\_vars) | Variables de entorno sin secretos (nombre → valor). Los secretos van en secret\_env. | `map(string)` | `{}` | no |
 | <a name="input_health_check_path"></a> [health\_check\_path](#input\_health\_check\_path) | Ruta HTTP de las sondas de arranque y de vida del contenedor. null: solo la sonda TCP de arranque por defecto de Cloud Run. | `string` | `null` | no |
@@ -81,12 +81,14 @@ No modules.
 | <a name="input_region_codes"></a> [region\_codes](#input\_region\_codes) | Mapa región → código corto que se agrega a los nombres (§4.2 del contrato). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_request_timeout"></a> [request\_timeout](#input\_request\_timeout) | Tiempo máximo de una solicitud, en segundos con sufijo s (por ejemplo, 300s). | `string` | `"300s"` | no |
 | <a name="input_secret_env"></a> [secret\_env](#input\_secret\_env) | Variables de entorno leídas de Secret Manager (nombre → { secret, version }). secret es el ID del secreto de la etapa 2; el valor nunca pasa por Terraform. | <pre>map(object({<br/>    secret  = string<br/>    version = optional(string, "latest")<br/>  }))</pre> | `{}` | no |
+| <a name="input_teardown"></a> [teardown](#input\_teardown) | Retiro deliberado del servicio: deletion\_protection = false también en prod, para que un apply posterior lo pueda destruir. Solo para una instancia que se va a quitar (el servicio de DR en la vuelta a la región primaria, runbook 04); nunca en el que atiende el tráfico normal. | `bool` | `false` | no |
 | <a name="input_vpc_egress"></a> [vpc\_egress](#input\_vpc\_egress) | Tráfico de salida que pasa por la VPC: ALL\_TRAFFIC (todo, controlado por firewall y Cloud NAT) o PRIVATE\_RANGES\_ONLY. | `string` | `"ALL_TRAFFIC"` | no |
 
 ## Outputs
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_deletion_protection"></a> [deletion\_protection](#output\_deletion\_protection) | Protección contra borrado efectiva del servicio (true en prod salvo teardown). |
 | <a name="output_kms_key"></a> [kms\_key](#output\_kms\_key) | Llave KMS (CMEK) configurada en la plantilla del servicio. |
 | <a name="output_location"></a> [location](#output\_location) | Región del servicio. |
 | <a name="output_neg_id"></a> [neg\_id](#output\_neg\_id) | ID del NEG sin servidor; es el backend que recibe el módulo load-balancer. |

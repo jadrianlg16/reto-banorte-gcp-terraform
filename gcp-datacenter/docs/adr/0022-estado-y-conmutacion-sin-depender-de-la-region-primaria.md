@@ -53,6 +53,24 @@ ejecutar tal como estaba escrita:
   región, y el registro DNS interno decide a cuál va el tráfico. Salidas:
   `internal_lb_ip_address` (la región activa), `internal_lb_ip_addresses` (todas) e
   `internal_lb_dns_authorization_records_by_region`.
+- **Certificado interno de DR antes del incidente (etapa 5).** La autorización DNS y el
+  certificado de Certificate Manager del balanceador interno los crea la raíz por región
+  (`google_certificate_manager_certificate.internal`) y se los pasa al módulo por
+  `certificate_manager_certificates`. Con `enable_dr` existe también el de `dr_region` aunque
+  `dr_active` sea false: sus registros de autorización se crean al dar de alta el entorno y la
+  conmutación ya no espera la emisión. El registro DNS interno de `internal_domain_names` no lo
+  administra ninguna etapa (la zona no está en el repositorio y la cuenta de la etapa 5 no tiene
+  `dns.admin`); la salida `internal_lb_dns_records` da los registros A de la región activa y
+  moverlos es el único paso manual de DNS del runbook 04.
+- **Vuelta a la región primaria (etapa 5).** En prod los módulos `gke` y `cloud-run` fijan
+  `deletion_protection = true` y el proveedor se niega a destruir un clúster o un servicio
+  protegido, así que `dr_active = false` sola no puede retirar el cómputo de DR. `dr_teardown`
+  (exige `enable_dr`) pasa `teardown = true` solo a las instancias `dr` de esos módulos: un
+  primer apply con `dr_active = true` quita la protección en el lugar y el segundo, con
+  `dr_active = false`, destruye el cómputo y el balanceador interno de DR. La región primaria
+  nunca pierde la protección. El MIG y el balanceador interno no tienen protección contra
+  borrado; la réplica de Cloud SQL, el certificado interno de DR y los planes de respaldo
+  dependen de `enable_dr`/`enable_backup` y la vuelta no los toca.
 - **GKE durante la conmutación (etapa 5).** `dr_active = true` planea con los `tfvars` normales:
   mientras `gke_lb_negs.dr` esté vacío, el backend `gke` sale del balanceador externo y el
   backend por defecto pasa al primero habilitado (`run`, `mig`, `gke`). Si GKE es el único
@@ -73,6 +91,13 @@ ejecutar tal como estaba escrita:
   recursos en la región caída.
 - **Exigir en el runbook `gke_lb_negs.primary = []` al conmutar.** Rechazado: depende de que la
   persona lo recuerde durante el incidente y cambia el backend por defecto sin aviso.
+- **Conservar el cómputo de DR después de la vuelta.** Rechazado: deja un clúster y un servicio
+  sin tráfico, con costo, y el siguiente `dr_active = false` seguiría sin poder retirarlos.
+- **Quitar la protección contra borrado de todo el cómputo de prod durante la vuelta.**
+  Rechazado: dejaría la región primaria sin protección justo cuando vuelve a atender el tráfico.
+- **Registro DNS interno administrado por la etapa 5.** Rechazado con los permisos actuales: la
+  zona del dominio interno no está en el repositorio y darle `dns.admin` a la etapa 5 sobre el
+  hub rompe el límite entre etapas.
 
 ## Consecuencias
 

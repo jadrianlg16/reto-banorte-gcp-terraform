@@ -31,6 +31,8 @@ module "gke" {
   node_resource_manager_tags = local.gke_node_secure_tags
   enable_backup_agent        = true
   deletion_protection        = var.deletion_protection
+  # Solo la instancia de DR se puede retirar (vuelta a la primaria, runbook 04).
+  teardown = each.key == "dr" && var.dr_teardown
 
   labels = local.labels
 
@@ -104,6 +106,8 @@ module "cloud_run" {
   # del balanceador, sin verificación de invocador y sin allUsers.
   public_via_load_balancer = true
   deletion_protection      = var.deletion_protection
+  # Solo la instancia de DR se puede retirar (vuelta a la primaria, runbook 04).
+  teardown = each.key == "dr" && var.dr_teardown
 
   labels = local.labels
 

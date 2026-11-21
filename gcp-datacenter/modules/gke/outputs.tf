@@ -42,3 +42,8 @@ output "node_pool_names" {
   description = "Mapa llave de gke_node_pools → nombre del pool de nodos."
   value       = { for k, p in google_container_node_pool.this : k => p.name }
 }
+
+output "deletion_protection" {
+  description = "Protección contra borrado efectiva del clúster (true en prod salvo teardown)."
+  value       = google_container_cluster.this.deletion_protection
+}

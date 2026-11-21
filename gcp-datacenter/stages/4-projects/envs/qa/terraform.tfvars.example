@@ -23,6 +23,13 @@ artifact_registry_location              = "us"
 binary_authorization_allowlist_patterns = []
 binary_authorization_attestors          = []
 
+# Quién publica imágenes en el repositorio de cada aplicación (writer sobre el repositorio y, en
+# prod, regla de entrada del perímetro solo para Artifact Registry). Solo serviceAccount: o group:;
+# reemplazar por la cuenta o el grupo del pipeline de la aplicación.
+artifact_registry_publishers = {
+  app = ["serviceAccount:bnt-ci-app@example-cicd.iam.gserviceaccount.com"]
+}
+
 applications = {
   app = {
     apis    = []
