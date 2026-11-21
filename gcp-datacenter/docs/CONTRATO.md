@@ -531,6 +531,11 @@ que viola una política" se demuestra sin GCP.
 | Integración | `tests/` con Terratest, un proyecto efímero por módulo | Solo se escribe y compila |
 | Extremo a extremo | `tests/e2e/`: aplica 0 → 5, segundo plan sin cambios, conectividad, destroy de dev | Solo se escribe |
 
+`scripts/check.sh` no da por hecho que `checkov` esté en el PATH: en Windows el lanzador
+`checkov.cmd` busca el Python del sistema y falla (comprobado el 20 nov 2026 con checkov 3.4.6
+instalado con uv). El script lee el comando de la variable de entorno `CHECKOV_CMD` y, si no
+está definida, usa `checkov`. En Windows con uv: `uvx --from checkov python -m checkov.main`.
+
 Cada prueba unitaria comprueba al menos: que las validaciones rechazan una entrada mala
 (`expect_failures`), que los nombres siguen §4.2 y que la configuración "Exige" del módulo
 está en el plan.
