@@ -54,7 +54,9 @@ override_data {
         "4-projects"  = "bnt-tf-4-projects@bnt-bootstrap-seed.iam.gserviceaccount.com"
         "5-workloads" = "bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
       }
-      workload_identity_provider = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/providers/bnt-bootstrap-sec-github"
+      workload_identity_provider     = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/providers/bnt-bootstrap-sec-github"
+      kms_secret_iam_role_id         = "organizations/000000000000/roles/bntTfKmsSecretIamGranter"
+      secret_container_admin_role_id = "organizations/000000000000/roles/bntTfSecretContainerAdmin"
     }
   }
 }
@@ -196,11 +198,11 @@ run "plan_con_valores_de_ejemplo" {
     condition     = module.iam.bindings["sa|4-projects|folder:prod|roles/resourcemanager.projectCreator"].scope == "folder"
     error_message = "La cuenta de 4-projects crea proyectos en las carpetas de entorno."
   }
+  # 5-workloads no recibe nada en las carpetas de entorno (contienen también el host
+  # net-spoke): sus roles van por proyecto de servicio y los da 4-projects.
   assert {
-    condition = alltrue([for e in ["dev", "qa", "prod"] :
-      module.iam.bindings["sa|5-workloads|folder:${e}|roles/certificatemanager.editor"].member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
-    ])
-    error_message = "La cuenta de 5-workloads necesita certificatemanager.editor en cada carpeta de entorno (certificado del balanceador interno)."
+    condition     = length([for k, b in module.iam.bindings : k if b.member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"]) == 0
+    error_message = "La cuenta de 5-workloads no debe recibir ningún rol en 1-org."
   }
   assert {
     condition = alltrue([for e in ["dev", "qa", "prod"] :
@@ -208,24 +210,44 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "La cuenta de 4-projects necesita tagAdmin en las carpetas de entorno (tagUser sobre las etiquetas seguras del spoke)."
   }
+  # projectIamAdmin delegado de 4-projects en las carpetas de entorno: exactamente sus tres roles.
   assert {
-    condition = alltrue(flatten([
-      for s, roles in {
-        "4-projects"  = ["roles/container.hostServiceAgentUser"]
-        "5-workloads" = ["roles/cloudsql.client", "roles/cloudsql.instanceUser"]
-        } : [
-        for b in local.iam_bindings : [
-          b.condition != null,
-          alltrue([for r in roles : strcontains(b.condition.expression, "'${r}'")]),
-          strcontains(b.condition.expression, "modifiedGrantsByRole"),
-        ] if b.role == "roles/resourcemanager.projectIamAdmin" && b.member == "serviceAccount:bnt-tf-${s}@bnt-bootstrap-seed.iam.gserviceaccount.com"
-      ]
-    ]))
-    error_message = "projectIamAdmin de 4-projects y 5-workloads debe quedar limitado por condición a los roles que asignan."
+    condition = alltrue([for e in ["dev", "qa", "prod"] :
+      module.iam.conditions["sa|4-projects|folder:${e}|roles/resourcemanager.projectIamAdmin"].expression == "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['roles/compute.networkUser', 'roles/compute.networkViewer', 'roles/container.hostServiceAgentUser'])"
+    ])
+    error_message = "projectIamAdmin de 4-projects debe quedar limitado a networkUser, networkViewer y hostServiceAgentUser."
   }
   assert {
-    condition     = length([for b in local.iam_bindings : b if b.role == "roles/resourcemanager.projectIamAdmin" && b.scope == "folder"]) == 6
-    error_message = "projectIamAdmin condicionado: 4-projects y 5-workloads en dev, qa y prod (6 asignaciones)."
+    condition     = length([for b in local.iam_bindings : b if b.role == "roles/resourcemanager.projectIamAdmin" && b.scope == "folder"]) == 3
+    error_message = "projectIamAdmin condicionado en carpetas: solo 4-projects en dev, qa y prod (3 asignaciones)."
+  }
+
+  # 2-security: sin secretmanager.admin (incluye versions.access) y con projectIamAdmin
+  # condicionado en el proyecto security al único rol que asigna ahí.
+  assert {
+    condition = alltrue([
+      module.iam.bindings["sa|2-security|project:security|organizations/000000000000/roles/bntTfSecretContainerAdmin"].resource == "bnt-common-security",
+      length([for b in local.iam_bindings : b if b.role == "roles/secretmanager.admin"]) == 0,
+    ])
+    error_message = "2-security administra los secretos con el rol personalizado sin acceso a valores, no con secretmanager.admin."
+  }
+  assert {
+    condition = alltrue([
+      module.iam.bindings["sa|2-security|project:security|roles/resourcemanager.projectIamAdmin"].resource == "bnt-common-security",
+      module.iam.conditions["sa|2-security|project:security|roles/resourcemanager.projectIamAdmin"].expression == "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['organizations/000000000000/roles/bntTfKmsSecretIamGranter'])",
+      length([for b in local.iam_bindings : b if b.role == "roles/resourcemanager.projectIamAdmin" && b.condition == null]) == 0,
+    ])
+    error_message = "projectIamAdmin de 2-security en security debe quedar limitado al rol personalizado de 4-projects; ningún projectIamAdmin sin condición."
+  }
+
+  # Tema de SCC: llave regional, así que el almacenamiento se limita a su región y se impone
+  # en tránsito.
+  assert {
+    condition = alltrue([
+      google_pubsub_topic.scc_findings.message_storage_policy[0].allowed_persistence_regions == toset(["us-central1"]),
+      google_pubsub_topic.scc_findings.message_storage_policy[0].enforce_in_transit == true,
+    ])
+    error_message = "El tema de SCC guarda mensajes solo en primary_region, con imposición en tránsito."
   }
 }
 

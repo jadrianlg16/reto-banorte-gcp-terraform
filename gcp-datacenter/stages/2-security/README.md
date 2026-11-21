@@ -9,8 +9,8 @@ Llaves, secretos y perímetro de VPC Service Controls (§7.2 del contrato), todo
 | Recurso | Nombre (prefix `bnt`) | Módulo / recurso |
 |---|---|---|
 | Un llavero por entorno y ubicación (`primary_region`, `dr_region`, multirregión `us`) | `bnt-<env>-sec-keyring-{usc1,use4,us}` | `kms` (una instancia por entorno y ubicación) |
-| En las regiones, una llave por uso: `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run` | `bnt-<env>-sec-<uso>` | `kms` |
-| En `us`, solo `storage` y `backup` | `bnt-<env>-sec-<uso>` | `kms` |
+| En las regiones, una llave por uso: `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run`, `artifacts` | `bnt-<env>-sec-<uso>` | `kms` |
+| En `us`, solo `storage`, `backup` y `artifacts` (repositorios de Artifact Registry de la etapa 4, en la multirregión `us`) | `bnt-<env>-sec-<uso>` | `kms` |
 | Agente de Secret Manager del proyecto y su permiso `cryptoKeyEncrypterDecrypter` sobre las llaves `secrets` regionales | `service-<n>@gcp-sa-secretmanager.iam.gserviceaccount.com` | `google_project_service_identity`, `encrypter_decrypters` de `kms` |
 | Contenedores de secretos por entorno (sin valores, ADR 0015), replicados en las dos regiones con la llave `secrets` de cada región | `bnt-<env>-sec-<nombre>` | `secrets` |
 | Política de Access Context Manager (si `access_policy_id = null`) y perímetro de prod con el proyecto `security` dentro, regla de entrada para las cinco cuentas del pipeline, dry-run por defecto (ADR 0009) | `bnt_prod_sec_perimeter` | `vpc-sc` |
@@ -40,12 +40,28 @@ llaves. `storage.googleapis.com` es obligatorio (validación).
 | `4-projects` | política de acceso | `roles/accesscontextmanager.policyEditor` | agregar los proyectos de prod al perímetro (§7.5) |
 | `4-projects` | proyecto `security` | rol personalizado `kms_secret_iam_role_id` de la etapa 0 | dar a los agentes de servicio permiso sobre las llaves y lectura de secretos (§7.5), sin poder administrar ni usar llaves |
 
+Este es el único rol que la etapa asigna sobre el proyecto `security`, y por eso su
+`projectIamAdmin` (lo da 1-org) está condicionado con
+`modifiedGrantsByRole.hasOnly(['<kms_secret_iam_role_id>'])`.
+
+**Residual conocido (secretos).** El rol de 4-projects incluye
+`secretmanager.secrets.setIamPolicy`, que necesita para dar `secretAccessor` a las cuentas de
+ejecución; con él, 4-projects podría darse `secretAccessor` a sí misma sobre cualquier secreto
+y leer su valor. No se puede limitar con una condición de concesión delegada: Google solo la
+admite en proyectos, carpetas y organizaciones, no en un secreto. Del mismo modo, la condición
+limita roles y no miembros, así que esta etapa podría asignarse a sí misma ese rol en
+`security`. Ambos cambios quedan en los registros de actividad administrativa (sink de la
+organización). Mitigación posible fuera de este diseño: un proyecto de secretos por entorno o
+asignar `secretAccessor` desde una etapa sin acceso al pipeline de PR.
+
 ## Roles que necesita la cuenta de la etapa
 
 `<prefix>-tf-2-security`: en la organización `accesscontextmanager.policyAdmin` y
 `resourcemanager.organizationViewer` (etapa 0); en el proyecto `security`
-`cloudkms.admin`, `secretmanager.admin`, `serviceusage.serviceUsageAdmin` y
-`resourcemanager.projectIamAdmin` (etapa 1); en el proyecto semilla
+`cloudkms.admin`, el rol personalizado `secret_container_admin_role_id` de la etapa 0
+(contenedores de secretos sin `secretmanager.versions.access`: la cuenta no lee valores),
+`serviceusage.serviceUsageAdmin` y `resourcemanager.projectIamAdmin` **condicionado** a
+asignar solo el rol personalizado `kms_secret_iam_role_id` (etapa 1); en el proyecto semilla
 `serviceusage.serviceUsageConsumer`; en el bucket de estado, escritura de `2-security/` y
 lectura de `0-bootstrap/` y `1-org/`.
 
@@ -86,10 +102,10 @@ pasa su número en `access_policy_id` (solo puede haber una por organización).
 
 `tests/2-security.tftest.hcl`: `mock_provider`, `override_data` de los estados de 0-bootstrap
 y 1-org con la forma de §7.0 y §7.1, y `command = plan`. Comprueba la forma de
-`kms_key_ids[entorno][ubicación][uso]` (nueve usos en las regiones, dos en `us`), nombres, el
+`kms_key_ids[entorno][ubicación][uso]` (diez usos en las regiones, tres en `us`, con la llave `artifacts`), nombres, el
 permiso del agente de Secret Manager, los secretos por entorno, el perímetro en dry-run, los
 servicios restringidos del ADR 0019, los permisos de 4-projects y el perímetro forzado con una
-política existente; y que una rotación de más de 90 días y secretos de un entorno no pedido se
+política existente (con la regla de entrada de las cinco cuentas en `status`); y que una rotación de más de 90 días y secretos de un entorno no pedido se
 rechazan.
 
 <!-- BEGIN_TF_DOCS -->

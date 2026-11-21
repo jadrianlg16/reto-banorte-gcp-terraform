@@ -47,6 +47,11 @@ output "kms_secret_iam_role_id" {
   value       = google_organization_iam_custom_role.kms_secret_iam_granter.name
 }
 
+output "secret_container_admin_role_id" {
+  description = "Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 2-security sobre el proyecto security: administra contenedores de secretos sin leer sus valores."
+  value       = google_organization_iam_custom_role.secret_container_admin.name
+}
+
 output "state_iam_conditions" {
   description = "Mapa etapa → { writes, reads } con los prefijos de estado que cada cuenta escribe y lee (tabla de §6.1), para revisión."
   value       = { for k, s in local.stages : k => { writes = s.writes, reads = s.reads } }

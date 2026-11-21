@@ -11,12 +11,26 @@ etapa.
 | Carpeta | `bootstrap` | módulo `folders` |
 | Proyecto semilla | `bnt-bootstrap-seed[-<sufijo>]` | módulo `project-factory`; APIs de esta etapa y las de nivel organización que las etapas 1 a 5 cobran a este proyecto como proyecto de cuota |
 | Registros de auditoría | `allServices` en el proyecto semilla | ADMIN_READ, DATA_READ y DATA_WRITE: toda lectura y escritura del estado queda auditada |
-| Llavero y llave KMS | `bnt-bootstrap-sec-keyring-usc1` / `bnt-bootstrap-sec-state` | módulo `kms`; rotación de 90 días, `prevent_destroy` (ADR 0008) |
-| Bucket de estado | `bnt-bootstrap-ops-tfstate[-<sufijo>]` | regional en `primary_region`, versionado, acceso uniforme, sin acceso público, CMEK con la llave anterior, `prevent_destroy`; conserva `state_versions_to_keep` versiones viejas |
+| Llavero y llave KMS | `bnt-bootstrap-sec-keyring-us` / `bnt-bootstrap-sec-state` | módulo `kms`; en la ubicación multirregional de KMS que corresponde al bucket (`us` por defecto); rotación de 90 días, `prevent_destroy` (ADR 0008) |
+| Bucket de estado | `bnt-bootstrap-ops-tfstate[-<sufijo>]` | multirregional `US` por defecto (`state_bucket_location`) o doble región configurable (`state_bucket_dual_regions`, con replicación turbo); versionado, acceso uniforme, sin acceso público, CMEK con la llave anterior, `prevent_destroy`; conserva `state_versions_to_keep` versiones viejas |
 | Cuentas de servicio | `bnt-tf-1-org` … `bnt-tf-5-workloads` | ADR 0017; en el proyecto semilla |
-| Pool y proveedor de WIF | `bnt-bootstrap-sec-wif-pool` / `bnt-bootstrap-sec-github` | §6.3 |
-| Rol personalizado | `organizations/<n>/roles/bntTfKmsSecretIamGranter` | ver "Rol personalizado" |
+| Pool y proveedor de WIF | `bnt-bootstrap-sec-wif-pool` / `bnt-bootstrap-sec-github` | §6.3; confianza por IDs numéricos del repositorio y de su dueño |
+| Roles personalizados | `organizations/<n>/roles/bntTfKmsSecretIamGranter`, `organizations/<n>/roles/bntTfSecretContainerAdmin` | ver "Roles personalizados" |
+| Política de denegación | `bnt-bootstrap-sec-deny-1-org` en la carpeta `bootstrap` | ver "Protección de la carpeta bootstrap" |
 | IAM | módulo `iam` | roles de organización, facturación, semilla, estado y WIF de cada cuenta |
+
+### Ubicación del estado
+
+El estado y su llave deben sobrevivir a la caída de `primary_region`: el runbook de
+conmutación a DR corre `terraform` (inicialización, bloqueo y `terraform_remote_state` de las
+etapas 2 a 4) durante el incidente. Por eso el bucket es multirregional (`US`) o de doble
+región configurable dentro de esa multirregión (por ejemplo `["us-central1", "us-east4"]`,
+que debe incluir `primary_region`), y la llave está en la ubicación `us` de KMS: la CMEK de
+Cloud Storage exige que el llavero esté en la misma ubicación que los datos, y para una doble
+región configurable esa ubicación es la multirregión que la contiene. La ubicación de un
+bucket no se puede cambiar después de crearlo: se decide antes del primer apply. La etapa 0
+corre antes de que exista `gcp.resourceLocations` (etapa 1), cuyo valor por defecto de
+`additional_allowed_locations` ya admite `us`.
 
 El bucket de estado se construye directamente en la raíz y no con `modules/storage`: ese
 módulo solo admite los entornos `dev`, `qa` y `prod` y el dominio `data`, y el bucket de
@@ -38,9 +52,12 @@ salen las cuentas, sus roles, las condiciones de IAM del bucket y la salida
 |---|---|---|
 | `bnt-tf-1-org` | `1-org/` | `0-bootstrap/` |
 | `bnt-tf-2-security` | `2-security/` | `0-bootstrap/`, `1-org/` |
-| `bnt-tf-3-networks` | `3-networks/hub/`, `3-networks/{dev,qa,prod}/` | `0-bootstrap/`, `1-org/` |
+| `bnt-tf-3-networks` | `3-networks/hub/`, `3-networks/{dev,qa,prod}/` | `1-org/` |
 | `bnt-tf-4-projects` | `4-projects/{dev,qa,prod}/` | `1-org/`, `2-security/`, `3-networks/{dev,qa,prod}/` |
-| `bnt-tf-5-workloads` | `5-workloads/{dev,qa,prod}/` | `1-org/`, `2-security/`, `3-networks/{dev,qa,prod}/`, `4-projects/{dev,qa,prod}/` |
+| `bnt-tf-5-workloads` | `5-workloads/{dev,qa,prod}/` | `2-security/`, `3-networks/{dev,qa,prod}/`, `4-projects/{dev,qa,prod}/` |
+
+Cada cuenta lee solo lo que sus raíces leen de verdad (`remote_state.tf`): 3-networks no lee
+`0-bootstrap` y 5-workloads no lee `1-org`.
 
 Cada condición tiene la forma
 `resource.type == "storage.googleapis.com/Bucket" || resource.name.startsWith("projects/_/buckets/<bucket>/objects/<prefijo>/") || …`.
@@ -89,25 +106,75 @@ para el repositorio autorizado.
 
 Ninguna cuenta recibe `roles/owner`, `roles/editor` ni `roles/resourcemanager.organizationAdmin`
 (la prueba lo comprueba). `1-org` con `iam.securityAdmin` puede cambiar el IAM de la
-organización: es inherente a la etapa que administra ese IAM; la mitiga el filtro de WIF.
+organización: es inherente a la etapa que administra ese IAM. Dentro de la carpeta
+`bootstrap` no lo necesita, y ahí se lo niega una política de denegación (siguiente sección).
 
-### Rol personalizado
+### Protección de la carpeta bootstrap
 
-`bntTfKmsSecretIamGranter` solo lee llaves, llaveros y secretos y cambia su IAM
-(`cloudkms.cryptoKeys.{get,list,getIamPolicy,setIamPolicy}`, `cloudkms.keyRings.{get,list}`,
-`secretmanager.secrets.{get,list,getIamPolicy,setIamPolicy}`). Es lo que necesita `4-projects`
-para dar a los agentes de servicio permiso sobre las llaves y lectura de secretos (§7.5) sin
-poder usar, administrar ni destruir llaves. Lo crea esta etapa porque crear roles de
-organización exige `roles/iam.organizationRoleAdmin`, que no tiene ninguna cuenta de etapa; la
-etapa `2-security` lo asigna sobre el proyecto `security` (salida `kms_secret_iam_role_id`).
+Por herencia, `iam.securityAdmin` y `resourcemanager.folderAdmin` de `1-org` en la
+organización también cubren la carpeta `bootstrap`, el proyecto semilla, las cuentas de las
+etapas 2 a 5 y el bucket de estado: sin más, `1-org` podría darse permiso para tomar la
+identidad de otra cuenta de etapa o ampliar su acceso al bucket. La política de denegación
+`google_iam_deny_policy.bootstrap_folder` (en `deny_policy.tf`), adjunta a la carpeta
+`bootstrap`, niega al principal
+`principal://iam.googleapis.com/projects/-/serviceAccounts/<correo de 1-org>`:
+
+- IAM, movimiento y borrado de la carpeta y del proyecto semilla
+  (`cloudresourcemanager.googleapis.com/{folders,projects}.{setIamPolicy,move,delete}`);
+- IAM de las cuentas de servicio y tomar su identidad
+  (`iam.googleapis.com/serviceAccounts.{setIamPolicy,actAs,getAccessToken,getOpenIdToken,implicitDelegation,signBlob,signJwt}`),
+  cambiarlas o borrarlas, y crear llaves;
+- IAM, cambio y borrado del bucket de estado (`storage.googleapis.com/buckets.{setIamPolicy,update,delete}`,
+  `managedFolders.setIamPolicy`, `objects.setIamPolicy`);
+- IAM y cambio de la llave del estado y destrucción de sus versiones (`cloudkms.googleapis.com/…`).
+
+Todos esos permisos están en la lista de permisos admitidos en políticas de denegación de
+Google. No se niega nada de lo que `1-org` hace legítimamente en la carpeta: leer
+`0-bootstrap/` y escribir `1-org/` en el bucket (permisos de objeto) y usar el proyecto
+semilla como proyecto de cuota. Una denegación se impone a cualquier permiso concedido,
+incluso a un rol que `1-org` se dé a sí misma en la organización.
+
+Límites que una política de denegación no cubre:
+
+- `iam.denypolicies.*` no se puede negar: `1-org` podría darse `roles/iam.denyAdmin` en la
+  organización y borrar la política. Queda en los registros de actividad administrativa de la
+  organización (sink agregado de la etapa 1).
+- Los permisos de objeto de Cloud Storage no se niegan: `1-org` los necesita para su prefijo,
+  y una condición de denegación solo admite etiquetas, no el nombre del objeto. Si `1-org` se
+  diera un rol de Storage en la organización, podría leer otros prefijos del estado.
+
+### Roles personalizados
+
+Los crea esta etapa porque crear roles de organización exige
+`roles/iam.organizationRoleAdmin`, que no tiene ninguna cuenta de etapa.
 `VERIFICAR-EN-APPLY`: que todos sus permisos estén admitidos en roles personalizados.
+
+- `bntTfKmsSecretIamGranter` solo lee llaves, llaveros y secretos y cambia su IAM
+  (`cloudkms.cryptoKeys.{get,list,getIamPolicy,setIamPolicy}`, `cloudkms.keyRings.{get,list}`,
+  `secretmanager.secrets.{get,list,getIamPolicy,setIamPolicy}`). Es lo que necesita
+  `4-projects` para dar a los agentes de servicio permiso sobre las llaves y lectura de
+  secretos (§7.5) sin poder usar, administrar ni destruir llaves. La etapa `2-security` lo
+  asigna sobre el proyecto `security` (salida `kms_secret_iam_role_id`).
+- `bntTfSecretContainerAdmin` crea, cambia y borra contenedores de secretos
+  (`secretmanager.secrets.{create,delete,get,list,update}`, `secretmanager.locations.{get,list}`)
+  sin ningún permiso de versiones (no lee valores: `roles/secretmanager.admin` incluye
+  `secretmanager.versions.access`) ni `secrets.setIamPolicy`. La etapa `1-org` lo asigna a
+  `2-security` sobre el proyecto `security` (salida `secret_container_admin_role_id`).
 
 ## Workload Identity Federation y limitación conocida
 
-El proveedor acepta solo tokens con `assertion.repository == var.github_repository`
-(`attribute_condition`) y mapea `google.subject`, `attribute.repository`, `attribute.ref` y
+El proveedor acepta solo tokens con
+`assertion.repository_id == "<github_repository_id>" && assertion.repository_owner_id == "<github_repository_owner_id>"`
+(`attribute_condition`) y mapea `google.subject`, `attribute.repository_id`,
+`attribute.repository_owner_id`, `attribute.repository`, `attribute.ref` y
 `attribute.environment`. Cada cuenta de etapa da `roles/iam.workloadIdentityUser` al
-`principalSet://…/attribute.repository/<repositorio>`.
+`principalSet://…/attribute.repository_id/<github_repository_id>`.
+
+La confianza se basa en los IDs numéricos porque los nombres de repositorio y de dueño se
+pueden volver a registrar si se borran o se renombran (la guía de WIF para pipelines de Google
+lo advierte); los IDs no se reutilizan. `github_repository` queda solo como dato legible
+(descripción del proveedor y `attribute.repository` en los registros). Los IDs se obtienen con
+`gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'`.
 
 **Limitación conocida:** la condición y el permiso filtran solo por repositorio. Cualquier
 rama o flujo de ese repositorio (incluido un PR desde una rama del mismo repositorio) puede
@@ -123,8 +190,10 @@ se puede reusar hasta que venzan.
 
 Requisitos de quien la corre (con `gcloud auth application-default login`): en la
 organización, `roles/resourcemanager.organizationAdmin` (IAM de organización),
-`roles/resourcemanager.folderCreator`, `roles/resourcemanager.projectCreator` e
-`roles/iam.organizationRoleAdmin` (rol personalizado); en la cuenta de facturación,
+`roles/resourcemanager.folderCreator`, `roles/resourcemanager.projectCreator`,
+`roles/iam.organizationRoleAdmin` (roles personalizados) e `roles/iam.denyAdmin` (política de
+denegación de la carpeta `bootstrap`; la documentación de políticas de denegación lo indica
+para crearlas); en la cuenta de facturación,
 `roles/billing.admin` (asociar el proyecto y dar `billing.user` y `billing.costsManager`).
 
 Primera ejecución (el bucket todavía no existe; §6.1 permite este paso manual):
@@ -164,14 +233,24 @@ variables del repositorio de GitHub (`GCP_WORKLOAD_IDENTITY_PROVIDER`,
 - Listado de objetos del backend con las condiciones de IAM (§6.2).
 - Permiso del agente de Cloud Storage sobre la llave antes de crear el bucket (propagación).
 - Mapeo de `attribute.environment` en trabajos sin entorno de GitHub.
-- Permisos del rol personalizado admitidos en roles personalizados.
+- Permisos de los dos roles personalizados admitidos en roles personalizados.
+- Que la política de denegación adjunta a la carpeta niegue también `folders.setIamPolicy`
+  sobre la propia carpeta `bootstrap`.
+- Con `state_bucket_dual_regions`: que las dos regiones formen una doble región configurable
+  válida dentro de `state_bucket_location`.
 
 ## Pruebas
 
-`tests/0-bootstrap.tftest.hcl`: `mock_provider` y `command = plan` con los valores de
-`terraform.tfvars.example`. Comprueba nombres, las cinco llaves de `stage_service_accounts`,
-las exigencias del bucket, la condición de WIF, las condiciones de estado derivadas de §6.1 y
-que no hay roles básicos; y que `prefix` y `github_repository` inválidos se rechazan.
+`tests/0-bootstrap.tftest.hcl`: `mock_provider` con `override_during = plan` (Terraform
+>= 1.11) y `command = plan` con los valores de `terraform.tfvars.example` (IDs de GitHub
+distintos entre sí). Comprueba nombres, las cinco llaves de `stage_service_accounts`, las
+exigencias del bucket, que es multirregional y que se cifra con la llave `state` en `us`, la
+condición de WIF por IDs y el `principalSet` exacto por `repository_id`, la política de
+denegación (carpeta, principal, permisos y que no niega objetos ni el proyecto de cuota), el
+rol de contenedores de secretos sin versiones, las condiciones de cada asignación del bucket y
+las lecturas de §6.1, y que no hay roles básicos; la variante de doble región; y que se
+rechazan `prefix`, `github_repository` y `github_repository_id` inválidos, una ubicación
+regional del estado y una doble región sin `primary_region`.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -201,10 +280,12 @@ que no hay roles básicos; y que `prefix` y `github_repository` inválidos se re
 
 | Name | Type |
 | ---- | ---- |
+| [google_iam_deny_policy.bootstrap_folder](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_deny_policy) | resource |
 | [google_iam_workload_identity_pool.github](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_workload_identity_pool) | resource |
 | [google_iam_workload_identity_pool_provider.github](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_workload_identity_pool_provider) | resource |
 | [google_kms_crypto_key_iam_member.state_storage_agent](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
 | [google_organization_iam_custom_role.kms_secret_iam_granter](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/organization_iam_custom_role) | resource |
+| [google_organization_iam_custom_role.secret_container_admin](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/organization_iam_custom_role) | resource |
 | [google_project_iam_audit_config.seed](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_audit_config) | resource |
 | [google_service_account.stage](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
 | [google_storage_bucket.state](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/storage_bucket) | resource |
@@ -215,13 +296,17 @@ que no hay roles básicos; y que `prefix` y `github_repository` inválidos se re
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_billing_account"></a> [billing\_account](#input\_billing\_account) | Cuenta de facturación del proyecto semilla y de los proyectos que crean las etapas (formato XXXXXX-XXXXXX-XXXXXX). | `string` | n/a | yes |
-| <a name="input_github_repository"></a> [github\_repository](#input\_github\_repository) | Repositorio de GitHub (<dueño>/<repositorio>) único autorizado a usar las cuentas de servicio de las etapas por Workload Identity Federation (§6.3). | `string` | n/a | yes |
+| <a name="input_github_repository"></a> [github\_repository](#input\_github\_repository) | Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation (§6.3). Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github\_repository\_id y github\_repository\_owner\_id, que no se reutilizan si el nombre cambia de dueño. | `string` | n/a | yes |
+| <a name="input_github_repository_id"></a> [github\_repository\_id](#input\_github\_repository\_id) | ID numérico del repositorio autorizado (afirmación repository\_id del token OIDC de GitHub; se obtiene con gh api repos/<dueño>/<repositorio> --jq .id). Es la base de la confianza de WIF: a diferencia del nombre, no se reutiliza si el repositorio se borra o se renombra. | `string` | n/a | yes |
+| <a name="input_github_repository_owner_id"></a> [github\_repository\_owner\_id](#input\_github\_repository\_owner\_id) | ID numérico del dueño (organización o usuario) del repositorio autorizado (afirmación repository\_owner\_id; gh api repos/<dueño>/<repositorio> --jq .owner.id). | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes (§4.3). Deben traer app, owner y cost\_center; la raíz agrega env = bootstrap y managed\_by = terraform. | `map(string)` | n/a | yes |
 | <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización de GCP (sin el prefijo organizations/). | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en todos los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
-| <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). Aquí viven el llavero de KMS y el bucket de estado. | `string` | n/a | yes |
-| <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con región (§4.2). Debe incluir primary\_region. | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
+| <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). La etapa 0 no crea recursos regionales: el bucket de estado y su llave van en state\_bucket\_location para sobrevivir a la caída de esta región. | `string` | n/a | yes |
+| <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con ubicación (§4.2). Debe incluir la ubicación de KMS del estado (lower(state\_bucket\_location): us, eu o asia). | `map(string)` | <pre>{<br/>  "asia": "asia",<br/>  "eu": "eu",<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional que se agrega al ID del proyecto semilla y al nombre del bucket de estado para que sean únicos a nivel mundial. Vacío: sin sufijo. | `string` | `""` | no |
+| <a name="input_state_bucket_dual_regions"></a> [state\_bucket\_dual\_regions](#input\_state\_bucket\_dual\_regions) | Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo ["us-central1", "us-east4"], primaria y DR del ADR 0002), dentro de state\_bucket\_location; lleva replicación turbo (RPO de 15 minutos). Vacío (por defecto): bucket multirregional. | `list(string)` | `[]` | no |
+| <a name="input_state_bucket_location"></a> [state\_bucket\_location](#input\_state\_bucket\_location) | Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state\_bucket\_dual\_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary\_region (runbook de conmutación a DR). La ubicación de un bucket no se cambia después de crearlo. | `string` | `"US"` | no |
 | <a name="input_state_versions_to_keep"></a> [state\_versions\_to\_keep](#input\_state\_versions\_to\_keep) | Versiones no actuales de cada archivo de estado que se conservan en el bucket; las más viejas se borran. Permiten recuperar un estado dañado. | `number` | `20` | no |
 
 ## Outputs
@@ -230,6 +315,7 @@ que no hay roles básicos; y que `prefix` y `github_repository` inválidos se re
 | ---- | ----------- |
 | <a name="output_bootstrap_folder_id"></a> [bootstrap\_folder\_id](#output\_bootstrap\_folder\_id) | ID de la carpeta bootstrap ("folders/<número>"). |
 | <a name="output_kms_secret_iam_role_id"></a> [kms\_secret\_iam\_role\_id](#output\_kms\_secret\_iam\_role\_id) | Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 2 asigna a la cuenta de 4-projects sobre el proyecto security. |
+| <a name="output_secret_container_admin_role_id"></a> [secret\_container\_admin\_role\_id](#output\_secret\_container\_admin\_role\_id) | Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 2-security sobre el proyecto security: administra contenedores de secretos sin leer sus valores. |
 | <a name="output_seed_project_id"></a> [seed\_project\_id](#output\_seed\_project\_id) | ID del proyecto semilla. |
 | <a name="output_seed_project_number"></a> [seed\_project\_number](#output\_seed\_project\_number) | Número del proyecto semilla. |
 | <a name="output_stage_service_accounts"></a> [stage\_service\_accounts](#output\_stage\_service\_accounts) | Mapa etapa (1-org, 2-security, 3-networks, 4-projects, 5-workloads) → correo de su cuenta de servicio. |

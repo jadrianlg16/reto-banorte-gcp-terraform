@@ -84,5 +84,6 @@ No modules.
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_bindings"></a> [bindings](#output\_bindings) | Mapa llave del for\_each → { scope, resource, role, member } de cada asignación creada. |
+| <a name="output_conditions"></a> [conditions](#output\_conditions) | Mapa llave del for\_each → condición de IAM ({ title, expression, description }) de cada asignación creada, o null si no tiene. |
 | <a name="output_members"></a> [members](#output\_members) | Lista ordenada y sin repetir de los miembros que recibieron algún rol. |
 <!-- END_TF_DOCS -->

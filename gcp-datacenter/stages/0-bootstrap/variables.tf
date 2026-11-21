@@ -44,7 +44,7 @@ variable "project_suffix" {
 }
 
 variable "primary_region" {
-  description = "Región primaria (ADR 0002). Aquí viven el llavero de KMS y el bucket de estado."
+  description = "Región primaria (ADR 0002). La etapa 0 no crea recursos regionales: el bucket de estado y su llave van en state_bucket_location para sobrevivir a la caída de esta región."
   type        = string
   nullable    = false
 
@@ -55,13 +55,15 @@ variable "primary_region" {
 }
 
 variable "location_short_codes" {
-  description = "Mapa ubicación → código corto que se agrega a los nombres de recursos con región (§4.2). Debe incluir primary_region."
+  description = "Mapa ubicación → código corto que se agrega a los nombres de recursos con ubicación (§4.2). Debe incluir la ubicación de KMS del estado (lower(state_bucket_location): us, eu o asia)."
   type        = map(string)
   default = {
     "us-central1"         = "usc1"
     "us-east4"            = "use4"
     "northamerica-south1" = "nas1"
     "us"                  = "us"
+    "eu"                  = "eu"
+    "asia"                = "asia"
   }
   nullable = false
 
@@ -71,14 +73,64 @@ variable "location_short_codes" {
   }
 }
 
+variable "state_bucket_location" {
+  description = "Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state_bucket_dual_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary_region (runbook de conmutación a DR). La ubicación de un bucket no se cambia después de crearlo."
+  type        = string
+  default     = "US"
+  nullable    = false
+
+  validation {
+    condition     = contains(["US", "EU", "ASIA"], var.state_bucket_location)
+    error_message = "state_bucket_location debe ser US, EU o ASIA (multirregión, en mayúsculas)."
+  }
+}
+
+variable "state_bucket_dual_regions" {
+  description = "Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo [\"us-central1\", \"us-east4\"], primaria y DR del ADR 0002), dentro de state_bucket_location; lleva replicación turbo (RPO de 15 minutos). Vacío (por defecto): bucket multirregional."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = length(var.state_bucket_dual_regions) == 0 || (length(var.state_bucket_dual_regions) == 2 && length(distinct(var.state_bucket_dual_regions)) == 2)
+    error_message = "state_bucket_dual_regions debe estar vacío o tener exactamente dos regiones distintas."
+  }
+  validation {
+    condition     = alltrue([for r in var.state_bucket_dual_regions : can(regex("^[a-z]+-[a-z]+[0-9]+$", r))])
+    error_message = "Cada elemento de state_bucket_dual_regions debe ser una región, por ejemplo us-central1."
+  }
+}
+
 variable "github_repository" {
-  description = "Repositorio de GitHub (<dueño>/<repositorio>) único autorizado a usar las cuentas de servicio de las etapas por Workload Identity Federation (§6.3)."
+  description = "Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation (§6.3). Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github_repository_id y github_repository_owner_id, que no se reutilizan si el nombre cambia de dueño."
   type        = string
   nullable    = false
 
   validation {
     condition     = can(regex("^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$", var.github_repository))
     error_message = "github_repository debe tener la forma <dueño>/<repositorio>, por ejemplo mi-org/mi-repo."
+  }
+}
+
+variable "github_repository_id" {
+  description = "ID numérico del repositorio autorizado (afirmación repository_id del token OIDC de GitHub; se obtiene con gh api repos/<dueño>/<repositorio> --jq .id). Es la base de la confianza de WIF: a diferencia del nombre, no se reutiliza si el repositorio se borra o se renombra."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]{1,20}$", var.github_repository_id))
+    error_message = "github_repository_id debe ser el ID numérico del repositorio (solo dígitos)."
+  }
+}
+
+variable "github_repository_owner_id" {
+  description = "ID numérico del dueño (organización o usuario) del repositorio autorizado (afirmación repository_owner_id; gh api repos/<dueño>/<repositorio> --jq .owner.id)."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]{1,20}$", var.github_repository_owner_id))
+    error_message = "github_repository_owner_id debe ser el ID numérico del dueño del repositorio (solo dígitos)."
   }
 }
 

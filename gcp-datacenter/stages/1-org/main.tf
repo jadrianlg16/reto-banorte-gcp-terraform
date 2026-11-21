@@ -163,8 +163,17 @@ resource "google_pubsub_topic" "scc_findings" {
   message_retention_duration = "604800s"
   labels                     = merge(local.labels, { app = "scc" })
 
+  # La llave pubsub es regional (primary_region). La guía de CMEK de Pub/Sub admite una llave
+  # regional solo si el almacenamiento de mensajes se limita a esa región y se impone en
+  # tránsito (enforce_in_transit): así ningún mensaje se procesa ni guarda fuera de la región
+  # de su llave. Con la región de DR también permitida, el tema parecía tolerar la caída de
+  # primary_region, pero la llave regional lo impide igual. Se acepta que, si cae
+  # primary_region, la notificación de SCC no se entregue hasta que vuelva (canal de avisos).
+  # VERIFICAR-EN-APPLY: que SCC siga publicando en el tema con enforce_in_transit = true
+  # (publica por el extremo global de Pub/Sub).
   message_storage_policy {
-    allowed_persistence_regions = [var.primary_region, var.dr_region]
+    allowed_persistence_regions = [var.primary_region]
+    enforce_in_transit          = true
   }
 
   depends_on = [google_kms_crypto_key_iam_member.pubsub_agent]

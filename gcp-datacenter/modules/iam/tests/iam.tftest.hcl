@@ -101,6 +101,13 @@ run "una_asignacion_aditiva_por_scope" {
     error_message = "Sin condición, el recurso no lleva bloque condition."
   }
   assert {
+    condition = alltrue([
+      output.conditions["state-writer"].expression == google_storage_bucket_iam_member.this["state-writer"].condition[0].expression,
+      output.conditions["project|example-project-id|roles/logging.viewer|serviceAccount:example-sa@example-project-id.iam.gserviceaccount.com"] == null,
+    ])
+    error_message = "La salida conditions debe reflejar la condición que lleva cada recurso."
+  }
+  assert {
     condition = alltrue([for s in google_compute_subnetwork_iam_member.this : (
       s.project == "example-host-project" && s.region == "us-central1" && s.subnetwork == "example-subnet"
     )])

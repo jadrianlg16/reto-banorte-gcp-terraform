@@ -59,12 +59,13 @@ locals {
   # Cuenta de etapa → roles en proyectos de common y en las carpetas de entorno.
   stage_grants = {
     "2-security" = {
-      # KMS, secretos, agente de Secret Manager e IAM del proyecto (rol personalizado de 4-projects).
+      # KMS, contenedores de secretos (rol personalizado de la etapa 0, sin
+      # secretmanager.versions.access: el pipeline no lee valores de secretos) y agente de
+      # Secret Manager. Su projectIamAdmin va condicionado (stage_delegated_security_iam).
       projects = {
         security = [
           "roles/cloudkms.admin",
-          "roles/resourcemanager.projectIamAdmin",
-          "roles/secretmanager.admin",
+          local.secret_container_admin_role_id,
           "roles/serviceusage.serviceUsageAdmin",
         ]
       }
@@ -93,40 +94,34 @@ locals {
         "roles/resourcemanager.tagAdmin",
       ]
     }
-    "5-workloads" = {
-      projects = {}
-      # Cargas de la etapa 5 en los proyectos de servicio (y uso de las subredes del host).
-      env_folder_roles = [
-        "roles/backupdr.admin",
-        "roles/certificatemanager.editor", # certificado del balanceador interno
-        "roles/cloudsql.admin",
-        "roles/compute.instanceAdmin.v1",
-        "roles/compute.loadBalancerAdmin",
-        "roles/compute.networkUser",
-        "roles/compute.securityAdmin",
-        "roles/container.admin",
-        "roles/file.editor",
-        "roles/gkebackup.admin",
-        "roles/iam.serviceAccountUser",
-        "roles/monitoring.editor",
-        "roles/redis.admin",
-        "roles/run.admin",
-        "roles/storage.admin",
-      ]
-    }
+    # 5-workloads no recibe nada aquí: sus roles van sobre cada proyecto de servicio y los da
+    # 4-projects, que crea esos proyectos (las carpetas de entorno también contienen el host
+    # net-spoke de 3-networks, y un rol de carpeta lo cubriría).
   }
 
   # Cuenta de etapa → roles/resourcemanager.projectIamAdmin en las carpetas de entorno, limitado
   # por condición a los roles que su etapa asigna sobre proyectos que no crea (concesión
   # delegada: solo puede agregar o quitar esos roles, nada más).
-  # - 4-projects: container.hostServiceAgentUser en el host del spoke (lo crea 3-networks).
-  # - 5-workloads: cloudsql.client e instanceUser (módulo cloud-sql) en el proyecto de servicio
-  #   (lo crea 4-projects).
+  # - 4-projects, en el host net-spoke (lo crea 3-networks): compute.networkUser y
+  #   compute.networkViewer (identidades de los proyectos de servicio sobre la Shared VPC) y
+  #   container.hostServiceAgentUser (agente de GKE).
   # VERIFICAR-EN-APPLY: que la condición con iam.googleapis.com/modifiedGrantsByRole se acepte
   # en una carpeta y se evalúe al cambiar el IAM de los proyectos de abajo.
   stage_delegated_project_iam = {
-    "4-projects"  = ["roles/container.hostServiceAgentUser"]
-    "5-workloads" = ["roles/cloudsql.client", "roles/cloudsql.instanceUser"]
+    "4-projects" = [
+      "roles/compute.networkUser",
+      "roles/compute.networkViewer",
+      "roles/container.hostServiceAgentUser",
+    ]
+  }
+
+  # 2-security en el proyecto security: projectIamAdmin limitado al único rol que asigna ahí
+  # (el rol personalizado de 4-projects para el IAM de llaves y secretos). Sin la condición
+  # podría darse secretAccessor a sí misma.
+  # VERIFICAR-EN-APPLY: que hasOnly acepte el nombre completo de un rol personalizado de
+  # organización (organizations/<n>/roles/<id>); la documentación no da ejemplo.
+  stage_delegated_security_iam = {
+    "2-security" = [local.kms_secret_iam_role_id]
   }
 
   iam_bindings = concat(
@@ -202,6 +197,20 @@ locals {
         }
       ]
     ]),
+    [
+      for s, roles in local.stage_delegated_security_iam : {
+        key      = "sa|${s}|project:security|roles/resourcemanager.projectIamAdmin"
+        scope    = "project"
+        resource = module.common_project["security"].project_id
+        role     = "roles/resourcemanager.projectIamAdmin"
+        member   = "serviceAccount:${local.stage_service_accounts[s]}"
+        condition = {
+          title       = "solo-${replace(s, "-", "")}-roles"
+          description = "Solo asignar ${join(", ", roles)} (concesión delegada)."
+          expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in roles : "'${r}'"])}])"
+        }
+      }
+    ],
   )
 }
 

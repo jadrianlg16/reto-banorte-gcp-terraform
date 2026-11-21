@@ -7,9 +7,11 @@ locals {
   multi_region = "us"
   locations    = [var.primary_region, var.dr_region, local.multi_region]
 
-  # Usos de llave (§7.2). En la multirregión solo storage y backup.
-  regional_key_uses     = ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run"]
-  multi_region_key_uses = ["storage", "backup"]
+  # Usos de llave (§7.2). En la multirregión solo storage, backup y artifacts. artifacts:
+  # CMEK de los repositorios de Artifact Registry de la etapa 4 (en la multirregión us; las
+  # regionales quedan para repositorios regionales).
+  regional_key_uses     = ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run", "artifacts"]
+  multi_region_key_uses = ["storage", "backup", "artifacts"]
 
   # Agente de servicio de Secret Manager del proyecto security. Se arma con el número del
   # proyecto leído del estado de 1-org (conocido en el plan), porque el miembro es la llave del

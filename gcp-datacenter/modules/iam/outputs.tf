@@ -14,3 +14,8 @@ output "bindings" {
     }
   }
 }
+
+output "conditions" {
+  description = "Mapa llave del for_each → condición de IAM ({ title, expression, description }) de cada asignación creada, o null si no tiene."
+  value       = { for k, b in local.bindings : k => b.condition }
+}

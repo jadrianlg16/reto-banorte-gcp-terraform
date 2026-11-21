@@ -39,9 +39,10 @@ locals {
     "3-networks" = {
       description = "Etapa 3: VPC hub, spokes, conectividad híbrida, DNS y política de firewall jerárquica."
       # El hub escribe 3-networks/hub y cada spoke 3-networks/<env>; los spokes leen el hub,
-      # que ya está dentro de los prefijos que escribe la misma cuenta.
+      # que ya está dentro de los prefijos que escribe la misma cuenta. No lee 0-bootstrap:
+      # ninguna de sus raíces lo necesita (se lee menos de lo que permite la tabla de §6.1).
       writes = concat(["3-networks/hub"], [for e in local.environments : "3-networks/${e}"])
-      reads  = ["0-bootstrap", "1-org"]
+      reads  = ["1-org"]
       org_roles = [
         "roles/compute.orgFirewallPolicyAdmin",
         "roles/compute.orgSecurityResourceAdmin",
@@ -61,8 +62,9 @@ locals {
     "5-workloads" = {
       description = "Etapa 5: cargas de trabajo en los proyectos de servicio."
       writes      = [for e in local.environments : "5-workloads/${e}"]
+      # Sin 1-org: sus raíces no lo leen.
       reads = concat(
-        ["1-org", "2-security"],
+        ["2-security"],
         [for e in local.environments : "3-networks/${e}"],
         [for e in local.environments : "4-projects/${e}"],
       )
@@ -106,8 +108,9 @@ locals {
     ))
   }
 
-  # Principal de WIF: cualquier ejecución del repositorio autorizado (§6.3).
-  github_principal_set = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
+  # Principal de WIF: cualquier ejecución del repositorio autorizado (§6.3), por su ID numérico
+  # (el nombre se puede reutilizar; el ID no).
+  github_principal_set = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository_id/${var.github_repository_id}"
 
   # Todas las llaves (key) son fijas en el plan: el miembro y algunos recursos (correo y
   # nombre de las cuentas) solo se conocen después del apply.
@@ -223,5 +226,28 @@ resource "google_organization_iam_custom_role" "kms_secret_iam_granter" {
     "secretmanager.secrets.getIamPolicy",
     "secretmanager.secrets.list",
     "secretmanager.secrets.setIamPolicy",
+  ]
+}
+
+# Rol personalizado para la etapa 2: administrar los CONTENEDORES de secretos (ADR 0015) sin
+# leer sus valores. roles/secretmanager.admin incluye secretmanager.versions.access; este rol no
+# tiene ningún permiso de versiones ni secrets.setIamPolicy (con él la cuenta podría darse
+# secretAccessor a sí misma). 1-org lo asigna a la cuenta de 2-security sobre el proyecto
+# security en lugar de secretmanager.admin.
+# VERIFICAR-EN-APPLY: que todos los permisos estén admitidos en roles personalizados.
+resource "google_organization_iam_custom_role" "secret_container_admin" {
+  org_id      = var.org_id
+  role_id     = "${var.prefix}TfSecretContainerAdmin"
+  title       = "Terraform: contenedores de secretos sin acceso a valores"
+  description = "Crear, cambiar y borrar secretos de Secret Manager (etapa 2). Sin leer ni agregar versiones y sin cambiar su IAM."
+  stage       = "GA"
+  permissions = [
+    "secretmanager.locations.get",
+    "secretmanager.locations.list",
+    "secretmanager.secrets.create",
+    "secretmanager.secrets.delete",
+    "secretmanager.secrets.get",
+    "secretmanager.secrets.list",
+    "secretmanager.secrets.update",
   ]
 }

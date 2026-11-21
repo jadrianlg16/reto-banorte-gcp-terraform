@@ -14,6 +14,14 @@ locals {
   # mismo sufijo que el proyecto para ser único a nivel mundial.
   state_bucket_name = join("-", compact(["${var.prefix}-${local.environment}-ops-tfstate", var.project_suffix]))
 
+  # El estado debe sobrevivir a la caída de primary_region: el runbook de conmutación a DR
+  # corre terraform (init, bloqueo, terraform_remote_state) durante el incidente. Bucket
+  # multirregional o de doble región, y su llave en la ubicación de KMS que exige la CMEK de
+  # Cloud Storage: la multirregión homónima (us para US y para una doble región configurable
+  # dentro de US).
+  state_bucket_dual_region = length(var.state_bucket_dual_regions) == 2
+  state_kms_location       = lower(var.state_bucket_location)
+
   # APIs del proyecto semilla. Además de las que usa esta etapa, las etapas 1 a 5 lo usan como
   # proyecto de cuota (billing_project con user_project_override) para las APIs de nivel
   # organización y facturación: por eso están aquí aunque sus recursos vivan en otros proyectos.
@@ -83,10 +91,12 @@ resource "google_project_iam_audit_config" "seed" {
 module "state_kms" {
   source = "../../modules/kms"
 
-  project_id           = module.seed_project.project_id
-  prefix               = var.prefix
-  environment          = local.environment
-  location             = var.primary_region
+  project_id  = module.seed_project.project_id
+  prefix      = var.prefix
+  environment = local.environment
+  # Misma ubicación que el bucket (multirregión de KMS), no primary_region: una llave regional
+  # dejaría el estado ilegible si cae la región.
+  location             = local.state_kms_location
   location_short_codes = var.location_short_codes
   # La rotación de 90 días es el valor por defecto del módulo (7776000s).
   keys = {
@@ -121,9 +131,19 @@ resource "google_storage_bucket" "state" {
   # checkov:skip=CKV_GCP_62: el registro de uso heredado de Cloud Storage necesitaría otro bucket que a su vez no tendría registro; el acceso al estado queda en los registros de auditoría de acceso a datos del proyecto semilla (google_project_iam_audit_config.seed) y en el sink agregado de la etapa 1
   project       = module.seed_project.project_id
   name          = local.state_bucket_name
-  location      = upper(var.primary_region)
+  location      = var.state_bucket_location
   storage_class = "STANDARD"
   labels        = merge(local.labels, { app = "tfstate" })
+
+  # Doble región configurable (opcional): las dos regiones dentro de la multirregión, con
+  # replicación turbo. Sin ella, el bucket es multirregional.
+  dynamic "custom_placement_config" {
+    for_each = local.state_bucket_dual_region ? [var.state_bucket_dual_regions] : []
+    content {
+      data_locations = [for r in custom_placement_config.value : upper(r)]
+    }
+  }
+  rpo = local.state_bucket_dual_region ? "ASYNC_TURBO" : null
 
   # Valores fijos (§6.1): acceso uniforme, sin acceso público, versionado, sin borrado forzado.
   uniform_bucket_level_access = true
@@ -161,7 +181,15 @@ resource "google_storage_bucket" "state" {
   lifecycle {
     # Borrar el bucket borra el estado de todas las etapas.
     prevent_destroy = true
+
+    precondition {
+      condition     = !local.state_bucket_dual_region || contains(var.state_bucket_dual_regions, var.primary_region)
+      error_message = "state_bucket_dual_regions debe incluir primary_region (y la región de DR)."
+    }
   }
+
+  # VERIFICAR-EN-APPLY: que las dos regiones de state_bucket_dual_regions formen una doble
+  # región configurable válida dentro de state_bucket_location (la API lo valida al crear).
 
   # VERIFICAR-EN-APPLY: que el agente de Cloud Storage ya tenga el permiso sobre la llave al
   # crear el bucket (la propagación de IAM puede tardar unos segundos; si falla, repetir el apply).

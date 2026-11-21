@@ -13,7 +13,7 @@ Estructura y gobierno de la organización (§7.1 del contrato). Corre con la cue
 | Bucket de logs de auditoría | `bnt-common-ops-audit-logs[-<sufijo>]`, retención `log_retention_days`, bloqueo por `log_retention_locked` (**irreversible**) | `log-export` con `parent = null` |
 | Nueve políticas de organización y el sink agregado | `bnt-common-ops-audit-sink`, de toda la organización hacia el bucket de logs | `org` |
 | Registros de Data Access | carpeta `prod`, `allServices`: ADMIN_READ, DATA_READ, DATA_WRITE | `google_folder_iam_audit_config` |
-| Security Command Center | notificación `bnt-common-ops-scc-findings` (v2, `global`) hacia el tema de Pub/Sub `bnt-common-ops-scc-findings` (CMEK, persistencia en las dos regiones) | `google_scc_v2_organization_notification_config`, `google_pubsub_topic` |
+| Security Command Center | notificación `bnt-common-ops-scc-findings` (v2, `global`) hacia el tema de Pub/Sub `bnt-common-ops-scc-findings` (CMEK regional; mensajes solo en `primary_region`, con imposición en tránsito) | `google_scc_v2_organization_notification_config`, `google_pubsub_topic` |
 | Presupuesto | `bnt-common-ops-budget` sobre toda la organización, alertas a `budget_alert_thresholds` del gasto real y al 100 % del pronosticado | `google_billing_budget` |
 | IAM por grupos y permisos de las cuentas de etapa | ver abajo | `iam` |
 
@@ -40,6 +40,13 @@ notificación continua de hallazgos activos de severidad alta o crítica
 propia llave; el agente de Pub/Sub del proyecto se crea con `google_project_service_identity`
 y recibe `cryptoKeyEncrypterDecrypter` sobre esa llave antes de crear el tema.
 
+La llave del tema es regional (`primary_region`). La guía de CMEK de Pub/Sub admite una llave
+regional solo si el almacenamiento de mensajes se limita a la región de la llave con
+imposición en tránsito: por eso `message_storage_policy` permite solo `primary_region` con
+`enforce_in_transit = true`. Riesgo aceptado: si cae `primary_region`, los avisos de SCC no se
+entregan hasta que vuelva (es un canal de avisos, no un dato de negocio; los hallazgos siguen
+en SCC).
+
 ## IAM por grupos (solo lectura)
 
 Las personas solo reciben roles de lectura y siempre a través de grupos (`groups`); el módulo
@@ -64,9 +71,9 @@ esta etapa se asignan aquí (las cuentas se leen de `stage_service_accounts` de 
 | Cuenta | Ámbito | Rol | Motivo |
 |---|---|---|---|
 | `2-security` | proyecto `security` | `roles/cloudkms.admin` | llaveros y llaves, y su IAM |
-| `2-security` | proyecto `security` | `roles/secretmanager.admin` | contenedores de secretos |
+| `2-security` | proyecto `security` | `organizations/<n>/roles/<prefix>TfSecretContainerAdmin` (rol personalizado de la etapa 0, salida `secret_container_admin_role_id`) | contenedores de secretos, sin `secretmanager.versions.access` ni `secrets.setIamPolicy`: el pipeline no lee valores de secretos (ADR 0015) |
 | `2-security` | proyecto `security` | `roles/serviceusage.serviceUsageAdmin` | crear el agente de Secret Manager (`google_project_service_identity`) |
-| `2-security` | proyecto `security` | `roles/resourcemanager.projectIamAdmin` | dar a 4-projects el rol personalizado de la etapa 0 |
+| `2-security` | proyecto `security` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar el rol personalizado `kms_secret_iam_role_id` de la etapa 0 | dar a 4-projects ese rol (IAM de llaves y secretos) |
 | `3-networks` | proyecto `net-hub` | `roles/compute.networkAdmin` | VPC hub, routers, HA VPN, peering |
 | `3-networks` | proyecto `net-hub` | `roles/compute.securityAdmin` | reglas y políticas de firewall de red |
 | `3-networks` | proyecto `net-hub` | `roles/dns.admin` | zonas de reenvío, política de servidor y peering de DNS desde los spokes |
@@ -76,14 +83,32 @@ esta etapa se asignan aquí (las cuentas se leen de `stage_service_accounts` de 
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | proyectos de servicio |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | alta como servicio de Shared VPC y permisos de uso de subred |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.tagAdmin` | dar `tagUser` sobre los valores de las etiquetas seguras del spoke (sus llaves viven en `net-spoke`, que crea 3-networks) |
-| `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar `roles/container.hostServiceAgentUser` | dar ese rol al agente de GKE en el host del spoke (proyecto de 3-networks) |
-| `5-workloads` | carpetas `dev`, `qa`, `prod` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.networkUser`, `compute.securityAdmin`, `container.admin`, `file.editor`, `gkebackup.admin`, `iam.serviceAccountUser`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` | crear las cargas de §7.6 en los proyectos de servicio (los proyectos los crea 4-projects, que no lee el estado de la etapa 0 y por eso no puede dar permisos a 5-workloads) y usar las subredes del host; `certificatemanager.editor` para el certificado del balanceador interno |
-| `5-workloads` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar `roles/cloudsql.client` y `roles/cloudsql.instanceUser` | entrada por IAM a Cloud SQL de la cuenta `workload` (módulo `cloud-sql`, `grant_iam_login_roles`) |
+| `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar `roles/compute.networkUser`, `roles/compute.networkViewer` y `roles/container.hostServiceAgentUser` | dar esos roles sobre el host del spoke (proyecto `net-spoke` de 3-networks) a las identidades de los proyectos de servicio: uso de la Shared VPC, lectura de la red (Cloud Run con salida directa a la VPC) y agente de GKE |
 
-Las dos asignaciones de `projectIamAdmin` usan una concesión delegada:
+`5-workloads` no recibe ningún rol en esta etapa. Las carpetas de entorno también contienen el
+host `net-spoke` de 3-networks, así que un rol de carpeta le daría poder sobre la red (por
+ejemplo, reglas de firewall con `compute.securityAdmin`) y `iam.serviceAccountUser` sobre
+cualquier cuenta del entorno. Sus roles van sobre cada proyecto de servicio y los da
+`4-projects`, que crea esos proyectos y recibe la cuenta de 5-workloads como variable.
+
+Las asignaciones de `projectIamAdmin` usan una concesión delegada:
 `api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`, así la cuenta
-solo puede agregar o quitar esos roles en los proyectos de la carpeta
-(`VERIFICAR-EN-APPLY`).
+solo puede agregar o quitar esos roles (en los proyectos de la carpeta, o en el proyecto
+`security`) (`VERIFICAR-EN-APPLY`; para el rol personalizado de 2-security, además, que
+`hasOnly` acepte el nombre completo `organizations/<n>/roles/<id>`, del que la documentación no
+da ejemplo). La condición limita los roles, no a quién se asignan: es un límite de Google.
+
+Residuales conocidos sobre secretos (la condición solo se admite en proyectos, carpetas y
+organizaciones, no en un secreto):
+
+- `2-security` puede asignarse a sí misma, en `security`, el rol personalizado de 4-projects
+  (que incluye `secretmanager.secrets.setIamPolicy`) y con él darse `secretAccessor` sobre un
+  secreto. Ya no puede leer valores directamente.
+- `4-projects` tiene `secretmanager.secrets.setIamPolicy` (lo necesita para dar
+  `secretAccessor` a las cuentas de ejecución) y podría darse `secretAccessor` a sí misma.
+
+Ambos cambios de IAM quedan en los registros de actividad administrativa del proyecto
+`security` y del sink de la organización.
 
 ## Roles que necesita la cuenta de la etapa
 
@@ -119,6 +144,8 @@ retención con el área de cumplimiento.
   en el módulo `org`).
 - `iam.allowedPolicyMemberDomains` frente a los `principalSet://` de WIF y a los agentes de
   servicio de Google.
+- `modifiedGrantsByRole.hasOnly` con el nombre completo de un rol personalizado de
+  organización (projectIamAdmin de 2-security en `security`).
 - Proyecto de cuota aceptado por todas las APIs de la etapa.
 - Retención bloqueada y CMEK del bucket de logs (en el módulo `log-export`).
 
@@ -128,7 +155,10 @@ retención con el área de cumplimiento.
 forma de §7.0 y `command = plan` con los valores de `terraform.tfvars.example`. Comprueba las
 salidas y nombres de §7.1, las nueve políticas, el sink único, las llaves de logging, Data
 Access en prod, SCC, el presupuesto, que los grupos solo tienen lectura, que `developers` solo
-está en dev y qa y los permisos de las cuentas de etapa; y que `groups` incompleto, una región
+está en dev y qa y los permisos de las cuentas de etapa (5-workloads sin ningún rol,
+projectIamAdmin de 4-projects y de 2-security con su condición exacta, 2-security sin
+`secretmanager.admin`), el almacenamiento del tema de SCC limitado a la región primaria; y
+que `groups` incompleto, una región
 de DR igual a la primaria y un `prefix` inválido se rechazan.
 
 <!-- BEGIN_TF_DOCS -->

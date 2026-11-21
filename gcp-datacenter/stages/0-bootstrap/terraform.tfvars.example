@@ -7,6 +7,16 @@ project_suffix    = ""
 primary_region    = "us-central1"
 github_repository = "example-org/example-repo"
 
+# IDs numéricos del repositorio y de su dueño (base de la confianza de WIF):
+#   gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'
+github_repository_id       = "000000000"
+github_repository_owner_id = "000000000"
+
+# Bucket de estado y su llave: multirregión US (sobreviven a la caída de primary_region).
+# Opcional: doble región configurable con la región primaria y la de DR.
+state_bucket_location = "US"
+# state_bucket_dual_regions = ["us-central1", "us-east4"]
+
 labels = {
   app         = "landing-zone"
   owner       = "plataforma"

@@ -98,13 +98,21 @@ run "plan_con_valores_de_ejemplo" {
   }
   assert {
     condition = alltrue(flatten([for e in ["dev", "qa", "prod"] : [for r in ["us-central1", "us-east4"] :
-      toset(keys(output.kms_key_ids[e][r])) == toset(["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run"])
+      toset(keys(output.kms_key_ids[e][r])) == toset(["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run", "artifacts"])
     ]]))
-    error_message = "En cada región se crean las nueve llaves de uso."
+    error_message = "En cada región se crean las diez llaves de uso."
   }
   assert {
-    condition     = alltrue([for e in ["dev", "qa", "prod"] : toset(keys(output.kms_key_ids[e]["us"])) == toset(["storage", "backup"])])
-    error_message = "En la multirregión us solo se crean storage y backup."
+    condition     = alltrue([for e in ["dev", "qa", "prod"] : toset(keys(output.kms_key_ids[e]["us"])) == toset(["storage", "backup", "artifacts"])])
+    error_message = "En la multirregión us solo se crean storage, backup y artifacts."
+  }
+  # Llave artifacts (repositorios de Artifact Registry de la etapa 4), con su nombre.
+  assert {
+    condition = alltrue([for e in ["dev", "qa", "prod"] :
+      module.kms["${e}/us"].key_names["artifacts"] == "bnt-${e}-sec-artifacts" &&
+      module.kms["${e}/us-central1"].key_names["artifacts"] == "bnt-${e}-sec-artifacts"
+    ])
+    error_message = "Cada entorno tiene la llave artifacts en us y en las regiones."
   }
 
   # Nombres (§4.2).
@@ -180,6 +188,22 @@ run "perimetro_forzado_con_politica_existente" {
   assert {
     condition     = output.perimeter_name == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter"
     error_message = "El perímetro se crea en la política recibida."
+  }
+  # Forzado: la regla de entrada de las cuentas del pipeline va en status (si faltara, forzar
+  # el perímetro dejaría al pipeline fuera del proyecto security).
+  assert {
+    condition = alltrue([
+      length(module.vpc_sc.spec_ingress_policies) == 0,
+      toset(module.vpc_sc.status_ingress_policies[0].ingress_from[0].identities) == toset([
+        "serviceAccount:bnt-tf-1-org@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-2-security@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-3-networks@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-4-projects@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com",
+      ]),
+      module.vpc_sc.status_ingress_policies[0].ingress_to[0].operations[0].service_name == "*",
+    ])
+    error_message = "Con el perímetro forzado, la regla de entrada de las cuentas del pipeline debe estar en status."
   }
   assert {
     condition     = output.secret_ids == { prod = {} } && toset(keys(output.kms_key_ids)) == toset(["prod"])

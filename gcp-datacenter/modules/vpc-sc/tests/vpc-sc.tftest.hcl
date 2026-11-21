@@ -88,6 +88,22 @@ run "forzado" {
     condition     = length(google_access_context_manager_service_perimeter.this.status[0].egress_policies) == 1
     error_message = "Falta la regla de salida."
   }
+  # La regla de entrada de las cuentas del pipeline también va en status: sin ella, forzar el
+  # perímetro dejaría al pipeline fuera (pendiente 5).
+  assert {
+    condition = alltrue([
+      length(google_access_context_manager_service_perimeter.this.status[0].ingress_policies) == 1,
+      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_from[0].identities == toset(["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]),
+      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_from[0].sources[0].access_level == "*",
+      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_to[0].resources == toset(["*"]),
+      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_to[0].operations[0].service_name == "*",
+    ])
+    error_message = "Forzado: la regla de entrada de las cuentas del pipeline debe estar en status."
+  }
+  assert {
+    condition     = length(output.status_ingress_policies) == 1 && length(output.spec_ingress_policies) == 0
+    error_message = "Las salidas de reglas de entrada deben reflejar status (forzado) y spec vacío."
+  }
   assert {
     condition     = length(google_access_context_manager_service_perimeter_resource.this) == 1 && length(google_access_context_manager_service_perimeter_dry_run_resource.this) == 0
     error_message = "Forzado: los proyectos entran con el recurso normal."

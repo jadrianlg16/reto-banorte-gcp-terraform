@@ -93,4 +93,6 @@ No modules.
 | <a name="output_enforced"></a> [enforced](#output\_enforced) | true si el perímetro está forzado; false si está en dry-run. La etapa 4 lo usa para elegir el recurso de alta. |
 | <a name="output_perimeter_name"></a> [perimeter\_name](#output\_perimeter\_name) | Nombre completo del perímetro (accessPolicies/<política>/servicePerimeters/<nombre>), el que piden los recursos de alta de proyectos. |
 | <a name="output_perimeter_short_name"></a> [perimeter\_short\_name](#output\_perimeter\_short\_name) | Nombre corto del perímetro. |
+| <a name="output_spec_ingress_policies"></a> [spec\_ingress\_policies](#output\_spec\_ingress\_policies) | Reglas de entrada de la configuración dry-run (spec) del perímetro, tal como las lleva el recurso; lista vacía si está forzado. Para revisión y pruebas. |
+| <a name="output_status_ingress_policies"></a> [status\_ingress\_policies](#output\_status\_ingress\_policies) | Reglas de entrada de la configuración forzada (status) del perímetro, tal como las lleva el recurso; lista vacía en dry-run. Para revisión y pruebas. |
 <!-- END_TF_DOCS -->
