@@ -47,6 +47,8 @@
       "hub_asn": 64514,
       "onprem_asn": 65001,
       "simulate_onprem": true,
+      "enable_vpn_dr": true,
+      "vpn_dr_bgp_ranges": ["169.254.0.8/30", "169.254.0.12/30"],
       "onprem_sim_cidr": "192.168.0.0/24",
       "onprem_dns_domain": "corp.example.com.",
       "onprem_dns_servers": ["192.168.0.10"],
@@ -79,6 +81,7 @@
     "4-projects/envs/dev": {
       "environment": "dev",
       "applications": { "app": { "apis": [], "secrets": [] } },
+      "binary_authorization_allowlist_patterns": ["us-docker.pkg.dev/cloudrun/container/hello*"],
       "labels": { "app": "app" }
     },
     "5-workloads/envs/dev": {

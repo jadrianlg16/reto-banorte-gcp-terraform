@@ -1,0 +1,22 @@
+{
+  "name": "projects/example-dev-host/locations/global/connectivityTests/e2e-x-dev-onprem",
+  "protocol": "TCP",
+  "reachabilityDetails": {
+    "result": "AMBIGUOUS",
+    "verifyTime": "2026-11-21T10:00:00Z",
+    "traces": [
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK"},
+          {"state": "DELIVER", "deliver": {"target": "INSTANCE"}, "isFinal": true}
+        ]
+      },
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK"},
+          {"state": "DROP", "drop": {"cause": "FIREWALL_RULE"}, "isFinal": true}
+        ]
+      }
+    ]
+  }
+}

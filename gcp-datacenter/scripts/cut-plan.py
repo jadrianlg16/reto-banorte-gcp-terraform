@@ -119,8 +119,11 @@ def main(argv):
     root = plan.get("configuration", {}).get("root_module")
     if root is not None:
         out["configuration"] = {"root_module": prune_module(root, tree)}
-    json.dump(out, sys.stdout, indent=2, sort_keys=True, ensure_ascii=False)
-    sys.stdout.write("\n")
+    # UTF-8 explícito: con la codificación de la consola (cp1252 en Windows) los acentos de los
+    # planes salían como bytes que no son UTF-8 válido.
+    text = json.dumps(out, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    sys.stdout.buffer.write(text.encode("utf-8"))
+    sys.stdout.flush()
     return 0
 
 

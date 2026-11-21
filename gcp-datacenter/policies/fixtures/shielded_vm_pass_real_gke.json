@@ -540,7 +540,7 @@
           ],
           "datapath_provider": "ADVANCED_DATAPATH",
           "deletion_protection": true,
-          "description": "Clúster prod de gke (administrado por Terraform).",
+          "description": "ClÃºster prod de gke (administrado por Terraform).",
           "disable_l4_lb_firewall_reconciliation": false,
           "dns_config": [],
           "effective_labels": {

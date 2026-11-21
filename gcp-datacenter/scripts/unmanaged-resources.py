@@ -37,6 +37,11 @@ Cómo decide que un recurso está administrado:
 
 Lo que queda es "no administrado": se lista y el script sale con 1.
 
+Sale con 2 (también con --report-only) si el listado no sirve para concluir nada: vacío, mal
+formado (`{}`, un objeto sin `results`, elementos sin `name`) o sin ninguno de los proyectos
+de los estados (otra carpeta, listado incompleto o estados de otro entorno). Así un "0 no
+administrados" solo sale de un listado que de verdad cubre el entorno.
+
 VERIFICAR-EN-APPLY: el formato de `name` de Cloud Asset para cada tipo (número o ID del
 proyecto, ID único de la cuenta de servicio) y que la lista de permitidos cubra los recursos que
 crean GKE, los MIG y los servicios administrados. Solo se puede comprobar con una carpeta real.
@@ -54,6 +59,7 @@ GONE_STATES = {"DELETED", "DELETE_REQUESTED", "DELETE_IN_PROGRESS"}
 # Hijos que una persona puede crear a mano y Terraform administra como recurso propio: no se
 # aceptan solo por estar bajo un recurso administrado.
 CHILD_RULE_EXCLUDED = {"container.googleapis.com/NodePool"}
+PROJECT_ASSET_TYPE = "cloudresourcemanager.googleapis.com/Project"
 ROOT_PREFIX = re.compile(r"(?:^|/)((?:projects|folders|organizations)/.*)$")
 
 
@@ -195,6 +201,26 @@ def load_json(path):
         return json.load(handle)
 
 
+def read_assets(path):
+    """(lista de recursos, None) o (None, motivo) si el listado está vacío o mal formado."""
+    try:
+        data = load_json(path)
+    except (OSError, ValueError) as exc:
+        return None, "no se pudo leer el listado: %s" % exc
+    if isinstance(data, dict):  # {"results": [...]} de la API REST
+        key = next((k for k in ("results", "assets") if k in data), None)
+        if key is None:
+            return None, "objeto JSON sin 'results' ni 'assets': no es un listado de Cloud Asset"
+        data = data[key]
+    if not isinstance(data, list):
+        return None, "se esperaba una lista de recursos y llegó %s" % type(data).__name__
+    if not data:
+        return None, "listado vacío: una carpeta de entorno siempre tiene al menos sus proyectos"
+    if not all(isinstance(a, dict) and a.get("name") for a in data):
+        return None, "hay elementos sin 'name': no es un listado de Cloud Asset"
+    return data, None
+
+
 def main(argv=None):
     here = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(description="Recursos de Cloud Asset Inventory que no están en los estados de Terraform.")
@@ -205,12 +231,23 @@ def main(argv=None):
     parser.add_argument("--report-only", action="store_true")
     args = parser.parse_args(argv)
 
-    assets = load_json(args.assets)
-    if isinstance(assets, dict):  # {"results": [...]} de la API REST
-        assets = assets.get("results", assets.get("assets", []))
+    assets, error = read_assets(args.assets)
+    if error:
+        sys.stderr.write("ERROR: %s: %s\n" % (args.assets, error))
+        return 2
     states = [load_json(p) for p in args.state]
     managed, parents, mig_patterns, aliases = build_managed(states)
     result = classify(assets, managed, parents, mig_patterns, aliases, load_allowlist(args.allowlist))
+
+    # Un listado de otra carpeta, truncado o de una identidad sin permisos no trae ninguno de
+    # los proyectos de los estados: sin esta comprobación daría "0 no administrados".
+    projects = [e for e in result["managed"] if e["assetType"] == PROJECT_ASSET_TYPE]
+    if not projects:
+        sys.stderr.write(
+            "ERROR: %s: ningún proyecto de los estados aparece en el listado (%d recursos); "
+            "¿carpeta equivocada, listado incompleto o estados de otro entorno?\n"
+            % (args.assets, len(assets)))
+        return 2
 
     counts = {k: len(v) for k, v in result.items()}
     print("recursos en Cloud Asset: %d" % len(assets))

@@ -167,7 +167,7 @@
           "backup_minimum_enforced_retention_duration": "2592000s",
           "backup_retention_inheritance": "INHERIT_VAULT_RETENTION",
           "backup_vault_id": "bnt-prod-bkp-vault-use4",
-          "description": "Bóveda de respaldos de prod en la región secundaria (us-east4).",
+          "description": "BÃ³veda de respaldos de prod en la regiÃ³n secundaria (us-east4).",
           "effective_labels": {
             "app": "web",
             "cost_center": "cc-0000",
@@ -261,7 +261,7 @@
             }
           ],
           "cluster": "projects/example-prod-app/locations/us-central1/clusters/bnt-prod-app-gke-usc1",
-          "description": "Respaldo diario del clúster de GKE de prod con retención de 30 días.",
+          "description": "Respaldo diario del clÃºster de GKE de prod con retenciÃ³n de 30 dÃ­as.",
           "effective_labels": {
             "app": "web",
             "cost_center": "cc-0000",

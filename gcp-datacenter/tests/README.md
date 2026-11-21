@@ -201,6 +201,26 @@ Compuerta `TEST_E2E=true`. Variables:
 | `TEST_E2E_SKIP_DESTROY` | `true`: no destruye dev |
 | `TEST_E2E_RUN_ID` | ID de la corrida (etiqueta `e2e_run`); por defecto aleatorio |
 
+### Decisiones de `config.example.json`
+
+- **Imagen de Cloud Run y Binary Authorization.** La etapa 4 crea en el proyecto de la
+  aplicación una política ALWAYS_DENY que solo admite su repositorio de Artifact Registry y
+  `binary_authorization_allowlist_patterns`. La imagen de muestra
+  (`us-docker.pkg.dev/cloudrun/container/hello:latest`) no está en ese repositorio, así que el
+  ejemplo la admite con `binary_authorization_allowlist_patterns =
+  ["us-docker.pkg.dev/cloudrun/container/hello*"]` en `4-projects/envs/dev`. Se eligió el
+  patrón y no publicar la imagen en el repositorio porque solo depende de esa variable (sin
+  `docker` ni una identidad publicadora en la prueba). Si se cambia `cloud_run_image`, hay que
+  cambiar el patrón; `TestConfigExampleBinaryAuthorization` (sin GCP) lo comprueba contra la
+  validación de la variable. **VERIFICAR-EN-APPLY**: que el `*` final admita la etiqueta
+  `:latest`. Las pruebas de integración no cambian: corren en proyectos efímeros sin política
+  de Binary Authorization propia (la de Google por defecto admite todo).
+- **VPN de DR del hub.** `enable_vpn_dr = true` explícito, como en el diseño: el hub crea 8
+  túneles (2 HA VPN de 2 túneles en el hub y sus puntas en `onprem-sim`). Se mantiene para que
+  0 → 5 mida el tiempo y el costo del diseño real; con un tiempo acotado se puede poner `false`
+  (4 túneles), y entonces la prueba no cubre la ruta de DR a on-premises.
+  `TestConfigExampleVPNDR` exige que el valor esté escrito.
+
 ### Qué automatiza
 
 1. **Etapa 0** según `stages/0-bootstrap/README.md`: copia `backend_override.tf.example` a
@@ -224,7 +244,16 @@ Compuerta `TEST_E2E=true`. Variables:
    - Internet → IP del balanceador de dev:443: REACHABLE;
    - dev → on-premises simulado (192.168.0.10:22 en `onprem-sim`): sin descarte por ruta (el
      firewall puede descartar; lo exigido es la propagación de rutas, pendiente 6);
-   - dev → prod (si se aplicó prod): no alcanzable (sin peering entre spokes, ADR 0003).
+   - dev → prod (si se aplicó prod): UNREACHABLE (sin peering entre spokes, ADR 0003).
+
+   Solo cuentan resultados definidos: UNDETERMINED, AMBIGUOUS o un paso `abort` en una traza
+   fallan siempre, y "sin descarte por ruta" exige al menos una traza y, si el resultado es
+   UNREACHABLE, un paso `drop` cuya causa no sea de ruta. La evaluación
+   (`evaluateConnectivity`) se prueba sin GCP con respuestas de la API escritas a mano en
+   `e2e/testdata/connectivity/` (`go test -run TestEvaluateConnectivity ./e2e/`). Un error al
+   leer una salida o al describir la instancia de Cloud SQL falla la prueba; una salida en null
+   por un recurso deshabilitado (balanceador sin backend, `simulate_onprem = false`) solo omite
+   su prueba y queda en el registro.
 6. **Destroy de dev** en orden inverso (5 → 4 → 3) y búsqueda de huérfanos con
    `gcloud asset search-all-resources --query="labels.e2e_run=<id> AND labels.env=dev"` en la
    organización, con reintentos durante 30 minutos (el índice tarda). Los proyectos en

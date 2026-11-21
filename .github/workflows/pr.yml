@@ -162,7 +162,9 @@ jobs:
 
   affected:
     name: raíces afectadas
-    if: vars.GCP_ENABLED == 'true'
+    # También en un PR desde un fork (no necesita GCP): plan-gate debe saber si toca raíces,
+    # aunque las variables del repositorio no lleguen al fork.
+    if: vars.GCP_ENABLED == 'true' || github.event.pull_request.head.repo.full_name != github.repository
     needs: [static, conftest]
     runs-on: ubuntu-latest
     outputs:
@@ -181,7 +183,8 @@ jobs:
 
   plan:
     name: plan ${{ matrix.root }}
-    if: vars.GCP_ENABLED == 'true' && needs.affected.outputs.roots != '[]'
+    # Un fork no recibe token OIDC: no se intenta planear (plan-gate falla con el motivo).
+    if: vars.GCP_ENABLED == 'true' && needs.affected.outputs.roots != '[]' && github.event.pull_request.head.repo.full_name == github.repository
     needs: affected
     runs-on: ubuntu-latest
     permissions:
@@ -321,7 +324,7 @@ jobs:
 
   comment:
     name: comentario del plan
-    if: always() && vars.GCP_ENABLED == 'true' && needs.affected.result == 'success' && needs.affected.outputs.roots != '[]'
+    if: always() && vars.GCP_ENABLED == 'true' && needs.affected.result == 'success' && needs.affected.outputs.roots != '[]' && github.event.pull_request.head.repo.full_name == github.repository
     needs: [affected, plan]
     runs-on: ubuntu-latest
     permissions:
@@ -367,39 +370,16 @@ jobs:
     if: always()
     needs: [affected, plan]
     runs-on: ubuntu-latest
-    # Sin checkout: el directorio gcp-datacenter de los valores por defecto no existe aquí.
-    defaults:
-      run:
-        shell: bash
-        working-directory: .
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # La decisión está en scripts/plan-gate.sh (probada en scripts/selftest.sh), incluido el
+      # caso de un PR desde un fork que toca raíces: falla con un mensaje claro.
       - name: Resultado de los planes
         env:
           GCP_ENABLED: ${{ vars.GCP_ENABLED }}
           AFFECTED: ${{ needs.affected.result }}
           ROOTS: ${{ needs.affected.outputs.roots }}
           PLAN: ${{ needs.plan.result }}
-        run: |
-          echo "affected=${AFFECTED} plan=${PLAN} roots=${ROOTS:-}"
-          fail() {
-            echo "::error::$1"
-            echo "plan-gate: FALLA. $1" >> "${GITHUB_STEP_SUMMARY}"
-            exit 1
-          }
-          for r in "${AFFECTED}" "${PLAN}"; do
-            case "${r}" in
-              failure | cancelled) fail "Un trabajo de plan o de raíces afectadas terminó en ${r}." ;;
-            esac
-          done
-          if [ "${GCP_ENABLED}" != "true" ]; then
-            echo "plan-gate: GCP_ENABLED no es \"true\"; no hay planes que revisar (solo cuentan las comprobaciones sin GCP)." >> "${GITHUB_STEP_SUMMARY}"
-            exit 0
-          fi
-          [ "${AFFECTED}" = "success" ] || fail "No se calcularon las raíces afectadas (resultado: ${AFFECTED})."
-          if [ "${ROOTS}" = "[]" ]; then
-            [ "${PLAN}" = "skipped" ] || fail "Sin raíces afectadas, el plan debía omitirse (resultado: ${PLAN})."
-            echo "plan-gate: ninguna raíz afectada." >> "${GITHUB_STEP_SUMMARY}"
-            exit 0
-          fi
-          [ "${PLAN}" = "success" ] || fail "Los planes no terminaron con éxito (resultado: ${PLAN})."
-          echo "plan-gate: todos los planes y su Conftest pasaron." >> "${GITHUB_STEP_SUMMARY}"
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: bash scripts/plan-gate.sh

@@ -12,7 +12,7 @@
 # completo: las incidencias de un repositorio público las ve cualquiera.
 #
 # Recursos no administrados (objetivo "cero recursos manuales", verificado con Cloud Asset
-# Inventory): por cada entorno (dev, qa, prod), lista con Cloud Asset los recursos de su
+# Inventory): por cada carpeta de 1-org (common, dev, qa, prod), lista con Cloud Asset los recursos de su
 # carpeta y los compara con todos los estados del bucket (scripts/unmanaged-resources.py).
 # Falla si hay recursos que ningún estado administra y los lista en el resumen. El drift de
 # arriba no los ve: un recurso creado a mano fuera de Terraform no cambia ningún plan.
@@ -205,7 +205,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        env: [dev, qa, prod]
+        # common: proyectos del hub de red, seguridad, registros y respaldo (1-org).
+        env: [common, dev, qa, prod]
     env:
       ENV_NAME: ${{ matrix.env }}
       STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}

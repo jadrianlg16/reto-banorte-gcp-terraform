@@ -68,6 +68,7 @@ label_paths_by_type := {
 	"google_compute_external_vpn_gateway": standard_label_paths,
 	"google_compute_vpn_tunnel": standard_label_paths,
 	"google_compute_interconnect_attachment": standard_label_paths,
+	"google_artifact_registry_repository": standard_label_paths,
 }
 
 # Llaves de etiqueta presentes en el plan, conocidas o con valor desconocido.

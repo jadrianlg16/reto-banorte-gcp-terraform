@@ -128,6 +128,7 @@ new_label_cases := {
 	"google_compute_external_vpn_gateway": ["labels"],
 	"google_compute_vpn_tunnel": ["labels"],
 	"google_compute_interconnect_attachment": ["labels"],
+	"google_artifact_registry_repository": ["labels"],
 	"google_monitoring_alert_policy": ["user_labels"],
 	"google_monitoring_custom_service": ["user_labels"],
 	"google_monitoring_slo": ["user_labels"],

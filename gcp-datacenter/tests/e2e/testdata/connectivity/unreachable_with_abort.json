@@ -1,0 +1,22 @@
+{
+  "name": "projects/example-dev-host/locations/global/connectivityTests/e2e-x-dev-prod",
+  "protocol": "TCP",
+  "reachabilityDetails": {
+    "result": "UNREACHABLE",
+    "verifyTime": "2026-11-21T10:00:00Z",
+    "traces": [
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK"},
+          {"state": "DROP", "drop": {"cause": "FIREWALL_RULE"}, "isFinal": true}
+        ]
+      },
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK"},
+          {"state": "ABORT", "abort": {"cause": "UNKNOWN_NETWORK"}, "isFinal": true}
+        ]
+      }
+    ]
+  }
+}

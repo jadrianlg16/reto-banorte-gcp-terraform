@@ -34,7 +34,7 @@ Solo se exigen en una lista explícita de tipos que admiten etiquetas en el prov
 `hashicorp/google`, con las rutas revisadas contra `terraform providers schema -json` de la
 versión 6.50.0: buckets, instancias, plantillas, discos, imágenes, instantáneas, direcciones y
 reglas de reenvío de Compute, gateways HA VPN y externos, túneles VPN, adjuntos de Interconnect,
-clústeres y node pools de GKE, Cloud SQL, Memorystore (Redis), Filestore, Cloud Run v2 (servicio
+repositorios de Artifact Registry, clústeres y node pools de GKE, Cloud SQL, Memorystore (Redis), Filestore, Cloud Run v2 (servicio
 y trabajo), llaves KMS, secretos, proyectos, zonas de Cloud DNS, Pub/Sub, BigQuery, bóvedas de
 Backup and DR, planes de Backup for GKE, certificados y autorizaciones DNS de Certificate
 Manager, y en Cloud Monitoring las políticas de alerta, servicios, SLO, verificaciones de tiempo
@@ -142,14 +142,14 @@ conftest test tfplan.json --policy policies
   recursos sueltos). Cubren la plantilla regional del MIG con y sin `stack_type`, la plantilla
   de doble pila, los nodos públicos y sin arranque seguro de GKE, el ejemplo de GKE completo,
   los tipos de etiquetas agregados (sin etiquetas y con ellas: Backup and DR, Certificate
-  Manager, Monitoring, VPN).
+  Manager, Monitoring, VPN, Artifact Registry).
 - Todos usan valores de ejemplo (`example-project`, `@example.com`, `000000000000`), nunca IDs
   ni correos reales; los valores sensibles de los planes reales salen como `REDACTADO`.
 
 `scripts/policy-check.sh` corre `conftest verify` y luego cada plan de ejemplo: un `_pass` debe
 pasar, y un `_fail` debe ser rechazado únicamente por mensajes de su regla. Un `_fail` que pasa,
 o que rechaza otra regla, es un error y el script sale con código distinto de cero. Hoy: 83
-pruebas de Rego y 25 planes de ejemplo.
+pruebas de Rego y 27 planes de ejemplo.
 
 ### Sacar un plan de ejemplo de un plan real
 

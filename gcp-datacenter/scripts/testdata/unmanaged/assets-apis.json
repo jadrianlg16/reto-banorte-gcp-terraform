@@ -1,0 +1,7 @@
+[
+  {"name": "//cloudresourcemanager.googleapis.com/projects/111111111111", "assetType": "cloudresourcemanager.googleapis.com/Project", "displayName": "example-dev-app", "state": "ACTIVE"},
+  {"name": "//serviceusage.googleapis.com/projects/111111111111/services/run.googleapis.com", "assetType": "serviceusage.googleapis.com/Service", "displayName": "run.googleapis.com"},
+  {"name": "//serviceusage.googleapis.com/projects/111111111111/services/storage-api.googleapis.com", "assetType": "serviceusage.googleapis.com/Service", "displayName": "storage-api.googleapis.com"},
+  {"name": "//serviceusage.googleapis.com/projects/111111111111/services/containerfilesystem.googleapis.com", "assetType": "serviceusage.googleapis.com/Service", "displayName": "containerfilesystem.googleapis.com"},
+  {"name": "//serviceusage.googleapis.com/projects/111111111111/services/aiplatform.googleapis.com", "assetType": "serviceusage.googleapis.com/Service", "displayName": "aiplatform.googleapis.com"}
+]

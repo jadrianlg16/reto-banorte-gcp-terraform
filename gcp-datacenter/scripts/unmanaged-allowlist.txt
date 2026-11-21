@@ -10,7 +10,16 @@
 # real. En la primera corrida, revisar lo que queda permitido y lo que sale como no
 # administrado, y ajustar aquí (nunca agregar una regla que cubra un tipo completo sin motivo).
 
-^serviceusage\.googleapis\.com/Service  # APIs habilitadas como dependencia de otra (p. ej. container habilita compute); no crean recursos por sí mismas
+# APIs habilitadas: solo las que Google habilita como dependencia de una API que el código sí
+# declara, o que vienen habilitadas en todo proyecto, y que ninguna raíz declara (las que se
+# declaran salen como administradas por nombre). Cualquier otra API habilitada a mano se reporta.
+# HIPÓTESIS (documentación de Google, sin carpeta real): container → autoscaling,
+# containerfilesystem, containerregistry, networkconnectivity, bigquerystorage y
+# bigquerymigration; storage → storage-api y storage-component; sqladmin → sql-component;
+# servicemanagement, serviceusage y cloudapis están en todo proyecto. Si una API declarada en
+# otra raíz (compute, iam, pubsub, dns, logging, monitoring...) aparece como dependencia en un
+# proyecto que no la declara, se reporta: se declara en ese proyecto o se agrega aquí con motivo.
+^serviceusage\.googleapis\.com/Service projects/[0-9]+/services/(autoscaling|containerfilesystem|containerregistry|networkconnectivity|bigquerystorage|bigquerymigration|storage-api|storage-component|sql-component|servicemanagement|serviceusage|cloudapis)\.googleapis\.com( |$)  # APIs que Google habilita como dependencia o en todo proyecto (lista cerrada, ver arriba)
 ^logging\.googleapis\.com/LogBucket .*/buckets/_(Default|Required)( |$)  # buckets de registros que crea Cloud Logging en cada proyecto
 ^logging\.googleapis\.com/LogSink .*/sinks/_(Default|Required)( |$)  # sinks que crea Cloud Logging en cada proyecto
 ^iam\.googleapis\.com/ServiceAccount .* (Compute Engine default service account|App Engine default service account)$  # cuentas por defecto que crea Google al habilitar la API

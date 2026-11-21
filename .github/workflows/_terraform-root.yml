@@ -68,10 +68,28 @@ jobs:
     outputs:
       changes: ${{ steps.plan.outputs.changes }}
       fingerprint: ${{ steps.plan.outputs.fingerprint }}
+      vars_fingerprint: ${{ steps.vars.outputs.fingerprint }}
     env:
       ROOT: ${{ inputs.root }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Una ejecución vieja que se vuelve a correr ("Re-run") trae su github.sha original: si
+      # main ya avanzó, no se planea código viejo (ver docs/pipeline.md §4).
+      - name: El commit sigue siendo la punta de main
+        run: bash scripts/check-main-tip.sh "${GITHUB_SHA}"
+
+      # Este trabajo no tiene entorno y el de apply sí: si una de estas variables se redefine en
+      # el entorno de GitHub, el apply leería otro valor. La huella (sin exponer valores) se
+      # compara en el apply (docs/pipeline.md §2).
+      - name: Huella de las variables del plan
+        id: vars
+        env:
+          V1: ${{ vars.GCP_TFVARS_JSON }}
+          V2: ${{ vars.GCP_STAGE_SERVICE_ACCOUNTS }}
+          V3: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          echo "fingerprint=$(printf '%s\n%s\n%s' "${V1}" "${V2}" "${V3}" | sha256sum | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -184,9 +202,23 @@ jobs:
     env:
       ROOT: ${{ inputs.root }}
       REVIEWED_FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+      APPLY_ENVIRONMENT: ${{ inputs.environment }}
     steps:
       # Mismo commit que el trabajo plan (github.sha es fijo en la ejecución).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Variables iguales a las del plan (de repositorio, no del entorno)
+        env:
+          V1: ${{ vars.GCP_TFVARS_JSON }}
+          V2: ${{ vars.GCP_STAGE_SERVICE_ACCOUNTS }}
+          V3: ${{ vars.GCP_STATE_BUCKET }}
+          PLAN_VARS_FINGERPRINT: ${{ needs.plan.outputs.vars_fingerprint }}
+        run: |
+          got="$(printf '%s\n%s\n%s' "${V1}" "${V2}" "${V3}" | sha256sum | cut -d' ' -f1)"
+          if [ "${got}" != "${PLAN_VARS_FINGERPRINT}" ]; then
+            echo "::error::GCP_TFVARS_JSON, GCP_STAGE_SERVICE_ACCOUNTS o GCP_STATE_BUCKET tienen otro valor en el entorno '${APPLY_ENVIRONMENT}' que en el trabajo plan (sin entorno). Tienen que ser variables de repositorio y no estar redefinidas en Settings → Environments → ${APPLY_ENVIRONMENT} (docs/pipeline.md §2). No se aplica nada."
+            exit 1
+          fi
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -244,7 +276,7 @@ jobs:
           terraform show -json tfplan > plan.json
           fingerprint="$(python3 "${GITHUB_WORKSPACE}/gcp-datacenter/scripts/plan-fingerprint.py" plan.json)"
           if [ "${fingerprint}" != "${REVIEWED_FINGERPRINT}" ]; then
-            echo "::error::El plan cambió desde la revisión (huella ${fingerprint}, revisada ${REVIEWED_FINGERPRINT}). No se aplica nada; volver a correr el flujo y revisar el plan nuevo."
+            echo "::error::El plan cambió desde la revisión (huella ${fingerprint}, revisada ${REVIEWED_FINGERPRINT}). No se aplica nada; volver a correr el flujo y revisar el plan nuevo. Si se repite en cada ejecución, revisar que GCP_TFVARS_JSON, GCP_STAGE_SERVICE_ACCOUNTS y GCP_STATE_BUCKET sean variables de repositorio y no estén redefinidas en el entorno '${APPLY_ENVIRONMENT}': este trabajo corre en el entorno y el de plan no (docs/pipeline.md §2)."
             exit 1
           fi
           echo "Huella igual a la revisada: ${fingerprint}"
@@ -252,6 +284,10 @@ jobs:
       - name: Conftest sobre el plan que se aplica
         id: conftest
         run: conftest test "${ROOT}/plan.json" --policy policies --no-color
+
+      # Otra vez justo antes del apply: main pudo avanzar mientras se esperaba la aprobación.
+      - name: El commit sigue siendo la punta de main (antes del apply)
+        run: bash scripts/check-main-tip.sh "${GITHUB_SHA}"
 
       - name: terraform apply del plan guardado
         id: apply

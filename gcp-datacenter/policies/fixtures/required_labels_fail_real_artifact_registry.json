@@ -1,0 +1,95 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_artifact_registry_repository.unlabelled",
+          "expressions": {
+            "format": {
+              "constant_value": "DOCKER"
+            },
+            "location": {
+              "constant_value": "us"
+            },
+            "project": {
+              "constant_value": "example-dev-app"
+            },
+            "repository_id": {
+              "constant_value": "bnt-dev-app-manual"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_artifact_registry_repository"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_artifact_registry_repository.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "cleanup_policies": [],
+          "cleanup_policy_dry_run": null,
+          "description": null,
+          "docker_config": [],
+          "effective_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "format": "DOCKER",
+          "kms_key_name": null,
+          "labels": null,
+          "location": "us",
+          "maven_config": [],
+          "mode": "STANDARD_REPOSITORY",
+          "project": "example-dev-app",
+          "remote_repository_config": [],
+          "repository_id": "bnt-dev-app-manual",
+          "terraform_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null,
+          "virtual_repository_config": []
+        },
+        "after_sensitive": {
+          "cleanup_policies": [],
+          "docker_config": [],
+          "effective_labels": {},
+          "maven_config": [],
+          "remote_repository_config": [],
+          "terraform_labels": {},
+          "virtual_repository_config": [],
+          "vulnerability_scanning_config": []
+        },
+        "after_unknown": {
+          "cleanup_policies": [],
+          "create_time": true,
+          "docker_config": [],
+          "effective_labels": {},
+          "id": true,
+          "maven_config": [],
+          "name": true,
+          "remote_repository_config": [],
+          "terraform_labels": {},
+          "update_time": true,
+          "virtual_repository_config": [],
+          "vulnerability_scanning_config": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_artifact_registry_repository"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

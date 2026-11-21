@@ -41,6 +41,15 @@ const (
 
 // Valores por defecto que no identifican a nadie: son las regiones del ADR 0002 e imágenes
 // públicas de Google.
+//
+// DefaultCloudRunImage y Binary Authorization: las pruebas de integración corren en proyectos
+// efímeros sin google_binary_authorization_policy, cuya política es la de Google por defecto
+// (admite todo), así que la imagen pública sirve. En la prueba de extremo a extremo, la etapa 4
+// crea la política del proyecto de la aplicación (ALWAYS_DENY salvo su repositorio de Artifact
+// Registry y binary_authorization_allowlist_patterns): e2e/config.example.json agrega esta
+// imagen a binary_authorization_allowlist_patterns de 4-projects/envs/dev. Quien cambie
+// TEST_CLOUD_RUN_IMAGE o cloud_run_image debe cambiar también ese patrón.
+// VERIFICAR-EN-APPLY: que el patrón con * final admita la etiqueta :latest.
 const (
 	DefaultRegion        = "us-central1"
 	DefaultDRRegion      = "us-east4"
