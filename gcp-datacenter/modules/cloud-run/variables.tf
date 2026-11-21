@@ -267,6 +267,13 @@ variable "invokers" {
   }
 }
 
+variable "public_via_load_balancer" {
+  description = "Si es true, el servicio es backend del balanceador HTTPS externo y recibe tráfico público: se desactiva la verificación de IAM del invocador (invoker_iam_disabled = true). La entrada sigue fija en interno y balanceador y nunca se concede allUsers (ADR 0020); el control de acceso queda en el balanceador y Cloud Armor."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "enable_binary_authorization" {
   description = "Aplica la política de Binary Authorization del proyecto a las revisiones del servicio."
   type        = bool

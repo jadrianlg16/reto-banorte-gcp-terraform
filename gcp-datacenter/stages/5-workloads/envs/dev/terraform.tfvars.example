@@ -1,0 +1,40 @@
+# Valores de ejemplo de 5-workloads/dev. Copiar a terraform.tfvars y reemplazar los marcadores.
+# El bucket de estado llega también por: terraform init -backend-config="bucket=<bucket>"
+
+prefix       = "bnt"
+environment  = "dev"
+application  = "app"
+state_bucket = "bnt-bootstrap-tfstate-000000000000"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# Sin DR en dev (§5: las llaves *_dr se reservan pero no se crean).
+enable_dr = false
+dr_active = false
+
+# dev: solo Cloud Run y Cloud SQL (más Storage, observabilidad y respaldo, que son fijos).
+enable_gke          = false
+enable_mig          = false
+enable_cloud_run    = true
+enable_filestore    = false
+enable_memorystore  = false
+enable_internal_lb  = false
+enable_backup       = true
+deletion_protection = false
+
+cloud_run_image = "us-central1-docker.pkg.dev/example-dev-app/apps/api:latest"
+
+sql_tier             = "db-custom-1-3840"
+sql_database_version = "POSTGRES_16"
+sql_databases        = ["app"]
+
+domain_names = ["app.dev.example.com"]
+
+notification_emails = ["alertas-dev@example.com"]
+
+labels = {
+  app         = "app"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}

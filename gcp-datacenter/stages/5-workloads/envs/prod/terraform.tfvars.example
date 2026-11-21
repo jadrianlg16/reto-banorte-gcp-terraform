@@ -1,0 +1,77 @@
+# Valores de ejemplo de 5-workloads/prod. Copiar a terraform.tfvars y reemplazar los marcadores.
+# El bucket de estado llega también por: terraform init -backend-config="bucket=<bucket>"
+
+prefix       = "bnt"
+environment  = "prod"
+application  = "app"
+state_bucket = "bnt-bootstrap-tfstate-000000000000"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# DR de datos (réplica de Cloud SQL, bucket de doble región, Backup for GKE). dr_active = true
+# solo durante una conmutación (runbook de DR).
+enable_dr = true
+dr_active = false
+
+enable_gke         = true
+enable_mig         = true
+enable_cloud_run   = true
+enable_filestore   = true
+enable_memorystore = true
+enable_internal_lb = true
+enable_backup      = true
+
+# Plano de control de GKE (§5, X = 30): rangos reservados que el spoke no publica como subred.
+subnet_cidrs = {
+  gke_master    = "10.30.38.0/28"
+  gke_master_dr = "10.30.38.16/28"
+}
+
+gke_authenticator_security_group = "gke-security-groups@example.com"
+gke_release_channel              = "STABLE"
+gke_master_authorized_networks = [
+  { cidr_block = "192.168.0.0/16", display_name = "onprem" },
+]
+gke_node_pools = {
+  general = {
+    machine_type   = "e2-standard-4"
+    min_node_count = 1
+    max_node_count = 3
+  }
+}
+# Se llenan después del primer despliegue de la carga en GKE (NEG zonales de la anotación
+# cloud.google.com/neg); vacío hasta entonces.
+gke_lb_negs = {
+  primary = []
+  dr      = []
+}
+
+mig_image        = "projects/example-images/global/images/family/app-hardened"
+mig_machine_type = "e2-standard-2"
+mig_min_replicas = 2
+mig_max_replicas = 6
+
+cloud_run_image = "us-central1-docker.pkg.dev/example-prod-app/apps/api:1.0.0"
+
+sql_tier             = "db-custom-2-7680"
+sql_database_version = "POSTGRES_16"
+sql_databases        = ["app"]
+
+memorystore_memory_gb = 5
+filestore_tier        = "REGIONAL"
+filestore_capacity_gb = 1024
+
+domain_names          = ["app.example.com"]
+internal_domain_names = ["app.prod.example.com"]
+lb_backend_paths = {
+  mig = ["/legacy/*"]
+}
+
+notification_emails = ["alertas-prod@example.com"]
+
+labels = {
+  app         = "app"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}

@@ -119,6 +119,29 @@ run "secretos_por_referencia" {
   }
 }
 
+run "publico_via_balanceador_sin_allusers" {
+  command = plan
+
+  variables {
+    public_via_load_balancer = true
+    invokers                 = []
+  }
+
+  # ADR 0020: la entrada no cambia; solo se desactiva la verificación de IAM del invocador.
+  assert {
+    condition     = google_cloud_run_v2_service.this.ingress == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+    error_message = "Con public_via_load_balancer la entrada debe seguir siendo interna y del balanceador."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.this.invoker_iam_disabled == true
+    error_message = "Con public_via_load_balancer la verificación de IAM del invocador debe desactivarse."
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.invoker) == 0
+    error_message = "public_via_load_balancer no debe conceder run.invoker a nadie (nunca allUsers)."
+  }
+}
+
 run "rechaza_invocador_publico" {
   command = plan
 

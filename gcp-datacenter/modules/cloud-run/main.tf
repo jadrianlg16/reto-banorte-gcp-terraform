@@ -23,9 +23,14 @@ resource "google_cloud_run_v2_service" "this" {
   description = "Servicio ${var.environment} de ${var.name} (administrado por Terraform)."
 
   # Solo tráfico interno y del balanceador de cargas; nunca la URL pública run.app abierta.
+  # La entrada no cambia con public_via_load_balancer (ADR 0020).
   ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  # La verificación de IAM del invocador queda activa: sin permiso run.invoker no hay acceso.
-  invoker_iam_disabled = false
+  # Por defecto la verificación de IAM del invocador queda activa: sin run.invoker no hay
+  # acceso. Con public_via_load_balancer = true se desactiva para que el balanceador externo
+  # sirva tráfico público sin conceder allUsers (lo impide iam.allowedPolicyMemberDomains); el
+  # control de acceso queda en el balanceador y Cloud Armor (ADR 0020).
+  # VERIFICAR-EN-APPLY: que invoker_iam_disabled = true no choque con la política de organización y que el servicio siga sin ser alcanzable por run.app desde Internet (la entrada interna y del balanceador lo impide).
+  invoker_iam_disabled = var.public_via_load_balancer
 
   deletion_protection = local.deletion_protection
   labels              = var.labels

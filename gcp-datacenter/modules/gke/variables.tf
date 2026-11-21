@@ -252,6 +252,20 @@ variable "authenticator_security_group" {
   }
 }
 
+variable "node_resource_manager_tags" {
+  description = "Etiquetas seguras de los nodos de todos los pools (tagKeys/<id> → tagValues/<id>), por ejemplo la de lb_backend de la etapa 3. Vacío: sin etiquetas seguras."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition = alltrue([
+      for k, v in var.node_resource_manager_tags : can(regex("^tagKeys/[0-9]+$", k)) && can(regex("^tagValues/[0-9]+$", v))
+    ])
+    error_message = "node_resource_manager_tags debe mapear tagKeys/<id> → tagValues/<id>."
+  }
+}
+
 variable "enable_backup_agent" {
   description = "Habilita el complemento de Backup for GKE (lo necesita el plan de respaldo del módulo backup-dr)."
   type        = bool

@@ -13,10 +13,14 @@ Binary Authorization con la política del proyecto, imagen con etiqueta fija o d
 y protección contra borrado siempre activa en prod.
 
 El NEG vive en este módulo y sale como `neg_id`: el módulo `load-balancer` recibe backends
-genéricos y no necesita saber que el backend es Cloud Run. Como la verificación de IAM sigue
-activa, quien llegue por el balanceador necesita `roles/run.invoker`: con IAP en el servicio de
-backend se da al agente de servicio de IAP por `invokers`; sin IAP, los clientes deben mandar
-un token de identidad. Para la salida directa a la VPC, el agente de servicio de Cloud Run del
+genéricos y no necesita saber que el backend es Cloud Run. Por defecto la verificación de IAM
+sigue activa y quien llegue por el balanceador necesita `roles/run.invoker`: con IAP en el
+servicio de backend se da al agente de servicio de IAP por `invokers`; sin IAP, los clientes
+deben mandar un token de identidad. Cuando el servicio es backend del balanceador HTTPS externo
+y sirve tráfico público, `public_via_load_balancer = true` desactiva la verificación de IAM del
+invocador (`invoker_iam_disabled = true`) sin tocar la entrada, que sigue fija en interno y
+balanceador, y sin conceder `allUsers` (lo impide `iam.allowedPolicyMemberDomains`); el control
+de acceso queda en el balanceador y Cloud Armor (ADR 0020). Para la salida directa a la VPC, el agente de servicio de Cloud Run del
 proyecto de servicio necesita el usuario de subred en el host, y para CMEK,
 `roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave (los da la etapa 4).
 
@@ -73,6 +77,7 @@ No modules.
 | <a name="input_min_instances"></a> [min\_instances](#input\_min\_instances) | Mínimo de instancias del servicio. | `number` | `0` | no |
 | <a name="input_name"></a> [name](#input\_name) | Identificador corto del servicio dentro de los nombres (<prefix>-<environment>-app-<name>-<región>). | `string` | `"run"` | no |
 | <a name="input_network_tags"></a> [network\_tags](#input\_network\_tags) | Etiquetas de red de la salida directa a la VPC (para reglas de firewall). | `list(string)` | `[]` | no |
+| <a name="input_public_via_load_balancer"></a> [public\_via\_load\_balancer](#input\_public\_via\_load\_balancer) | Si es true, el servicio es backend del balanceador HTTPS externo y recibe tráfico público: se desactiva la verificación de IAM del invocador (invoker\_iam\_disabled = true). La entrada sigue fija en interno y balanceador y nunca se concede allUsers (ADR 0020); el control de acceso queda en el balanceador y Cloud Armor. | `bool` | `false` | no |
 | <a name="input_region_codes"></a> [region\_codes](#input\_region\_codes) | Mapa región → código corto que se agrega a los nombres (§4.2 del contrato). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_request_timeout"></a> [request\_timeout](#input\_request\_timeout) | Tiempo máximo de una solicitud, en segundos con sufijo s (por ejemplo, 300s). | `string` | `"300s"` | no |
 | <a name="input_secret_env"></a> [secret\_env](#input\_secret\_env) | Variables de entorno leídas de Secret Manager (nombre → { secret, version }). secret es el ID del secreto de la etapa 2; el valor nunca pasa por Terraform. | <pre>map(object({<br/>    secret  = string<br/>    version = optional(string, "latest")<br/>  }))</pre> | `{}` | no |

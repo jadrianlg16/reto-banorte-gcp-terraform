@@ -1,0 +1,49 @@
+# Valores de ejemplo de 5-workloads/qa. Copiar a terraform.tfvars y reemplazar los marcadores.
+# El bucket de estado llega también por: terraform init -backend-config="bucket=<bucket>"
+
+prefix       = "bnt"
+environment  = "qa"
+application  = "app"
+state_bucket = "bnt-bootstrap-tfstate-000000000000"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# Sin DR en qa (§5: las llaves *_dr se reservan pero no se crean).
+enable_dr = false
+dr_active = false
+
+enable_gke          = false
+enable_mig          = true
+enable_cloud_run    = true
+enable_filestore    = false
+enable_memorystore  = true
+enable_internal_lb  = false
+enable_backup       = true
+deletion_protection = false
+
+mig_image        = "projects/example-images/global/images/family/app-hardened"
+mig_machine_type = "e2-standard-2"
+mig_min_replicas = 1
+mig_max_replicas = 3
+
+cloud_run_image = "us-central1-docker.pkg.dev/example-qa-app/apps/api:1.0.0"
+
+sql_tier             = "db-custom-2-7680"
+sql_database_version = "POSTGRES_16"
+sql_databases        = ["app"]
+
+memorystore_memory_gb = 5
+
+domain_names = ["app.qa.example.com"]
+lb_backend_paths = {
+  mig = ["/legacy/*"]
+}
+
+notification_emails = ["alertas-qa@example.com"]
+
+labels = {
+  app         = "app"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}

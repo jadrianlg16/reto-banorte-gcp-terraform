@@ -26,6 +26,9 @@ La llave KMS (`kms_key`, uso `gke` de la etapa 2) debe estar en la misma región
 clúster, y la subred también. El agente de servicio de GKE del proyecto de servicio necesita
 `roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave y el usuario de subred en el host
 (los da la etapa 4). La política de Binary Authorization del proyecto no la crea este módulo.
+Las reglas de firewall del spoke usan etiquetas seguras: `node_resource_manager_tags`
+(`tagKeys/<id>` → `tagValues/<id>`, vacío por defecto) las pone en los nodos de todos los
+pools, por ejemplo `lb_backend` para que el balanceador llegue a los NEG de GKE.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -76,6 +79,7 @@ No modules.
 | <a name="input_maintenance_start_time"></a> [maintenance\_start\_time](#input\_maintenance\_start\_time) | Hora de inicio (UTC, HH:MM) de la ventana diaria de mantenimiento. | `string` | `"08:00"` | no |
 | <a name="input_master_authorized_networks"></a> [master\_authorized\_networks](#input\_master\_authorized\_networks) | Rangos autorizados para llegar al plano de control (por ejemplo, la subred de administración o el rango on-premises). | <pre>list(object({<br/>    cidr_block   = string<br/>    display_name = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_name"></a> [name](#input\_name) | Identificador corto de la carga dentro del nombre del clúster (<prefix>-<environment>-app-<name>-<región>). | `string` | `"gke"` | no |
+| <a name="input_node_resource_manager_tags"></a> [node\_resource\_manager\_tags](#input\_node\_resource\_manager\_tags) | Etiquetas seguras de los nodos de todos los pools (tagKeys/<id> → tagValues/<id>), por ejemplo la de lb\_backend de la etapa 3. Vacío: sin etiquetas seguras. | `map(string)` | `{}` | no |
 | <a name="input_region_codes"></a> [region\_codes](#input\_region\_codes) | Mapa región → código corto que se agrega a los nombres (§4.2 del contrato). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_release_channel"></a> [release\_channel](#input\_release\_channel) | Canal de versiones de GKE: RAPID, REGULAR o STABLE. En prod no se admite RAPID. | `string` | `"REGULAR"` | no |
 

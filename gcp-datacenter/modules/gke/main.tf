@@ -225,6 +225,11 @@ resource "google_container_node_pool" "this" {
     labels          = each.value.k8s_labels
     resource_labels = var.labels
 
+    # Etiquetas seguras de las VM de los nodos (por ejemplo lb_backend de la etapa 3, para que
+    # el firewall del spoke deje pasar al balanceador y sus verificaciones de salud hacia los NEG).
+    # VERIFICAR-EN-APPLY: que los nodos de un proyecto de servicio acepten etiquetas seguras del proyecto host (roles/resourcemanager.tagUser de la etapa 4 al agente de servicio de GKE).
+    resource_manager_tags = var.node_resource_manager_tags
+
     dynamic "taint" {
       for_each = each.value.taints
       content {

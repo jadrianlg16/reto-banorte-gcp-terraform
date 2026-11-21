@@ -193,6 +193,29 @@ run "dev_zonal_sin_proteccion" {
   }
 }
 
+run "nodos_con_etiquetas_seguras" {
+  command = plan
+
+  variables {
+    node_resource_manager_tags = { "tagKeys/111" = "tagValues/222" }
+  }
+
+  assert {
+    condition     = alltrue([for p in google_container_node_pool.this : p.node_config[0].resource_manager_tags["tagKeys/111"] == "tagValues/222"])
+    error_message = "Cada pool debe llevar las etiquetas seguras de node_resource_manager_tags."
+  }
+}
+
+run "rechaza_etiqueta_segura_mal_formada" {
+  command = plan
+
+  variables {
+    node_resource_manager_tags = { "lb_backend" = "tagValues/222" }
+  }
+
+  expect_failures = [var.node_resource_manager_tags]
+}
+
 run "rechaza_zona_en_prod" {
   command = plan
 
