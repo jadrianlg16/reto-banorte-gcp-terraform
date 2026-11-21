@@ -202,7 +202,7 @@ run "prefix_invalido" {
   command = plan
 
   variables {
-    prefix = "Banorte1"
+    prefix = "Empresa1"
   }
 
   expect_failures = [var.prefix]
