@@ -196,6 +196,37 @@ run "plan_con_valores_de_ejemplo" {
     condition     = module.iam.bindings["sa|4-projects|folder:prod|roles/resourcemanager.projectCreator"].scope == "folder"
     error_message = "La cuenta de 4-projects crea proyectos en las carpetas de entorno."
   }
+  assert {
+    condition = alltrue([for e in ["dev", "qa", "prod"] :
+      module.iam.bindings["sa|5-workloads|folder:${e}|roles/certificatemanager.editor"].member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
+    ])
+    error_message = "La cuenta de 5-workloads necesita certificatemanager.editor en cada carpeta de entorno (certificado del balanceador interno)."
+  }
+  assert {
+    condition = alltrue([for e in ["dev", "qa", "prod"] :
+      module.iam.bindings["sa|4-projects|folder:${e}|roles/resourcemanager.tagAdmin"].scope == "folder"
+    ])
+    error_message = "La cuenta de 4-projects necesita tagAdmin en las carpetas de entorno (tagUser sobre las etiquetas seguras del spoke)."
+  }
+  assert {
+    condition = alltrue(flatten([
+      for s, roles in {
+        "4-projects"  = ["roles/container.hostServiceAgentUser"]
+        "5-workloads" = ["roles/cloudsql.client", "roles/cloudsql.instanceUser"]
+        } : [
+        for b in local.iam_bindings : [
+          b.condition != null,
+          alltrue([for r in roles : strcontains(b.condition.expression, "'${r}'")]),
+          strcontains(b.condition.expression, "modifiedGrantsByRole"),
+        ] if b.role == "roles/resourcemanager.projectIamAdmin" && b.member == "serviceAccount:bnt-tf-${s}@bnt-bootstrap-seed.iam.gserviceaccount.com"
+      ]
+    ]))
+    error_message = "projectIamAdmin de 4-projects y 5-workloads debe quedar limitado por condición a los roles que asignan."
+  }
+  assert {
+    condition     = length([for b in local.iam_bindings : b if b.role == "roles/resourcemanager.projectIamAdmin" && b.scope == "folder"]) == 6
+    error_message = "projectIamAdmin condicionado: 4-projects y 5-workloads en dev, qa y prod (6 asignaciones)."
+  }
 }
 
 run "grupos_incompletos" {

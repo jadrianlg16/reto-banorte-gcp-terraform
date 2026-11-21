@@ -84,14 +84,21 @@ locals {
     }
     "4-projects" = {
       projects = {}
-      # Proyectos de servicio, alta en Shared VPC y permisos de uso de subred.
-      env_folder_roles = ["roles/compute.xpnAdmin", "roles/resourcemanager.projectCreator"]
+      # Proyectos de servicio, alta en Shared VPC y permisos de uso de subred. tagAdmin: dar
+      # tagUser sobre los valores de las etiquetas seguras del spoke (las llaves viven en el
+      # proyecto net-spoke, dentro de la carpeta del entorno).
+      env_folder_roles = [
+        "roles/compute.xpnAdmin",
+        "roles/resourcemanager.projectCreator",
+        "roles/resourcemanager.tagAdmin",
+      ]
     }
     "5-workloads" = {
       projects = {}
       # Cargas de la etapa 5 en los proyectos de servicio (y uso de las subredes del host).
       env_folder_roles = [
         "roles/backupdr.admin",
+        "roles/certificatemanager.editor", # certificado del balanceador interno
         "roles/cloudsql.admin",
         "roles/compute.instanceAdmin.v1",
         "roles/compute.loadBalancerAdmin",
@@ -107,6 +114,19 @@ locals {
         "roles/storage.admin",
       ]
     }
+  }
+
+  # Cuenta de etapa → roles/resourcemanager.projectIamAdmin en las carpetas de entorno, limitado
+  # por condición a los roles que su etapa asigna sobre proyectos que no crea (concesión
+  # delegada: solo puede agregar o quitar esos roles, nada más).
+  # - 4-projects: container.hostServiceAgentUser en el host del spoke (lo crea 3-networks).
+  # - 5-workloads: cloudsql.client e instanceUser (módulo cloud-sql) en el proyecto de servicio
+  #   (lo crea 4-projects).
+  # VERIFICAR-EN-APPLY: que la condición con iam.googleapis.com/modifiedGrantsByRole se acepte
+  # en una carpeta y se evalúe al cambiar el IAM de los proyectos de abajo.
+  stage_delegated_project_iam = {
+    "4-projects"  = ["roles/container.hostServiceAgentUser"]
+    "5-workloads" = ["roles/cloudsql.client", "roles/cloudsql.instanceUser"]
   }
 
   iam_bindings = concat(
@@ -163,6 +183,22 @@ locals {
           resource = module.folders.ids[pair[0]]
           role     = pair[1]
           member   = "serviceAccount:${local.stage_service_accounts[s]}"
+        }
+      ]
+    ]),
+    flatten([
+      for s, roles in local.stage_delegated_project_iam : [
+        for e in local.environments : {
+          key      = "sa|${s}|folder:${e}|roles/resourcemanager.projectIamAdmin"
+          scope    = "folder"
+          resource = module.folders.ids[e]
+          role     = "roles/resourcemanager.projectIamAdmin"
+          member   = "serviceAccount:${local.stage_service_accounts[s]}"
+          condition = {
+            title       = "solo-${replace(s, "-", "")}-roles"
+            description = "Solo asignar ${join(", ", roles)} (concesión delegada)."
+            expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in roles : "'${r}'"])}])"
+          }
         }
       ]
     ]),

@@ -13,8 +13,8 @@ variable "prefix" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.prefix))
-    error_message = "prefix debe tener de 2 a 10 caracteres: minúsculas y dígitos, empezando con letra."
+    condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
+    error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
   }
 }
 

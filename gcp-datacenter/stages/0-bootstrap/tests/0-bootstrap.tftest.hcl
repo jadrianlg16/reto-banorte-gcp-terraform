@@ -124,8 +124,11 @@ run "plan_con_valores_de_ejemplo" {
     condition     = module.state_kms.key_names["state"] == "bnt-bootstrap-sec-state"
     error_message = "La llave del estado debe llamarse <prefix>-bootstrap-sec-state."
   }
+  # El correo del agente no se conoce en el plan: la fuente de datos se consulta con el número
+  # del proyecto semilla, que se crea en el mismo plan (así no corre contra un proyecto que aún
+  # no existe). Se comprueba el rol; el correo lo da la fuente de datos en el apply.
   assert {
-    condition     = google_kms_crypto_key_iam_member.state_storage_agent.member == "serviceAccount:service-222222222222@gs-project-accounts.iam.gserviceaccount.com"
+    condition     = google_kms_crypto_key_iam_member.state_storage_agent.role == "roles/cloudkms.cryptoKeyEncrypterDecrypter"
     error_message = "El agente de Cloud Storage del proyecto semilla debe poder usar la llave."
   }
 

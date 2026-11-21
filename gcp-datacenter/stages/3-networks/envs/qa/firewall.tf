@@ -1,8 +1,8 @@
 # Política de firewall de red del spoke, asociada a su VPC (contrato §7.4). Recibe lo que la
-# política jerárquica de la organización delega con goto_next (tráfico interno y de
-# on-premises); lo que la organización ya permite (verificaciones de salud e IAP) se repite
-# aquí acotado por etiqueta segura, para que la intención quede explícita en la red y siga
-# vigente si la política de la organización cambia. Lo demás lo deniega la regla por
+# política jerárquica de la organización delega con goto_next: verificaciones de salud, IAP,
+# tráfico interno y de on-premises (la organización no tiene reglas allow, contrato §7.3).
+# Estas reglas son las que de verdad permiten las verificaciones de salud (solo hacia
+# lb_backend) y el SSH por IAP (solo hacia iap_ssh). Lo demás lo deniega la regla por
 # defecto del módulo (prioridad 65000, con registro).
 #
 # Etiquetas seguras: lb_backend e iap_ssh, cada una con su propia llave y un solo valor, para

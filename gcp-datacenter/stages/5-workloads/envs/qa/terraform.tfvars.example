@@ -4,7 +4,8 @@
 prefix       = "bnt"
 environment  = "qa"
 application  = "app"
-state_bucket = "bnt-bootstrap-tfstate-000000000000"
+# Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<project_suffix>]).
+state_bucket = "bnt-bootstrap-ops-tfstate"
 
 primary_region = "us-central1"
 dr_region      = "us-east4"

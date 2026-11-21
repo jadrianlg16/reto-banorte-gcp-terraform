@@ -145,8 +145,11 @@ están en el `.gitignore` de esta raíz.
 Migración al bucket:
 
 ```bash
+# Primero se lee el nombre del bucket: con el override ya borrado, terraform output falla
+# ("Backend initialization required") hasta que se migre el estado.
+STATE_BUCKET="$(terraform output -raw state_bucket)"
 rm backend_override.tf
-terraform init -migrate-state -backend-config="bucket=$(terraform output -raw state_bucket)"
+terraform init -migrate-state -backend-config="bucket=${STATE_BUCKET}"
 rm terraform.tfstate terraform.tfstate.backup          # tras comprobar que el estado migró
 ```
 

@@ -11,7 +11,7 @@ variable "prefix" {
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
-    error_message = "prefix debe empezar con letra y tener de 2 a 6 minúsculas o dígitos."
+    error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
   }
 }
 
@@ -31,8 +31,10 @@ variable "application" {
   default     = "app"
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.application))
-    error_message = "application debe empezar con letra y tener de 2 a 10 minúsculas o dígitos."
+    # Mismo conjunto que las llaves de applications de 4-projects (límites de 30 caracteres de
+    # los ID de cuenta de servicio y de proyecto con el prefijo más largo y prod).
+    condition     = can(regex("^[a-z][a-z0-9]{1,7}$", var.application))
+    error_message = "application debe tener de 2 a 8 caracteres: minúsculas y dígitos, empezando con letra."
   }
 }
 

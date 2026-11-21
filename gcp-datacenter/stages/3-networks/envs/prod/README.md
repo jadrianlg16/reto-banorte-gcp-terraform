@@ -33,8 +33,10 @@ por variables (`environment`, `spoke_supernet`, `subnet_cidrs`, `enable_dr`).
   | denegación por defecto (módulo) | 65000 | 0.0.0.0/0 | todas | todos, con registro |
 
   On-premises no tiene regla de entrada propia: llega a las cargas por el balanceador interno
-  (proxies de la subred proxy-only). La política jerárquica del hub permite antes, para toda la
-  organización, las verificaciones de salud y el IAP (ver la nota del README del hub).
+  (proxies de la subred proxy-only). La política jerárquica del hub no permite nada: delega con
+  `goto_next` las verificaciones de salud, el IAP, el tráfico interno y el de on-premises, así
+  que `allow-lb-health-checks` y `allow-iap-ssh` son las reglas que de verdad los permiten, y
+  solo hacia las VM con la etiqueta correspondiente (ver la nota del README del hub).
 - DNS (módulo `dns`): zona privada `<env>.<dns_domain_base>` (por defecto
   `<env>.empresa.internal.`) adjunta a la VPC spoke y a la VPC hub (on-premises la resuelve por
   el reenvío entrante del hub; los otros entornos no la ven); zona de peering de
@@ -69,22 +71,22 @@ prod.
 
 ## Roles de la cuenta de servicio `<prefix>-tf-3-networks`
 
-Los otorga `0-bootstrap`. Para los spokes:
+Para los spokes:
 
-| Alcance | Rol | Para qué |
-|---|---|---|
-| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | Crear el proyecto net-spoke |
-| Cuenta de facturación | `roles/billing.user` | Asociar el proyecto |
-| Carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | Habilitar el host de Shared VPC |
-| Carpetas `dev`, `qa`, `prod` | `roles/serviceusage.serviceUsageAdmin` | Habilitar las APIs |
-| Carpetas `dev`, `qa`, `prod` | `roles/compute.networkAdmin` | VPC, subredes, rutas, routers, NAT, peering, PSA |
-| Carpetas `dev`, `qa`, `prod` | `roles/compute.securityAdmin` | Política de firewall de red y su asociación |
-| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.tagAdmin` | Llaves y valores de etiquetas seguras |
-| Carpetas `dev`, `qa`, `prod` | `roles/dns.admin` | Zonas y política de servidor DNS |
-| Carpetas `dev`, `qa`, `prod` | `roles/servicenetworking.networksAdmin` | Conexión de Private Service Access |
-| Proyecto `net-hub` | `roles/compute.networkAdmin` | Peering hub → spoke sobre la VPC hub |
-| Proyecto `net-hub` | `roles/dns.admin` | Adjuntar la zona privada del entorno a la VPC hub y zona de peering hacia ella (`dns.networks.bindPrivateDNSZone`, `dns.networks.targetWithPeeringZone`) |
-| Bucket de estado | §6.2: escritura en `3-networks/<env>`, lectura de `1-org` y `3-networks/hub` | Estado |
+| Alcance | Rol | Lo asigna | Para qué |
+|---|---|---|---|
+| Organización | `roles/resourcemanager.organizationViewer` | 0-bootstrap | Leer la organización |
+| Cuenta de facturación | `roles/billing.user` | 0-bootstrap | Asociar el proyecto net-spoke |
+| Proyecto semilla | `roles/serviceusage.serviceUsageConsumer` | 0-bootstrap | Proyecto de cuota |
+| Bucket de estado | §6.2: escritura en `3-networks/<env>`, lectura de `1-org` y `3-networks/hub` | 0-bootstrap | Estado |
+| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | 1-org | Crear el proyecto net-spoke |
+| Carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | 1-org | Habilitar el host de Shared VPC |
+| Proyecto `net-spoke` | `roles/owner` (implícito) | GCP, al crear el proyecto | APIs, VPC, subredes, rutas, routers, NAT, PSA, política de firewall de red, etiquetas seguras y DNS dentro del proyecto: no hace falta ningún rol más en las carpetas |
+| Proyecto `net-hub` | `roles/compute.networkAdmin` | 1-org | Peering hub → spoke sobre la VPC hub |
+| Proyecto `net-hub` | `roles/dns.admin` | 1-org | Adjuntar la zona privada del entorno a la VPC hub y zona de peering hacia ella (`dns.networks.bindPrivateDNSZone`, `dns.networks.targetWithPeeringZone`) |
+
+`VERIFICAR-EN-APPLY`: que la cuenta que crea `net-spoke` quede como dueña del proyecto (lo hace
+GCP al crear un proyecto) y que la política de organización no lo impida.
 
 Lectura de estado: `1-org` (`folder_ids`) y `3-networks/hub` (`hub_network_self_link` y la
 salida adicional `spoke_supernets`). §6.1 permite además `0-bootstrap`, que el spoke no

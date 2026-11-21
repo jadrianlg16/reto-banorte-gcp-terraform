@@ -25,8 +25,10 @@ locals {
 
 # --- CMEK ---------------------------------------------------------------------------------
 
+# Con project_number (proyecto creado en el mismo plan) la lectura se pospone al apply.
+# VERIFICAR-EN-APPLY: que el API de Cloud Storage acepte el número de proyecto.
 data "google_storage_project_service_account" "this" {
-  project = var.project_id
+  project = coalesce(var.project_number, var.project_id)
 }
 
 resource "google_kms_crypto_key_iam_member" "storage_agent" {

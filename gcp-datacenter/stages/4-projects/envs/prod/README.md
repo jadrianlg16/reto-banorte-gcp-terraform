@@ -14,8 +14,9 @@ Por cada aplicación de `applications` (por defecto una, `app`):
   (`host_project_id` del spoke), con etiquetas §4.3 y `app = <llave>`.
 - **APIs**: las base (abajo) más `applications[app].apis`.
 - **Cuentas de servicio de ejecución** `<prefix>-<environment>-<app>-<uso>` (ADR 0017; el
-  guion bajo del uso pasa a guion: `gke_nodes` → `gke-nodes`). La variable `applications`
-  rechaza llaves que harían pasar de 30 caracteres el ID más largo.
+  guion bajo del uso pasa a guion: `gke_nodes` → `gke-nodes`). Las llaves de `applications`
+  tienen de 2 a 8 minúsculas o dígitos (el mismo conjunto que `application` de 5-workloads),
+  así el ID más largo no pasa de 30 caracteres con cualquier prefijo y entorno.
 - **Agentes de servicio** que no existen hasta el primer uso, creados con
   `google_project_service_identity` (google-beta): `sqladmin`, `file`, `redis`, `gkebackup`. El
   de Cloud Storage lo crea la fuente de datos `google_storage_project_service_account`. Los de
@@ -76,7 +77,9 @@ La cuenta `<prefix>-tf-5-workloads` crea las cargas en el proyecto de servicio, 
 `roles/compute.networkUser` sobre las subredes otorgadas (plantillas, nodos, reglas de reenvío
 del balanceador interno y Cloud Run con salida a la VPC) y `roles/resourcemanager.tagUser` sobre
 los valores de etiqueta `lb_backend` e `iap_ssh`. Llega por variable porque esta etapa no lee
-el estado de 0-bootstrap (§6.1).
+el estado de 0-bootstrap (§6.1): **debe ser igual a `stage_service_accounts["5-workloads"]`** de
+las salidas de 0-bootstrap (`terraform output -json stage_service_accounts` en esa raíz). Con
+otro correo, la etapa 5 falla por permisos al crear las cargas.
 
 Etiquetas seguras: quien adjunta una etiqueta necesita `tagUser` sobre el valor. Las pone el
 pipeline (en la plantilla del MIG y en los pools de GKE), pero las VM las crea el agente de APIs
@@ -113,23 +116,23 @@ Prueba sin GCP: `terraform test` (o `bash scripts/check.sh stages/4-projects/env
 
 ## Roles de la cuenta de servicio de la etapa (`<prefix>-tf-4-projects`)
 
-Los otorga la etapa 0 (HYPOTHESIS: la lista debe coincidir con su README):
+| Alcance | Rol | Lo asigna | Para qué |
+|---|---|---|---|
+| Organización | `roles/resourcemanager.organizationViewer` | 0-bootstrap | leer la organización (`lookup_organization` de la carpeta) |
+| Cuenta de facturación | `roles/billing.user` | 0-bootstrap | asociar los proyectos de servicio |
+| Proyecto semilla | `roles/serviceusage.serviceUsageConsumer` | 0-bootstrap | proyecto de cuota |
+| Bucket de estado | `objectAdmin` en `4-projects/<env>`, `objectViewer` en `1-org`, `2-security` y `3-networks/<env>` (§6.2) | 0-bootstrap | estado |
+| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | 1-org | crear los proyectos de servicio (queda como dueña: APIs, cuentas de ejecución, agentes y su IAM dentro de ellos) |
+| Carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | 1-org | unir el proyecto de servicio al host y dar `networkUser` por subred; leer la carpeta y el host |
+| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.tagAdmin` | 1-org | dar `tagUser` sobre los valores de `lb_backend` e `iap_ssh` del spoke |
+| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` con condición (solo `roles/container.hostServiceAgentUser`) | 1-org | dar ese rol al agente de GKE en el host |
+| Proyecto `security` | rol personalizado `kms_secret_iam_role_id` (0-bootstrap) | 2-security | IAM de las llaves KMS y de los secretos, sin usarlos ni administrarlos |
+| Política de acceso (solo prod) | `roles/accesscontextmanager.policyEditor` | 2-security | alta de los proyectos en el perímetro |
 
-- En la carpeta del entorno: `roles/resourcemanager.projectCreator`,
-  `roles/resourcemanager.projectIamAdmin`, `roles/serviceusage.serviceUsageAdmin`,
-  `roles/iam.serviceAccountAdmin`, `roles/resourcemanager.folderViewer`.
-- En la cuenta de facturación: `roles/billing.user`.
-- Shared VPC: `roles/compute.xpnAdmin` en la carpeta del entorno (unir el proyecto de servicio
-  y dar `networkUser` por subred en el host) y `roles/resourcemanager.projectIamAdmin` en el
-  host (para `container.hostServiceAgentUser`).
-- En el proyecto `security`: `roles/cloudkms.admin` (o un rol propio con
-  `cloudkms.cryptoKeys.getIamPolicy`/`setIamPolicy`) y `roles/secretmanager.admin` (o
-  `secretmanager.secrets.setIamPolicy`).
-- En los valores de etiqueta del spoke: `roles/resourcemanager.tagAdmin` (setIamPolicy).
-- Solo prod: `roles/accesscontextmanager.policyEditor` sobre la política de acceso y
-  `roles/browser` en el host (leer su número).
-- Lectura del estado: `objectAdmin` en `4-projects/<env>` y `objectViewer` en `1-org`,
-  `2-security` y `3-networks/<env>` (§6.2).
+`VERIFICAR-EN-APPLY` (HYPOTHESIS sin GCP): que `compute.xpnAdmin` incluya
+`resourcemanager.folders.get` y `resourcemanager.projects.get` (fuentes de datos
+`google_folder` y `google_project` del host) y que `tagAdmin` en la carpeta se herede a las
+llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 
 ## VERIFICAR-EN-APPLY
 
@@ -194,7 +197,7 @@ Los otorga la etapa 0 (HYPOTHESIS: la lista debe coincidir con su README):
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en los nombres (por ejemplo, bnt). | `string` | n/a | yes |
 | <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). Debe ser una ubicación de kms\_key\_ids en el estado de 2-security. | `string` | n/a | yes |
 | <a name="input_state_bucket"></a> [state\_bucket](#input\_state\_bucket) | Bucket del estado remoto (salida state\_bucket de 0-bootstrap). Se usa para leer 1-org, 2-security y 3-networks/<environment>. | `string` | n/a | yes |
-| <a name="input_workloads_service_account"></a> [workloads\_service\_account](#input\_workloads\_service\_account) | Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads, salida stage\_service\_accounts de 0-bootstrap). Recibe el uso de subredes, el uso de etiquetas seguras y actAs sobre las cuentas de ejecución para crear las cargas. Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1). | `string` | n/a | yes |
+| <a name="input_workloads_service_account"></a> [workloads\_service\_account](#input\_workloads\_service\_account) | Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads). Debe ser igual a stage\_service\_accounts["5-workloads"] de las salidas de 0-bootstrap. Recibe el uso de subredes, el uso de etiquetas seguras y actAs sobre las cuentas de ejecución para crear las cargas. Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1). | `string` | n/a | yes |
 | <a name="input_applications"></a> [applications](#input\_applications) | Aplicaciones del entorno: un proyecto de servicio por llave (<prefix>-<environment>-<llave>).<br/>- apis: APIs adicionales a las base que la raíz siempre habilita (ver README).<br/>- secrets: nombres cortos de secretos de 2-security (secret\_ids[environment]) que leen las<br/>  cuentas workload y run de la aplicación.<br/>La llave forma también las cuentas de servicio <prefix>-<environment>-<llave>-<uso>, que no<br/>pueden pasar de 30 caracteres (ADR 0017). | <pre>map(object({<br/>    apis    = optional(set(string), [])<br/>    secrets = optional(set(string), [])<br/>  }))</pre> | <pre>{<br/>  "app": {}<br/>}</pre> | no |
 | <a name="input_deletion_policy"></a> [deletion\_policy](#input\_deletion\_policy) | deletion\_policy de los proyectos de servicio: PREVENT (falla al destruir), ABANDON o DELETE. En prod solo PREVENT (lo exige project-factory); en dev se puede usar DELETE para el destroy de prueba. | `string` | `"PREVENT"` | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional para que los IDs de proyecto sean únicos a nivel mundial; se agrega al final con un guion. Vacío: sin sufijo. | `string` | `""` | no |

@@ -98,16 +98,20 @@ zona pública del dominio interno; `CREATE EXTENSION pgaudit;` en cada base.
 
 ## Roles de la cuenta `<prefix>-tf-5-workloads`
 
-Sobre la carpeta del entorno (los asigna `1-org`): `roles/backupdr.admin`,
+Sobre la carpeta del entorno (los asigna `1-org`, `stages/1-org/iam.tf`): `roles/backupdr.admin`,
+`roles/certificatemanager.editor` (certificado del balanceador interno, `enable_internal_lb`),
 `roles/cloudsql.admin`, `roles/compute.instanceAdmin.v1`, `roles/compute.loadBalancerAdmin`,
 `roles/compute.networkUser`, `roles/compute.securityAdmin` (Cloud Armor),
 `roles/container.admin`, `roles/file.editor`, `roles/gkebackup.admin`,
 `roles/iam.serviceAccountUser` (usar las cuentas `gke_nodes`, `mig` y `run`),
-`roles/monitoring.editor`, `roles/redis.admin`, `roles/run.admin`, `roles/storage.admin`.
-Además hace falta `roles/certificatemanager.editor` para el certificado del balanceador interno
-(`enable_internal_lb`), que `1-org` no asigna hoy. Sobre los valores de las etiquetas seguras
-`lb_backend` e `iap_ssh` del host: `roles/resourcemanager.tagUser` (§7.4, lo asigna la etapa 4).
-Lectura del estado: `roles/storage.objectViewer` condicionado a los prefijos de §6.1 (etapa 0).
+`roles/monitoring.editor`, `roles/redis.admin`, `roles/run.admin`, `roles/storage.admin`, y
+`roles/resourcemanager.projectIamAdmin` con una condición que solo le deja asignar
+`roles/cloudsql.client` y `roles/cloudsql.instanceUser` (entrada por IAM de la cuenta `workload`
+a Cloud SQL, que el módulo `cloud-sql` otorga). La etapa 4 le da además `actAs` sobre cada cuenta
+de ejecución, `roles/compute.networkUser` en las subredes `app` y `run` y
+`roles/resourcemanager.tagUser` sobre los valores de `lb_backend` e `iap_ssh` (§7.4). La etapa 0
+le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lectura del estado:
+`roles/storage.objectViewer` condicionado a los prefijos de §6.1.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements

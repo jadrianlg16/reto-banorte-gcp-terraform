@@ -7,6 +7,7 @@ project_suffix        = ""
 primary_region        = "us-central1"
 dr_region             = "us-east4"
 directory_customer_id = "C00000000"
+# Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<project_suffix>]).
 state_bucket          = "bnt-bootstrap-ops-tfstate"
 
 groups = {

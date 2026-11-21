@@ -39,6 +39,29 @@ mock_provider "google-beta" {
   override_during = plan
 }
 
+# Primer apply real: sin override_during = plan, los atributos calculados de los recursos que se
+# crean en el mismo plan (número de proyecto, correos de cuentas, agentes) quedan desconocidos,
+# como en GCP. Solo se fijan las fuentes de datos de recursos que ya existen (carpeta y host).
+mock_provider "google" {
+  alias = "primer_apply"
+
+  mock_data "google_project" {
+    defaults = {
+      number = "987654321098"
+    }
+  }
+  mock_data "google_folder" {
+    defaults = {
+      name         = "folders/000000000000"
+      organization = "organizations/000000000000"
+    }
+  }
+}
+
+mock_provider "google-beta" {
+  alias = "primer_apply"
+}
+
 variables {
   org_id                    = "000000000000"
   billing_account           = "000000-000000-000000"
@@ -469,4 +492,86 @@ run "rechaza_cuenta_de_pipeline_invalida" {
   }
 
   expect_failures = [var.workloads_service_account]
+}
+
+run "rechaza_cuenta_de_otra_etapa" {
+  command = plan
+
+  variables {
+    workloads_service_account = "bnt-tf-4-projects@bnt-bootstrap-seed.iam.gserviceaccount.com"
+  }
+
+  expect_failures = [var.workloads_service_account]
+}
+
+# Valores desconocidos en el plan (primer apply): todas las llaves de for_each deben conocerse
+# aunque los números de proyecto, los correos de las cuentas y de los agentes no se conozcan.
+run "primer_apply_con_valores_desconocidos" {
+  command = plan
+
+  providers = {
+    google      = google.primer_apply
+    google-beta = google-beta.primer_apply
+  }
+
+  variables {
+    environment     = "prod"
+    deletion_policy = "PREVENT"
+    applications = {
+      app = { secrets = ["db-app"] }
+      pay = { secrets = ["api"] }
+    }
+  }
+
+  override_data {
+    target          = data.terraform_remote_state.network
+    override_during = plan
+    values = {
+      outputs = {
+        host_project_id   = "bnt-prod-net-spoke"
+        network_name      = "bnt-prod-net-vpc"
+        network_self_link = "https://www.googleapis.com/compute/v1/projects/bnt-prod-net-spoke/global/networks/bnt-prod-net-vpc"
+        subnets = {
+          for k, s in {
+            app    = { region = "us-central1", code = "usc1" }
+            app_dr = { region = "us-east4", code = "use4" }
+            run    = { region = "us-central1", code = "usc1" }
+            run_dr = { region = "us-east4", code = "use4" }
+            } : k => {
+            name             = "bnt-prod-net-${trimsuffix(k, "_dr")}-${s.code}"
+            region           = s.region
+            cidr             = "10.30.0.0/24"
+            secondary_ranges = {}
+            self_link        = "https://www.googleapis.com/compute/v1/projects/bnt-prod-net-spoke/regions/${s.region}/subnetworks/bnt-prod-net-${trimsuffix(k, "_dr")}-${s.code}"
+          }
+        }
+        psa_range_name = "bnt-prod-net-psa"
+        secure_tags = {
+          lb_backend = "tagValues/000000000301"
+          iap_ssh    = "tagValues/000000000302"
+        }
+        secure_tag_keys = {
+          lb_backend = "tagKeys/000000000401"
+          iap_ssh    = "tagKeys/000000000402"
+        }
+      }
+    }
+  }
+
+  assert {
+    condition     = length(google_service_account.runtime) == 8 && length(google_project_service_identity.this) == 8
+    error_message = "Cuentas de ejecución y agentes: llaves conocidas en el plan."
+  }
+  assert {
+    condition     = length(google_tags_tag_value_iam_member.tag_user) == 10
+    error_message = "tagUser: llaves conocidas aunque los correos de los agentes no lo sean."
+  }
+  assert {
+    condition     = contains(keys(module.iam.bindings), "kms/pay/us-east4/gke/compute") && contains(keys(module.iam.bindings), "actas/pay/run") && contains(keys(module.iam.bindings), "host/app/gke")
+    error_message = "Las llaves del módulo iam deben conocerse en el plan (key explícita)."
+  }
+  assert {
+    condition     = toset(keys(google_access_context_manager_service_perimeter_dry_run_resource.this)) == toset(["service/app", "service/pay", "host"])
+    error_message = "Altas en el perímetro con llaves estables aunque los números de proyecto no se conozcan."
+  }
 }

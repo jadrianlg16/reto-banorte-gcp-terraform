@@ -29,7 +29,7 @@ variable "prefix" {
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
-    error_message = "prefix: de 2 a 6 caracteres, minúsculas y dígitos, empieza con letra."
+    error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
   }
 }
 
@@ -103,8 +103,11 @@ variable "applications" {
     error_message = "applications debe tener al menos una aplicación."
   }
   validation {
-    condition     = alltrue([for k in keys(var.applications) : can(regex("^[a-z][a-z0-9-]*[a-z0-9]$", k))])
-    error_message = "Cada llave de applications: minúsculas, dígitos y guiones; empieza con letra y no termina en guion."
+    # Mismo conjunto que application de 5-workloads. 8 caracteres como máximo: con el prefijo
+    # más largo (6) y prod, <prefix>-prod-<app>-gke-nodes llega a 30 (límite del ID de cuenta
+    # de servicio) y <prefix>-prod-<app>-<project_suffix de 8> a 30 (ID de proyecto).
+    condition     = alltrue([for k in keys(var.applications) : can(regex("^[a-z][a-z0-9]{1,7}$", k))])
+    error_message = "Cada llave de applications debe tener de 2 a 8 caracteres: minúsculas y dígitos, empezando con letra."
   }
   validation {
     # El uso más largo es gke-nodes (9 caracteres): <prefix>-<environment>-<app>-gke-nodes.
@@ -126,13 +129,17 @@ variable "applications" {
 }
 
 variable "workloads_service_account" {
-  description = "Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads, salida stage_service_accounts de 0-bootstrap). Recibe el uso de subredes, el uso de etiquetas seguras y actAs sobre las cuentas de ejecución para crear las cargas. Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1)."
+  description = "Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads). Debe ser igual a stage_service_accounts[\"5-workloads\"] de las salidas de 0-bootstrap. Recibe el uso de subredes, el uso de etiquetas seguras y actAs sobre las cuentas de ejecución para crear las cargas. Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1)."
   type        = string
   nullable    = false
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.workloads_service_account))
     error_message = "workloads_service_account debe ser el correo de una cuenta de servicio (<id>@<proyecto>.iam.gserviceaccount.com)."
+  }
+  validation {
+    condition     = startswith(var.workloads_service_account, "${var.prefix}-tf-5-workloads@")
+    error_message = "workloads_service_account debe ser stage_service_accounts[\"5-workloads\"] de 0-bootstrap (<prefix>-tf-5-workloads@<proyecto semilla>.iam.gserviceaccount.com)."
   }
 }
 

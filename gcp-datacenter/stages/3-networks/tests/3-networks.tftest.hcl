@@ -140,12 +140,17 @@ run "hub_con_onprem_simulado" {
 
   assert {
     condition = (
-      output.firewall_policy_rules["allow-health-checks"].action == "allow" &&
-      toset(output.firewall_policy_rules["allow-health-checks"].src_ip_ranges) == toset(["35.191.0.0/16", "130.211.0.0/22"]) &&
-      output.firewall_policy_rules["allow-iap"].action == "allow" &&
-      toset(output.firewall_policy_rules["allow-iap"].src_ip_ranges) == toset(["35.235.240.0/20"])
+      output.firewall_policy_rules["delegate-health-checks"].action == "goto_next" &&
+      toset(output.firewall_policy_rules["delegate-health-checks"].src_ip_ranges) == toset(["35.191.0.0/16", "130.211.0.0/22"]) &&
+      output.firewall_policy_rules["delegate-iap"].action == "goto_next" &&
+      toset(output.firewall_policy_rules["delegate-iap"].src_ip_ranges) == toset(["35.235.240.0/20"])
     )
-    error_message = "La política jerárquica debe permitir las verificaciones de salud y el IAP."
+    error_message = "La política jerárquica debe delegar (goto_next) las verificaciones de salud y el IAP a la política del spoke."
+  }
+
+  assert {
+    condition     = length([for r in values(output.firewall_policy_rules) : r if r.action == "allow"]) == 0
+    error_message = "La política jerárquica no debe tener reglas allow: serían finales y anularían las etiquetas seguras del spoke (contrato §7.3)."
   }
 
   assert {

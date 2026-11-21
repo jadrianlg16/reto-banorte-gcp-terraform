@@ -27,10 +27,10 @@ En el proyecto `net-hub` que crea `1-org` (`common_project_ids["net_hub"]`):
   - Las validaciones exigen las entradas de cada modo y rechazan las del otro.
 - Cloud Interconnect (VLAN attachments) solo con `enable_interconnect = true`.
 - Política de firewall jerárquica `<prefix>-common-net-fw` asociada a la organización (módulo
-  `firewall`): permite verificaciones de salud y proxies de Google (35.191.0.0/16,
-  130.211.0.0/22, TCP) e IAP (35.235.240.0/20, TCP 22 y 3389); delega con `goto_next` el
-  tráfico interno (`hub_supernet` y `spoke_supernets`) y el de `onprem_cidrs` a la política de
-  red de cada spoke; deniega todo lo demás (regla del módulo, prioridad 65000, con registro).
+  `firewall`) **sin reglas `allow`**: delega con `goto_next` a la política de red de cada spoke
+  las verificaciones de salud y proxies de Google (35.191.0.0/16, 130.211.0.0/22, TCP), el IAP
+  (35.235.240.0/20, TCP 22 y 3389), el tráfico interno (`hub_supernet` y `spoke_supernets`) y el
+  de `onprem_cidrs`; deniega todo lo demás (regla del módulo, prioridad 65000, con registro).
 - DNS (módulo `dns`): zona de reenvío de `onprem_dns_domain` hacia `onprem_dns_servers` por la
   VPN (`forwarding_path = private`) y política de servidor con reenvío entrante y registro de
   consultas sobre la VPC hub.
@@ -41,12 +41,12 @@ Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_c
 
 ### Notas de diseño
 
-- **Una regla `allow` de la organización es final.** Las verificaciones de salud y el IAP
-  quedan permitidos hacia cualquier VM de la organización, aunque el spoke los acote por
-  etiqueta segura; el contrato pide permitirlos en la política jerárquica. El acceso por IAP
-  sigue exigiendo `iap.tunnelInstances.accessViaIAP`. Si se quiere que solo las VM con
-  `lb_backend` o `iap_ssh` los reciban, estas dos reglas pasan a `goto_next` y la decisión
-  queda en los spokes (cambio de una línea por regla en `firewall.tf`).
+- **Una regla `allow` de la organización es final.** Por eso la política jerárquica no
+  permite nada: las verificaciones de salud y el IAP llegan a la política de red del spoke,
+  que solo los deja pasar hacia las VM con la etiqueta segura `lb_backend` (verificaciones de
+  salud, puertos `lb_backend_ports`) o `iap_ssh` (TCP 22). Una VM sin etiqueta no los recibe;
+  el acceso por IAP además exige `iap.tunnelInstances.accessViaIAP`. Las VPC sin política de
+  red (hub, `onprem-sim`) los resuelven con sus reglas de VPC y la denegación implícita.
 - **On-premises simulado sin servidor DNS.** La VPC `onprem-sim` no tiene un servidor DNS en
   `onprem_dns_servers`: la zona de reenvío queda creada pero las consultas a
   `onprem_dns_domain` no reciben respuesta hasta que exista uno.
@@ -68,16 +68,20 @@ Orden: después de `1-org` y antes de cualquier spoke. Las salidas `vpn_gateway_
 
 ## Roles de la cuenta de servicio `<prefix>-tf-3-networks`
 
-Los otorga `0-bootstrap`. Para el hub:
+Para el hub:
 
-| Alcance | Rol | Para qué |
-|---|---|---|
-| Organización | `roles/compute.orgFirewallPolicyAdmin` | Crear la política jerárquica y sus reglas |
-| Organización | `roles/compute.orgSecurityResourceAdmin` | Asociar la política a la organización |
-| Proyecto `net-hub` | `roles/compute.networkAdmin` | VPC, subredes, routers, rutas, HA VPN, Interconnect |
-| Proyecto `net-hub` | `roles/dns.admin` | Zonas y política de servidor DNS |
-| Proyecto `net-hub` | `roles/serviceusage.serviceUsageAdmin` | Habilitar las APIs |
-| Secreto `onprem_vpn_secret_id` | `roles/secretmanager.secretAccessor` | Solo con `simulate_onprem = false` |
+| Alcance | Rol | Lo asigna | Para qué |
+|---|---|---|---|
+| Organización | `roles/compute.orgFirewallPolicyAdmin` | 0-bootstrap | Crear la política jerárquica y sus reglas |
+| Organización | `roles/compute.orgSecurityResourceAdmin` | 0-bootstrap | Asociar la política a la organización |
+| Organización | `roles/resourcemanager.organizationViewer` | 0-bootstrap | Leer la organización |
+| Proyecto semilla | `roles/serviceusage.serviceUsageConsumer` | 0-bootstrap | Proyecto de cuota |
+| Bucket de estado | §6.2: escritura de `3-networks/hub`, lectura de `1-org` | 0-bootstrap | Estado |
+| Proyecto `net-hub` | `roles/compute.networkAdmin` | 1-org | VPC, subredes, routers, rutas, HA VPN, Interconnect |
+| Proyecto `net-hub` | `roles/compute.securityAdmin` | 1-org | Ningún recurso actual lo necesita (el hub no crea reglas de firewall de VPC); sobra con el diseño de hoy |
+| Proyecto `net-hub` | `roles/dns.admin` | 1-org | Zonas y política de servidor DNS |
+| Proyecto `net-hub` | `roles/serviceusage.serviceUsageAdmin` | 1-org | Habilitar las APIs |
+| Secreto `onprem_vpn_secret_id` | `roles/secretmanager.secretAccessor` | **nadie** (paso manual) | Solo con `simulate_onprem = false`: el secreto lo crea el equipo de red fuera de Terraform y le da este permiso a `<prefix>-tf-3-networks` |
 | Bucket de estado | §6.2: escritura en `3-networks/hub`, lectura de `1-org` | Estado |
 
 <!-- BEGIN_TF_DOCS -->

@@ -49,9 +49,12 @@ resource "google_project_service_identity" "this" {
   service = each.value.service
 }
 
-# Leerla crea el agente de Cloud Storage del proyecto si todavía no existe.
+# Leerla crea el agente de Cloud Storage del proyecto si todavía no existe. Se consulta con el
+# número del proyecto: el ID se conoce en el plan y la lectura correría en el plan del primer
+# apply contra un proyecto que todavía no existe; el número solo se conoce al crearlo.
+# VERIFICAR-EN-APPLY: que el API de Cloud Storage acepte el número de proyecto.
 data "google_storage_project_service_account" "this" {
   for_each = var.applications
 
-  project = module.project[each.key].project_id
+  project = module.project[each.key].project_number
 }

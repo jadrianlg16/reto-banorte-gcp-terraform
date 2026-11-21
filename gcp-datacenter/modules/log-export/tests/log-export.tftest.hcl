@@ -185,6 +185,29 @@ run "rechaza_padre_mal_formado" {
   expect_failures = [var.parent]
 }
 
+run "agente_consultado_por_numero" {
+  command = plan
+
+  variables {
+    project_number = "123456789012"
+  }
+
+  assert {
+    condition     = data.google_storage_project_service_account.this.project == "123456789012"
+    error_message = "Con project_number, el agente de Cloud Storage se consulta con el número del proyecto."
+  }
+}
+
+run "rechaza_numero_de_proyecto_mal_formado" {
+  command = plan
+
+  variables {
+    project_number = "bnt-common-logging"
+  }
+
+  expect_failures = [var.project_number]
+}
+
 run "rechaza_etiquetas_incompletas" {
   command = plan
 

@@ -4,7 +4,8 @@ billing_account = "000000-000000-000000"
 prefix          = "bnt"
 project_suffix  = ""
 environment     = "qa"
-state_bucket    = "bnt-bootstrap-tfstate-example"
+# Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<project_suffix>]).
+state_bucket    = "bnt-bootstrap-ops-tfstate"
 
 primary_region = "us-central1"
 dr_region      = "us-east4"

@@ -98,8 +98,15 @@ module "state_kms" {
 # El permiso del agente de Cloud Storage se asigna aquí y no con encrypter_decrypters del
 # módulo kms: ese mapa usa el miembro como llave del for_each, y el correo del agente depende
 # del número del proyecto semilla, que no se conoce en el plan de la primera ejecución.
+#
+# Se consulta con el NÚMERO del proyecto y no con su ID: el ID se conoce en el plan y Terraform
+# leería la fuente de datos durante el plan del primer apply, cuando el proyecto todavía no
+# existe (falla). El número solo se conoce al crearlo, así que la lectura se pospone al apply,
+# después de habilitar las APIs (la salida project_number depende de ellas).
+# VERIFICAR-EN-APPLY: que el API de Cloud Storage acepte el número de proyecto en
+# projects/<proyecto>/serviceAccount.
 data "google_storage_project_service_account" "seed" {
-  project = module.seed_project.project_id
+  project = module.seed_project.project_number
 }
 
 resource "google_kms_crypto_key_iam_member" "state_storage_agent" {

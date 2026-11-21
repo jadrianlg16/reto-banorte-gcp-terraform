@@ -75,7 +75,15 @@ esta etapa se asignan aquí (las cuentas se leen de `stage_service_accounts` de 
 | `3-networks` | carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | habilitar `net-spoke` como host de Shared VPC |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | proyectos de servicio |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | alta como servicio de Shared VPC y permisos de uso de subred |
-| `5-workloads` | carpetas `dev`, `qa`, `prod` | `backupdr.admin`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.networkUser`, `compute.securityAdmin`, `container.admin`, `file.editor`, `gkebackup.admin`, `iam.serviceAccountUser`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` | crear las cargas de §7.6 en los proyectos de servicio (los proyectos los crea 4-projects, que no lee el estado de la etapa 0 y por eso no puede dar permisos a 5-workloads) y usar las subredes del host |
+| `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.tagAdmin` | dar `tagUser` sobre los valores de las etiquetas seguras del spoke (sus llaves viven en `net-spoke`, que crea 3-networks) |
+| `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar `roles/container.hostServiceAgentUser` | dar ese rol al agente de GKE en el host del spoke (proyecto de 3-networks) |
+| `5-workloads` | carpetas `dev`, `qa`, `prod` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.networkUser`, `compute.securityAdmin`, `container.admin`, `file.editor`, `gkebackup.admin`, `iam.serviceAccountUser`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` | crear las cargas de §7.6 en los proyectos de servicio (los proyectos los crea 4-projects, que no lee el estado de la etapa 0 y por eso no puede dar permisos a 5-workloads) y usar las subredes del host; `certificatemanager.editor` para el certificado del balanceador interno |
+| `5-workloads` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar `roles/cloudsql.client` y `roles/cloudsql.instanceUser` | entrada por IAM a Cloud SQL de la cuenta `workload` (módulo `cloud-sql`, `grant_iam_login_roles`) |
+
+Las dos asignaciones de `projectIamAdmin` usan una concesión delegada:
+`api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`, así la cuenta
+solo puede agregar o quitar esos roles en los proyectos de la carpeta
+(`VERIFICAR-EN-APPLY`).
 
 ## Roles que necesita la cuenta de la etapa
 

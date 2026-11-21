@@ -86,7 +86,10 @@ module "logging_kms" {
 module "audit_logs" {
   source = "../../modules/log-export"
 
-  project_id       = module.common_project["logging"].project_id
+  project_id = module.common_project["logging"].project_id
+  # El proyecto se crea en el mismo plan: con el número, el agente de Cloud Storage se consulta
+  # en el apply y no en el plan (el ID ya se conoce en el plan y el proyecto aún no existe).
+  project_number   = module.common_project["logging"].project_number
   prefix           = var.prefix
   environment      = local.environment
   name_suffix      = var.project_suffix

@@ -5,7 +5,7 @@ variable "prefix" {
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
-    error_message = "prefix: de 2 a 6 caracteres, minúsculas y dígitos, empieza con letra."
+    error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
   }
 }
 

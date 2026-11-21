@@ -9,6 +9,17 @@ variable "project_id" {
   }
 }
 
+variable "project_number" {
+  description = "Número de project_id (opcional). Pasarlo cuando el proyecto se crea en el mismo plan: el agente de Cloud Storage se consulta con el número, que no se conoce hasta el apply, y así la consulta no corre en el plan contra un proyecto que todavía no existe. null: se consulta con project_id (proyecto que ya existe)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.project_number == null || can(regex("^[0-9]+$", var.project_number))
+    error_message = "project_number debe ser el número del proyecto (solo dígitos)."
+  }
+}
+
 variable "prefix" {
   description = "Prefijo de la empresa en los nombres (por ejemplo, bnt)."
   type        = string
@@ -16,7 +27,7 @@ variable "prefix" {
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
-    error_message = "prefix: de 2 a 6 caracteres, minúsculas y dígitos, empieza con letra."
+    error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
   }
 }
 
