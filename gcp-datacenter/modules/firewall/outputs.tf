@@ -13,7 +13,7 @@ output "secure_tag_ids" {
   value       = { for k, v in google_tags_tag_value.this : k => v.id }
 }
 
-output "secure_tag_key_id" {
-  description = "ID de la llave de etiqueta (tagKeys/<id>), o null si no hay secure_tags."
-  value       = length(google_tags_tag_key.this) > 0 ? google_tags_tag_key.this[0].id : null
+output "secure_tag_key_ids" {
+  description = "Mapa llave de secure_tags → ID de su llave de etiqueta (tagKeys/<id>). Cada entrada es una llave propia con un solo valor (enabled); vacío si no hay secure_tags."
+  value       = { for k, v in google_tags_tag_key.this : k => v.id }
 }

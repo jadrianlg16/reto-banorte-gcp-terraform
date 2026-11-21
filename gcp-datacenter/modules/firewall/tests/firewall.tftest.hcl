@@ -62,18 +62,31 @@ run "politica_de_red" {
   }
 
   assert {
-    condition     = google_tags_tag_key.this[0].purpose == "GCE_FIREWALL" && google_tags_tag_key.this[0].purpose_data == tomap({ network = "example-dev-net-spoke/bnt-dev-net-spoke" })
-    error_message = "La llave de etiqueta debe tener propósito GCE_FIREWALL ligado a la VPC."
+    condition = alltrue([
+      for k in ["lb_backend", "iap_ssh"] :
+      google_tags_tag_key.this[k].purpose == "GCE_FIREWALL" && google_tags_tag_key.this[k].purpose_data == tomap({ network = "example-dev-net-spoke/bnt-dev-net-spoke" })
+    ])
+    error_message = "Cada llave de etiqueta debe tener propósito GCE_FIREWALL ligado a la VPC."
   }
 
   assert {
-    condition     = google_tags_tag_key.this[0].parent == "projects/example-dev-net-spoke" && google_tags_tag_key.this[0].short_name == "bnt-dev-net-fw"
-    error_message = "La llave de etiqueta debe vivir en el proyecto de la VPC."
+    condition = (
+      length(google_tags_tag_key.this) == 2 &&
+      google_tags_tag_key.this["lb_backend"].parent == "projects/example-dev-net-spoke" &&
+      google_tags_tag_key.this["lb_backend"].short_name == "bnt-dev-net-fw-lb-backend" &&
+      google_tags_tag_key.this["iap_ssh"].short_name == "bnt-dev-net-fw-iap-ssh"
+    )
+    error_message = "Debe haber una llave de etiqueta por entrada, en el proyecto de la VPC y con nombre <prefijo>-<entorno>-net-fw-<entrada>."
   }
 
   assert {
-    condition     = google_tags_tag_value.this["lb_backend"].short_name == "lb-backend" && google_tags_tag_value.this["iap_ssh"].short_name == "iap-ssh"
-    error_message = "Los valores de etiqueta no siguen las llaves de secure_tags."
+    condition     = google_tags_tag_value.this["lb_backend"].short_name == "enabled" && google_tags_tag_value.this["iap_ssh"].short_name == "enabled"
+    error_message = "Cada llave debe tener un solo valor enabled."
+  }
+
+  assert {
+    condition     = toset(keys(output.secure_tag_key_ids)) == toset(["lb_backend", "iap_ssh"])
+    error_message = "secure_tag_key_ids debe tener una entrada por etiqueta."
   }
 
   assert {
@@ -142,7 +155,7 @@ run "politica_jerarquica" {
   }
 
   assert {
-    condition     = length(google_tags_tag_key.this) == 0 && output.secure_tag_key_id == null
+    condition     = length(google_tags_tag_key.this) == 0 && length(output.secure_tag_key_ids) == 0
     error_message = "Sin secure_tags no se crea llave de etiqueta."
   }
 }
@@ -168,7 +181,7 @@ run "jerarquica_con_etiquetas_de_organizacion" {
   }
 
   assert {
-    condition     = google_tags_tag_key.this[0].parent == "organizations/000000000000" && google_tags_tag_key.this[0].purpose_data == tomap({ organization = "auto" })
+    condition     = google_tags_tag_key.this["iap_ssh"].parent == "organizations/000000000000" && google_tags_tag_key.this["iap_ssh"].purpose_data == tomap({ organization = "auto" }) && google_tags_tag_key.this["iap_ssh"].short_name == "bnt-common-net-fw-iap-ssh"
     error_message = "En hierarchical la llave de etiqueta debe ser de la organización."
   }
 }

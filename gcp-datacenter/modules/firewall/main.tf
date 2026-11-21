@@ -34,12 +34,15 @@ locals {
 # ---------------------------------------------------------------------------------------
 # Etiquetas seguras
 
+# Una llave por entrada de secure_tags, con un solo valor (enabled): un recurso admite un
+# solo valor por llave, y una VM puede necesitar varias etiquetas a la vez (por ejemplo
+# lb_backend e iap_ssh). Nombre de la llave: <empresa>-<entorno>-net-fw-<entrada>.
 resource "google_tags_tag_key" "this" {
-  count = length(var.secure_tags) > 0 ? 1 : 0
+  for_each = var.secure_tags
 
   parent       = local.tag_parent
-  short_name   = local.name
-  description  = "Etiquetas seguras de firewall (${var.policy_type}) administradas por Terraform."
+  short_name   = "${local.name}-${replace(each.key, "_", "-")}"
+  description  = coalesce(each.value.description, "Etiqueta segura de firewall ${each.key} (${var.policy_type}) administrada por Terraform.")
   purpose      = "GCE_FIREWALL"
   purpose_data = local.tag_purpose_data
 }
@@ -47,9 +50,9 @@ resource "google_tags_tag_key" "this" {
 resource "google_tags_tag_value" "this" {
   for_each = var.secure_tags
 
-  parent      = google_tags_tag_key.this[0].id
-  short_name  = replace(each.key, "_", "-")
-  description = each.value.description
+  parent      = google_tags_tag_key.this[each.key].id
+  short_name  = "enabled"
+  description = "La etiqueta ${each.key} está activa en el recurso."
 }
 
 # ---------------------------------------------------------------------------------------

@@ -79,3 +79,8 @@ output "spoke_secure_tag_ids" {
   description = "Valores de etiquetas seguras del spoke."
   value       = module.firewall_spoke.secure_tag_ids
 }
+
+output "spoke_secure_tag_key_ids" {
+  description = "Llaves de etiquetas seguras del spoke (una por etiqueta)."
+  value       = module.firewall_spoke.secure_tag_key_ids
+}

@@ -1,0 +1,42 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+org_id       = "000000000000"
+prefix       = "bnt"
+state_bucket = "bnt-bootstrap-tfstate-example"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# Plan de direccionamiento (contrato §5).
+hub_supernet = "10.0.0.0/16"
+hub_cidrs = {
+  hub    = "10.0.0.0/24"
+  hub_dr = "10.0.1.0/24"
+}
+spoke_supernets = {
+  dev  = "10.10.0.0/16"
+  qa   = "10.20.0.0/16"
+  prod = "10.30.0.0/16"
+}
+onprem_cidrs   = ["192.168.0.0/16"]
+vpn_bgp_ranges = ["169.254.0.0/30", "169.254.0.4/30"]
+hub_asn        = 64514
+onprem_asn     = 65001
+
+# On-premises simulado (ADR 0006). Con on-premises real:
+#   simulate_onprem        = false
+#   onprem_vpn_gateway_ips = ["203.0.113.10", "203.0.113.11"]
+#   onprem_vpn_secret_id   = "projects/<proyecto>/secrets/<nombre>"
+simulate_onprem = true
+onprem_sim_cidr = "192.168.0.0/24"
+
+onprem_dns_domain  = "corp.example.com."
+onprem_dns_servers = ["192.168.0.10"]
+
+enable_interconnect = false
+
+labels = {
+  app         = "network"
+  owner       = "example-team"
+  cost_center = "example-cc"
+}

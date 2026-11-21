@@ -43,7 +43,7 @@ variable "parent" {
 }
 
 variable "secure_tags" {
-  description = "Etiquetas seguras (valores de una llave con propósito GCE_FIREWALL) que pueden usar las reglas. Llave = nombre lógico (por ejemplo lb_backend, iap_ssh). En network la llave de etiqueta queda ligada a la VPC; en hierarchical queda en la organización (purpose_data organization = auto) y exige secure_tag_parent."
+  description = "Etiquetas seguras que pueden usar las reglas. Cada entrada crea su propia llave con propósito GCE_FIREWALL (<prefix>-<environment>-net-fw-<entrada>) y un solo valor (enabled), para que un recurso pueda llevar varias a la vez. Llave = nombre lógico (por ejemplo lb_backend, iap_ssh). En network las llaves quedan ligadas a la VPC; en hierarchical quedan en la organización (purpose_data organization = auto) y exigen secure_tag_parent."
   type = map(object({
     description = optional(string, "")
   }))
@@ -56,7 +56,7 @@ variable "secure_tags" {
 }
 
 variable "secure_tag_parent" {
-  description = "Padre de la llave de etiqueta segura. Por defecto: projects/<proyecto de la VPC> en network. En hierarchical es obligatorio si hay secure_tags y debe ser organizations/<id> (una carpeta no puede ser padre de una llave de etiqueta)."
+  description = "Padre de las llaves de etiquetas seguras. Por defecto: projects/<proyecto de la VPC> en network. En hierarchical es obligatorio si hay secure_tags y debe ser organizations/<id> (una carpeta no puede ser padre de una llave de etiqueta)."
   type        = string
   default     = null
 

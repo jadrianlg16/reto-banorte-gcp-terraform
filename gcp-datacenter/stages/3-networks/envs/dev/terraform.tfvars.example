@@ -1,0 +1,42 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+billing_account = "000000-000000-000000"
+prefix          = "bnt"
+project_suffix  = ""
+environment     = "dev"
+state_bucket    = "bnt-bootstrap-tfstate-example"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# En dev las llaves *_dr se reservan pero no se crean.
+enable_dr = false
+
+# Plan de direccionamiento (contrato §5), X = 10.
+spoke_supernet = "10.10.0.0/16"
+subnet_cidrs = {
+  app           = "10.10.0.0/20"
+  app_dr        = "10.10.16.0/20"
+  proxy         = "10.10.32.0/23"
+  proxy_dr      = "10.10.34.0/23"
+  run           = "10.10.36.0/24"
+  run_dr        = "10.10.37.0/24"
+  gke_master    = "10.10.38.0/28"
+  gke_master_dr = "10.10.38.16/28"
+  pods          = "10.10.64.0/18"
+  services      = "10.10.128.0/20"
+  services_dr   = "10.10.160.0/20"
+  psa           = "10.10.176.0/20"
+  pods_dr       = "10.10.192.0/18"
+}
+onprem_cidrs = ["192.168.0.0/16"]
+
+onprem_dns_domain = "corp.example.com."
+dns_domain_base   = "empresa.internal."
+flow_log_sampling = 0.5
+
+labels = {
+  app         = "network"
+  owner       = "example-team"
+  cost_center = "example-cc"
+}
