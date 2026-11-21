@@ -1,0 +1,207 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_compute_network.this",
+          "mode": "managed",
+          "type": "google_compute_network",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "name": "bnt-dev-net-vpc",
+            "project": "example-project",
+            "auto_create_subnetworks": false,
+            "routing_mode": "GLOBAL",
+            "delete_default_routes_on_create": false
+          },
+          "sensitive_values": {}
+        }
+      ],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.cloud_sql.google_sql_database_instance.this",
+              "mode": "managed",
+              "type": "google_sql_database_instance",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "name": "bnt-dev-data-sql-usc1",
+                "project": "example-project",
+                "region": "us-central1",
+                "database_version": "POSTGRES_16",
+                "deletion_protection": true,
+                "encryption_key_name": "projects/example-project/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/sql",
+                "settings": [
+                  {
+                    "tier": "db-custom-2-7680",
+                    "availability_type": "ZONAL",
+                    "edition": "ENTERPRISE",
+                    "user_labels": {
+                      "env": "dev",
+                      "app": "app",
+                      "owner": "plataforma",
+                      "cost_center": "ti-001",
+                      "managed_by": "terraform"
+                    },
+                    "ip_configuration": [
+                      {
+                        "ipv4_enabled": false,
+                        "ssl_mode": "ENCRYPTED_ONLY",
+                        "enable_private_path_for_google_cloud_services": true,
+                        "authorized_networks": [],
+                        "psc_config": []
+                      }
+                    ],
+                    "backup_configuration": [
+                      {
+                        "enabled": true,
+                        "point_in_time_recovery_enabled": true
+                      }
+                    ],
+                    "database_flags": [
+                      {
+                        "name": "cloudsql.iam_authentication",
+                        "value": "on"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.cloud_sql"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "google_compute_network.this",
+      "mode": "managed",
+      "type": "google_compute_network",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-net-vpc",
+          "project": "example-project",
+          "auto_create_subnetworks": false,
+          "routing_mode": "GLOBAL",
+          "delete_default_routes_on_create": false
+        },
+        "after_unknown": {
+          "id": true,
+          "self_link": true,
+          "gateway_ipv4": true,
+          "numeric_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.cloud_sql.google_sql_database_instance.this",
+      "module_address": "module.cloud_sql",
+      "mode": "managed",
+      "type": "google_sql_database_instance",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-data-sql-usc1",
+          "project": "example-project",
+          "region": "us-central1",
+          "database_version": "POSTGRES_16",
+          "deletion_protection": true,
+          "encryption_key_name": "projects/example-project/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/sql",
+          "settings": [
+            {
+              "tier": "db-custom-2-7680",
+              "availability_type": "ZONAL",
+              "edition": "ENTERPRISE",
+              "user_labels": {
+                "env": "dev",
+                "app": "app",
+                "owner": "plataforma",
+                "cost_center": "ti-001",
+                "managed_by": "terraform"
+              },
+              "ip_configuration": [
+                {
+                  "ipv4_enabled": false,
+                  "ssl_mode": "ENCRYPTED_ONLY",
+                  "enable_private_path_for_google_cloud_services": true,
+                  "authorized_networks": [],
+                  "psc_config": []
+                }
+              ],
+              "backup_configuration": [
+                {
+                  "enabled": true,
+                  "point_in_time_recovery_enabled": true
+                }
+              ],
+              "database_flags": [
+                {
+                  "name": "cloudsql.iam_authentication",
+                  "value": "on"
+                }
+              ]
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "connection_name": true,
+          "self_link": true,
+          "ip_address": true,
+          "private_ip_address": true,
+          "public_ip_address": true,
+          "server_ca_cert": true,
+          "settings": [
+            {
+              "version": true,
+              "ip_configuration": [
+                {
+                  "private_network": true
+                }
+              ]
+            }
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-20T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

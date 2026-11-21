@@ -1,0 +1,186 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_redis_instance.this",
+          "mode": "managed",
+          "type": "google_redis_instance",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "name": "bnt-dev-data-redis-usc1",
+            "project": "example-project",
+            "region": "us-central1",
+            "tier": "BASIC",
+            "memory_size_gb": 1,
+            "connect_mode": "PRIVATE_SERVICE_ACCESS",
+            "authorized_network": "projects/example-project/global/networks/bnt-dev-net-vpc",
+            "customer_managed_key": "projects/example-project/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/redis",
+            "labels": {
+              "env": "dev",
+              "app": "app",
+              "owner": "plataforma",
+              "managed_by": "terraform"
+            },
+            "terraform_labels": {
+              "env": "dev",
+              "app": "app",
+              "owner": "plataforma",
+              "managed_by": "terraform"
+            }
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "google_secret_manager_secret.db_config",
+          "mode": "managed",
+          "type": "google_secret_manager_secret",
+          "name": "db_config",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "secret_id": "bnt-dev-sec-db-config",
+            "project": "example-project",
+            "labels": {
+              "env": "dev",
+              "app": "app",
+              "owner": "plataforma",
+              "cost_center": "ti-001",
+              "managed_by": "consola"
+            },
+            "terraform_labels": {
+              "env": "dev",
+              "app": "app",
+              "owner": "plataforma",
+              "cost_center": "ti-001",
+              "managed_by": "consola"
+            },
+            "replication": [
+              {
+                "auto": [
+                  {
+                    "customer_managed_encryption": []
+                  }
+                ],
+                "user_managed": []
+              }
+            ]
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "google_redis_instance.this",
+      "mode": "managed",
+      "type": "google_redis_instance",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-data-redis-usc1",
+          "project": "example-project",
+          "region": "us-central1",
+          "tier": "BASIC",
+          "memory_size_gb": 1,
+          "connect_mode": "PRIVATE_SERVICE_ACCESS",
+          "authorized_network": "projects/example-project/global/networks/bnt-dev-net-vpc",
+          "customer_managed_key": "projects/example-project/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/redis",
+          "labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "managed_by": "terraform"
+          },
+          "terraform_labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "managed_by": "terraform"
+          }
+        },
+        "after_unknown": {
+          "id": true,
+          "host": true,
+          "port": true,
+          "effective_labels": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_secret_manager_secret.db_config",
+      "mode": "managed",
+      "type": "google_secret_manager_secret",
+      "name": "db_config",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "secret_id": "bnt-dev-sec-db-config",
+          "project": "example-project",
+          "labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "consola"
+          },
+          "terraform_labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "consola"
+          },
+          "replication": [
+            {
+              "auto": [
+                {
+                  "customer_managed_encryption": []
+                }
+              ],
+              "user_managed": []
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "create_time": true,
+          "effective_labels": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-20T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

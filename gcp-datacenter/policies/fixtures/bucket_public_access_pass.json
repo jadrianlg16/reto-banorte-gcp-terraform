@@ -1,0 +1,173 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.storage.google_storage_bucket.this",
+              "mode": "managed",
+              "type": "google_storage_bucket",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "name": "bnt-dev-data-app",
+                "project": "example-project",
+                "location": "US-CENTRAL1",
+                "storage_class": "STANDARD",
+                "force_destroy": false,
+                "uniform_bucket_level_access": true,
+                "labels": {
+                  "env": "dev",
+                  "app": "app",
+                  "owner": "plataforma",
+                  "cost_center": "ti-001",
+                  "managed_by": "terraform"
+                },
+                "terraform_labels": {
+                  "env": "dev",
+                  "app": "app",
+                  "owner": "plataforma",
+                  "cost_center": "ti-001",
+                  "managed_by": "terraform"
+                },
+                "versioning": [
+                  {
+                    "enabled": true
+                  }
+                ],
+                "encryption": [
+                  {
+                    "default_kms_key_name": "projects/example-project/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/storage"
+                  }
+                ],
+                "lifecycle_rule": [],
+                "public_access_prevention": "enforced"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.storage.google_storage_bucket_iam_member.readers",
+              "mode": "managed",
+              "type": "google_storage_bucket_iam_member",
+              "name": "readers",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "role": "roles/storage.objectViewer",
+                "member": "group:data-readers@example.com",
+                "condition": [],
+                "bucket": "bnt-dev-data-app"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.storage"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "module.storage.google_storage_bucket.this",
+      "module_address": "module.storage",
+      "mode": "managed",
+      "type": "google_storage_bucket",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-data-app",
+          "project": "example-project",
+          "location": "US-CENTRAL1",
+          "storage_class": "STANDARD",
+          "force_destroy": false,
+          "uniform_bucket_level_access": true,
+          "labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "terraform_labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "versioning": [
+            {
+              "enabled": true
+            }
+          ],
+          "encryption": [
+            {
+              "default_kms_key_name": "projects/example-project/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/storage"
+            }
+          ],
+          "lifecycle_rule": [],
+          "public_access_prevention": "enforced"
+        },
+        "after_unknown": {
+          "id": true,
+          "self_link": true,
+          "url": true,
+          "effective_labels": true,
+          "project_number": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.storage.google_storage_bucket_iam_member.readers",
+      "module_address": "module.storage",
+      "mode": "managed",
+      "type": "google_storage_bucket_iam_member",
+      "name": "readers",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "role": "roles/storage.objectViewer",
+          "member": "group:data-readers@example.com",
+          "condition": [],
+          "bucket": "bnt-dev-data-app"
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-20T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

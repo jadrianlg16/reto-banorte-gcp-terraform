@@ -1,0 +1,191 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_compute_instance.bastion",
+          "mode": "managed",
+          "type": "google_compute_instance",
+          "name": "bastion",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "name": "bnt-dev-app-vm-bastion",
+            "project": "example-project",
+            "zone": "us-central1-a",
+            "machine_type": "e2-small",
+            "can_ip_forward": false,
+            "deletion_protection": false,
+            "labels": {
+              "env": "dev",
+              "app": "app",
+              "owner": "plataforma",
+              "cost_center": "ti-001",
+              "managed_by": "terraform"
+            },
+            "terraform_labels": {
+              "env": "dev",
+              "app": "app",
+              "owner": "plataforma",
+              "cost_center": "ti-001",
+              "managed_by": "terraform"
+            },
+            "boot_disk": [
+              {
+                "auto_delete": true,
+                "initialize_params": [
+                  {
+                    "image": "projects/example-project/global/images/hardened-base",
+                    "size": 20
+                  }
+                ]
+              }
+            ],
+            "network_interface": [
+              {
+                "subnetwork": "projects/example-project/regions/us-central1/subnetworks/bnt-dev-net-app-usc1",
+                "access_config": [
+                  {
+                    "network_tier": "PREMIUM",
+                    "public_ptr_domain_name": ""
+                  }
+                ],
+                "ipv6_access_config": [],
+                "alias_ip_range": []
+              }
+            ],
+            "shielded_instance_config": [
+              {
+                "enable_secure_boot": true,
+                "enable_vtpm": true,
+                "enable_integrity_monitoring": true
+              }
+            ],
+            "service_account": [
+              {
+                "email": "bnt-dev-app-workload@example-project.iam.gserviceaccount.com",
+                "scopes": [
+                  "https://www.googleapis.com/auth/cloud-platform"
+                ]
+              }
+            ]
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "google_compute_instance.bastion",
+      "mode": "managed",
+      "type": "google_compute_instance",
+      "name": "bastion",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-app-vm-bastion",
+          "project": "example-project",
+          "zone": "us-central1-a",
+          "machine_type": "e2-small",
+          "can_ip_forward": false,
+          "deletion_protection": false,
+          "labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "terraform_labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "boot_disk": [
+            {
+              "auto_delete": true,
+              "initialize_params": [
+                {
+                  "image": "projects/example-project/global/images/hardened-base",
+                  "size": 20
+                }
+              ]
+            }
+          ],
+          "network_interface": [
+            {
+              "subnetwork": "projects/example-project/regions/us-central1/subnetworks/bnt-dev-net-app-usc1",
+              "access_config": [
+                {
+                  "network_tier": "PREMIUM",
+                  "public_ptr_domain_name": ""
+                }
+              ],
+              "ipv6_access_config": [],
+              "alias_ip_range": []
+            }
+          ],
+          "shielded_instance_config": [
+            {
+              "enable_secure_boot": true,
+              "enable_vtpm": true,
+              "enable_integrity_monitoring": true
+            }
+          ],
+          "service_account": [
+            {
+              "email": "bnt-dev-app-workload@example-project.iam.gserviceaccount.com",
+              "scopes": [
+                "https://www.googleapis.com/auth/cloud-platform"
+              ]
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "instance_id": true,
+          "self_link": true,
+          "cpu_platform": true,
+          "effective_labels": true,
+          "network_interface": [
+            {
+              "name": true,
+              "network": true,
+              "network_ip": true,
+              "access_config": [
+                {
+                  "nat_ip": true
+                }
+              ]
+            }
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-20T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}
