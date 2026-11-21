@@ -60,6 +60,9 @@ su diagrama y deben decirlo.
 | 0015 | Sin contraseñas de base de datos: Cloud SQL usa autenticación IAM. El módulo `secrets` crea contenedores y permisos, nunca valores | "Secretos sin texto plano en Terraform": un valor generado por Terraform quedaría en el estado | Aclaración |
 | 0016 | Los valores de etiquetas van en minúsculas (`ti-001`, no `TI-001`) | GCP rechaza mayúsculas en valores de etiquetas; el ejemplo de la especificación no sería válido | Desviación menor |
 | 0017 | Las cuentas de servicio se nombran `<prefijo>-tf-<etapa>` y `<prefijo>-<env>-<app>-<uso>` | El límite de 30 caracteres del ID no deja espacio a la convención completa | Desviación menor |
+| 0018 | La etapa 1 crea, en el proyecto `logging`, la llave KMS del bucket de logs de auditoría | El bucket de logs exige CMEK y la etapa 2 (KMS) corre después; mismo criterio que el ADR 0008 | Aclaración |
+| 0019 | `cloudkms.googleapis.com` y `secretmanager.googleapis.com` no entran en los servicios restringidos del perímetro por defecto | El proyecto `security` está dentro del perímetro de prod y también guarda llaves y secretos de dev y qa; restringirlos bloquearía a esos entornos al forzar el perímetro. Se restringen cuando dev y qa tengan su propio proyecto de llaves | Aclaración |
+| 0020 | Cloud Run detrás del balanceador: entrada fija a "interno y balanceador" y verificación de invocador de IAM desactivada solo con `public_via_load_balancer = true`; nunca `allUsers` | `iam.allowedPolicyMemberDomains` impide `allUsers`; el control de acceso público queda en el balanceador y Cloud Armor | Aclaración |
 
 Pendiente de decidir por el equipo (no bloquea la construcción): usuarios de GitHub para
 `CODEOWNERS` (se usan marcadores `@PENDIENTE-red`, `@PENDIENTE-seguridad`,
@@ -354,7 +357,7 @@ de VPC-SC `prod` con el proyecto `security` dentro, regla de entrada para las cu
 servicio del pipeline y modo dry-run por defecto (ADR 0009).
 
 Usos de llave (llaves del mapa): `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`,
-`secrets`, `backup`. Rotación: 7 776 000 s (90 días), por variable.
+`secrets`, `backup`, `run`. En la multirregión `us` solo se crean `storage` y `backup`. Rotación: 7 776 000 s (90 días), por variable.
 
 Entradas: `org_id`, `prefix`, `primary_region`, `dr_region`, `environments`, `secret_names`
 (map entorno → lista), `key_rotation_period`, `access_policy_id` (opcional: si la organización
@@ -561,7 +564,7 @@ Versionado de módulos: etiquetas Git `modules/<modulo>/vX.Y.Z`.
 ## 10. Documentación entregable
 
 - `gcp-datacenter/README.md`: requisitos previos, orden de despliegue y comandos por etapa.
-- `docs/adr/`: los 17 de §2.
+- `docs/adr/`: los 20 de §2.
 - `docs/runbooks/`: arranque de la etapa 0; alta de un nuevo proyecto de aplicación; rotación
   de llaves; conmutación a DR; respuesta a drift.
 - `docs/diagramas/`: los cuatro diagramas, corregidos donde este contrato cambió el diseño
