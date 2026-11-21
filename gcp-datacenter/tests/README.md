@@ -155,7 +155,7 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestNetworkHub` | network-hub | VPC personalizada, PGA y flow logs 0.5 en cada subred, router por región con ASN 64514 |
 | `TestNetworkSpoke` | network-spoke | PGA y flow logs 0.5, rangos secundarios, proxy-only, PSA, peering en ambos sentidos con rutas personalizadas, NAT |
 | `TestFirewallNetwork` | firewall | Llave de etiqueta por etiqueta (`GCE_FIREWALL`), reglas por etiqueta, denegación por defecto, asociación a la VPC |
-| `TestFirewallHierarchical` | firewall | Asociación al padre, allow de salud e IAP, `goto_next`, deny por defecto |
+| `TestFirewallHierarchical` | firewall | Asociación al padre, ninguna regla allow, salud, IAP y tráfico interno delegados con `goto_next` (§7.3), deny por defecto |
 | `TestDNS` | dns | Zonas privadas en la VPC, VIP restringido, reenvío por ruta privada, reenvío entrante |
 | `TestHybridConnectivity` | hybrid-connectivity | 2 interfaces, 2 túneles ESTABLISHED, BGP UP, anuncio CUSTOM con 35.199.192.0/19 |
 | `TestComputeMIG` | compute-mig | Shielded VM, sin IP pública, disco con CMEK, cuenta propia, autocuración, límites del autoescalador |

@@ -8,7 +8,7 @@ flowchart LR
   user(["Usuario de Internet"])
   xlb["1 · Balanceador HTTPS global<br/>certificado administrado · TLS 1.2 mínimo<br/>redirección de HTTP a HTTPS"]
   armor["2 · Cloud Armor<br/>reglas OWASP preconfiguradas · límite de tasa"]
-  fw["3 · Firewall<br/>jerárquica: verificaciones de salud e IAP<br/>red del spoke: por etiqueta segura"]
+  fw["3 · Firewall<br/>jerárquica: sin allow, delega con goto_next<br/>red del spoke: salud hacia lb_backend, IAP hacia iap_ssh"]
   user --> xlb --> armor --> fw
 
   subgraph APP["bnt-prod-app sobre la Shared VPC de bnt-prod-net-spoke"]
@@ -50,10 +50,11 @@ flowchart LR
 ## Cómo se lee
 
 - La solicitud pública entra por el balanceador externo (1) y Cloud Armor (2), los dos en el
-  proyecto de servicio. El firewall (3) tiene dos niveles: la política jerárquica permite las
-  verificaciones de salud y el IAP para toda la organización; la política de red del spoke
-  permite proxies, plano de control de GKE y tráfico interno de las cargas, por etiqueta segura
-  o por rango.
+  proyecto de servicio. El firewall (3) tiene dos niveles: la política jerárquica de la
+  organización no permite nada, solo delega con `goto_next` (verificaciones de salud, IAP,
+  tráfico interno y de on-premises) y deniega lo demás; la política de red del spoke es la que
+  permite: verificaciones de salud y proxies solo hacia `lb_backend`, SSH por IAP solo hacia
+  `iap_ssh`, y plano de control de GKE y tráfico interno de las cargas por rango.
 - El cómputo (4) no tiene IP pública. Cloud Run solo acepta tráfico interno y del balanceador;
   con `public_via_load_balancer = true` desactiva la verificación de invocador en lugar de dar
   `allUsers`.
@@ -77,6 +78,7 @@ flowchart LR
 - El perímetro incluye también el proyecto host de prod y arranca en dry-run.
 - Cloud IDS ya no aparece como opción: no se construye ([pendientes](../pendientes-apply.md), §5).
 - El firewall no es "solo LB e IAP": la política del spoke también permite la subred proxy-only,
-  el plano de control de GKE y el tráfico interno de las cargas.
+  el plano de control de GKE y el tráfico interno de las cargas. Las verificaciones de salud y el
+  IAP los permite solo la política del spoke, por etiqueta segura; la jerárquica los delega.
 - Se agregan el balanceador interno para on-premises, Cloud Run sin `allUsers` y Memorystore con
   TLS y sin AUTH.

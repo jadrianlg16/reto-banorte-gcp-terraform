@@ -65,8 +65,9 @@ func TestFirewallNetwork(t *testing.T) {
 }
 
 // TestFirewallHierarchical comprueba el módulo firewall como política jerárquica (§7.3):
-// asociada al padre (una carpeta contenedora de la prueba), con las reglas de verificaciones
-// de salud e IAP, delegación goto_next y denegación por defecto.
+// asociada al padre (una carpeta contenedora de la prueba), sin reglas allow, con las
+// verificaciones de salud, el IAP y el tráfico interno delegados con goto_next y la
+// denegación por defecto.
 // Compuerta: TEST_ALLOW_ORG=true.
 func TestFirewallHierarchical(t *testing.T) {
 	t.Parallel()
@@ -98,7 +99,7 @@ func TestFirewallHierarchical(t *testing.T) {
 	for _, r := range helpers.PathList(policy, "rules") {
 		actions[helpers.PathString(r, "action")]++
 	}
-	assert.GreaterOrEqual(t, actions["allow"], 2, "verificaciones de salud e IAP")
-	assert.GreaterOrEqual(t, actions["goto_next"], 1, "delegación a la política de red")
+	assert.Zero(t, actions["allow"], "ninguna regla allow en la política jerárquica (§7.3)")
+	assert.GreaterOrEqual(t, actions["goto_next"], 3, "verificaciones de salud, IAP y tráfico interno delegados a la política de red")
 	assert.GreaterOrEqual(t, actions["deny"], 1, "denegación por defecto")
 }

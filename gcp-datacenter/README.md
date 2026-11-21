@@ -57,7 +57,7 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 | `stages/5-workloads/envs/{dev,qa,prod}` | Cómputo, datos, balanceadores, observabilidad y respaldo |
 | `policies/` | Siete políticas de Conftest (Rego), sus pruebas y planes de ejemplo en `fixtures/` |
 | `scripts/` | `check.sh`, `policy-check.sh`, `docs.sh`, `affected-roots.sh` |
-| `tests/` | Terratest y prueba de extremo a extremo (paquete 13, en construcción) |
+| `tests/` | Terratest y prueba de extremo a extremo (paquete 13: compilan y sus fixtures validan, sin ejecutar contra GCP) |
 | `docs/` | Contrato, ADR, pipeline, runbooks, diagramas y `pendientes-apply.md` |
 | `../.github/workflows/` | `pr.yml`, `apply.yml`, `drift.yml`, `terratest.yml` y el reutilizable `_terraform-root.yml` |
 
@@ -149,8 +149,8 @@ terraform -chdir="$R" apply tfplan
 rm "$R/tfplan" "$R/plan.json"
 ```
 
-`tfplan` y `plan.json` no están en `.gitignore` (solo `*.tfplan`) y contienen valores del
-estado: se borran después del apply y nunca se versionan.
+`tfplan` y `plan.json` contienen valores del estado: están en `.gitignore` (`tfplan`, `*.tfplan`,
+`plan.json`) y además se borran después del apply.
 
 | Raíz `R` | Prefijo de estado | Notas |
 |---|---|---|

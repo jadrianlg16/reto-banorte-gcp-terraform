@@ -52,4 +52,5 @@ las demás etapas. La etapa 0 arranca con estado local y lo migra al bucket con
 - Primer apply: la migración del estado local y que el agente de Cloud Storage tenga el permiso
   antes de crear el bucket; no tiene entrada propia en §12 y se propone
   agregarla a [`docs/pendientes-apply.md`](../pendientes-apply.md) junto al runbook de la
-  etapa 0.
+  etapa 0 (quedó como punto 13). El agente se consulta con el número del proyecto semilla para
+  que la lectura ocurra en el apply y no en el plan (punto 27).

@@ -41,7 +41,7 @@ flowchart LR
     pnat["Cloud Router + Cloud NAT<br/>us-central1 y us-east4"]
     ppsa["PSA 10.30.176.0/20<br/>Cloud SQL · Memorystore · Filestore"]
     pdns["Zona privada prod.empresa.internal. (spoke y hub)<br/>zona de peering de onprem_dns_domain hacia el hub<br/>zona googleapis.com → restricted.googleapis.com"]
-    pfw["Política de firewall de red bnt-prod-net-fw<br/>etiquetas seguras lb_backend e iap_ssh<br/>una llave por etiqueta · denegación por defecto"]
+    pfw["Política de firewall de red bnt-prod-net-fw<br/>permite verificaciones de salud solo hacia lb_backend<br/>y SSH por IAP solo hacia iap_ssh<br/>una llave por etiqueta · denegación por defecto"]
   end
 
   HUB <-- "peering: el hub exporta rutas, el spoke las importa" --> DEV
@@ -62,7 +62,7 @@ flowchart LR
   DEV -- "Private Google Access" --> gapis
   QA -- "Private Google Access" --> gapis
 
-  hfw{{"Política de firewall jerárquica bnt-common-net-fw en la organización<br/>permite verificaciones de salud (35.191.0.0/16, 130.211.0.0/22) e IAP (35.235.240.0/20)<br/>delega con goto_next el tráfico interno y el de on-premises · deniega el resto"}}
+  hfw{{"Política de firewall jerárquica bnt-common-net-fw en la organización<br/>sin reglas allow: delega con goto_next las verificaciones de salud (35.191.0.0/16, 130.211.0.0/22),<br/>el IAP (35.235.240.0/20), el tráfico interno y el de on-premises · deniega el resto"}}
   hfw -.- HUB
   hfw -.- PROD
 ```
@@ -90,9 +90,12 @@ flowchart LR
 - El balanceador HTTPS global y Cloud Armor quedan en el proyecto de servicio de cada entorno
   (antes "ubicación por confirmar").
 - Se confirma una VPC por entorno unida al hub por peering, cada una host de su Shared VPC.
-- El hub no tiene reglas de firewall de VPC propias: la política jerárquica de la organización
-  permite verificaciones de salud e IAP, delega el resto interno y de on-premises a la política
-  de red de cada spoke y deniega lo demás.
+- El hub no tiene reglas de firewall de VPC propias. La política jerárquica de la organización
+  no tiene ninguna regla allow (una allow ahí es final y dejaría sin efecto las etiquetas del
+  spoke): delega con `goto_next` las verificaciones de salud (`delegate-health-checks`), el IAP
+  (`delegate-iap`), el tráfico interno y el de on-premises a la política de red de cada spoke, y
+  deniega lo demás. El spoke los permite por etiqueta segura: `allow-lb-health-checks` solo
+  hacia `lb_backend` y `allow-iap-ssh` (TCP 22) solo hacia `iap_ssh`.
 - Cloud NAT se dibuja por spoke y región (uno en dev, uno en qa, dos en prod) y el hub queda sin
   salida a internet.
 - On-premises puede ser el simulado `onprem-sim`; el hub anuncia también `35.199.192.0/19`.

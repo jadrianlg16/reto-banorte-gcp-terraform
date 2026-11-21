@@ -38,8 +38,9 @@ caracteres antes de llegar a la parte que la distingue.
 ## Consecuencias
 
 - Positivas: los ID caben y siguen siendo legibles; el prefijo de la empresa se conserva.
-- Negativas: el nombre `<app>` queda limitado en longitud (con `<prefix>` de 3 caracteres,
-  `prod` y el uso más largo, `gke-nodes`, quedan 11 caracteres para la aplicación); la etapa 4 debe
-  documentarlo en `applications`.
+- Negativas: el nombre `<app>` queda limitado en longitud. Las etapas 4 (llaves de
+  `applications`) y 5 (`application`) lo fijan en 2 a 8 minúsculas o dígitos, sin guion
+  (`^[a-z][a-z0-9]{1,7}$`): con el `<prefix>` más largo (6 caracteres), `prod` y el uso más largo,
+  `gke-nodes`, el ID llega justo a 30. La etapa 4 valida además la longitud del ID resultante.
 - El cliente debe confirmar que acepta la forma corta para cuentas de servicio.
 - Primer apply: sin pendiente propio; la longitud se valida en `plan`.

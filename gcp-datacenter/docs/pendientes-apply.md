@@ -13,12 +13,16 @@ Contenido:
 1. [Lista inicial del contrato (§12)](#1-lista-inicial-del-contrato-12), puntos 1 a 12.
 2. [Agregados por los ADR](#2-agregados-por-los-adr), puntos 13 a 18.
 3. [Otros pendientes detectados al documentar](#3-otros-pendientes-detectados-al-documentar),
-   puntos 19 a 26.
+   puntos 19 a 30.
 4. [Marcadores `VERIFICAR-EN-APPLY` del código](#4-marcadores-verificar-en-apply-del-código),
    por etapa y módulo.
 5. [Alcance no cubierto y limitaciones conocidas](#5-alcance-no-cubierto-y-limitaciones-conocidas).
 
-Los ADR citan estos puntos por número ("punto 11"): no se renumeran.
+Los ADR, runbooks y README citan estos puntos por número ("punto 11"): no se renumeran. Un
+punto que se corrige en el código sin necesitar GCP no se borra: queda con la marca
+**Resuelto en el código** y la fecha, para que las referencias sigan apuntando a algo. Resuelto
+en el código no es verificado: lo que el cambio deja por comprobar en GCP pasa a un punto
+nuevo.
 
 ---
 
@@ -37,7 +41,7 @@ bucket por etapa (ADR 0010).
 Qué: el proveedor 6.x no tiene recurso para activar SCC; se activa en la consola. Verificar que,
 activado, la etapa 1 cree la notificación `<prefix>-common-ops-scc-findings` y que la cuenta de
 SCC pueda publicar en el tema.
-Dónde: `stages/1-org/main.tf` (líneas 136 y 170); runbook
+Dónde: `stages/1-org/main.tf` (líneas 139 y 173); runbook
 [01](runbooks/01-arranque-etapa-0.md), paso de SCC.
 Si falla: la activación queda como paso manual del runbook 01 (ya es así). Si la notificación
 falla con SCC activo, revisar el IAM del tema `scc_findings` (propuesta).
@@ -125,7 +129,8 @@ Los ADR proponen estas entradas porque no tenían una propia en §12.
 Qué: que `terraform init -migrate-state` copie el estado local al bucket y que el agente de Cloud
 Storage del proyecto semilla tenga `cryptoKeyEncrypterDecrypter` sobre la llave `state` antes de
 crear el bucket.
-Dónde: `stages/0-bootstrap/main.tf:159`; runbook [01](runbooks/01-arranque-etapa-0.md).
+Dónde: `stages/0-bootstrap/main.tf:166`; runbook [01](runbooks/01-arranque-etapa-0.md).
+La consulta del agente por número de proyecto es el punto 27.
 Si falla: el permiso puede tardar en propagarse: repetir el apply (lo dice el código). La
 migración se repite mientras exista el `terraform.tfstate` local.
 
@@ -133,14 +138,15 @@ migración se repite mientras exista el `terraform.tfstate` local.
 Qué: que la API acepte `cloudsql.iam_authentication`, `pgaudit.log` con varias clases y los
 roles `cloudsql.client`/`cloudsql.instanceUser` condicionados a la instancia, y que se entre con
 un token de IAM.
-Dónde: `modules/cloud-sql/main.tf:10` y `:356`.
+Dónde: `modules/cloud-sql/main.tf:10` y `:356`. La cuenta de la etapa 5 asigna esos roles con
+una concesión delegada de la etapa 1 (punto 28).
 Si falla: separar las clases de `pgaudit.log` o quitar la condición de los roles (propuesta).
 
 **15. CMEK y bloqueo del bucket de logs (ADR 0018).**
 Qué: permiso del agente de Cloud Storage del proyecto `logging` sobre la llave `logs` antes de
 crear el bucket, y que `log_retention_locked = true` se aplique sobre un bucket ya creado sin
 que un plan posterior intente desbloquearlo.
-Dónde: `modules/log-export/main.tf:63` y `:95`.
+Dónde: `modules/log-export/main.tf:65` y `:97`.
 Si falla: repetir el apply (propagación de IAM). El bloqueo es irreversible: probarlo primero
 con `log_retention_locked = false`.
 
@@ -168,33 +174,33 @@ Si falla: no forzar el perímetro hasta que ambos aparezcan como recursos del pe
 
 ## 3. Otros pendientes detectados al documentar
 
-**19. Permisos de la cuenta `<prefix>-tf-4-projects` (HYPOTHESIS).**
-Qué: el README de la etapa 4 lista roles que hoy no otorga ninguna etapa: `tagAdmin` (o
-`setIamPolicy`) sobre los valores de etiqueta del spoke para dar `tagUser`,
-`resourcemanager.projectIamAdmin` en el proyecto host para `container.hostServiceAgentUser`, y
-`roles/browser` en el host. La etapa 1 solo le da `compute.xpnAdmin` y `projectCreator` en las
-carpetas de entorno (`stages/1-org/iam.tf`, `stage_grants`). El host lo crea la cuenta de
-`3-networks`, que es su dueña.
-Dónde: `stages/4-projects/envs/*/README.md` ("Roles de la cuenta de servicio de la etapa");
-`stages/1-org/iam.tf`.
-Si falla: agregar esos roles en `stage_grants` de la etapa 1 o en la etapa 3 (propuesta; requiere
-PR revisado por seguridad).
+**19. Permisos de la cuenta `<prefix>-tf-4-projects`. Resuelto en el código (21 nov 2026).**
+Era: el README de la etapa 4 listaba roles que no otorgaba ninguna etapa (`tagAdmin` sobre los
+valores de etiqueta del spoke, `projectIamAdmin` en el host para
+`container.hostServiceAgentUser`, `roles/browser` en el host).
+Ahora: la etapa 1 le da en las carpetas de entorno `roles/resourcemanager.tagAdmin` y
+`roles/resourcemanager.projectIamAdmin` con condición (solo puede asignar
+`roles/container.hostServiceAgentUser`), además de `compute.xpnAdmin` y `projectCreator`
+(`stages/1-org/iam.tf`, `stage_grants` y `stage_delegated_project_iam`). `roles/browser` ya no
+se pide: el README de la etapa 4 supone que `xpnAdmin` basta para leer la carpeta y el host.
+Lo que queda por verificar en GCP: puntos 28 y 29.
 
-**20. `roles/certificatemanager.editor` para `<prefix>-tf-5-workloads`.**
-Qué: el balanceador interno (`enable_internal_lb`) crea un certificado de Certificate Manager;
-el README de la etapa 5 dice que la etapa 1 no asigna ese rol.
-Dónde: `stages/5-workloads/envs/*/README.md`; `stages/1-org/iam.tf`.
-Si falla: agregarlo a `env_folder_roles` de `5-workloads` en la etapa 1.
+**20. `roles/certificatemanager.editor` para `<prefix>-tf-5-workloads`. Resuelto en el código
+(21 nov 2026).**
+Era: el balanceador interno (`enable_internal_lb`) crea un certificado de Certificate Manager y
+la etapa 1 no asignaba ese rol.
+Ahora: está en `env_folder_roles` de `5-workloads` en `stages/1-org/iam.tf` y en el README de la
+etapa 1 y de la etapa 5.
 
-**21. Comando de migración del README de la etapa 0.**
-Qué: el README de `stages/0-bootstrap` borra `backend_override.tf` y después llama a
+**21. Comando de migración del README de la etapa 0. Resuelto en el código (21 nov 2026).**
+Era: el README de `stages/0-bootstrap` borraba `backend_override.tf` y después llamaba a
 `terraform output -raw state_bucket` dentro de `init -migrate-state`. Comprobado sin GCP
 (Terraform 1.16.5, configuración mínima con backend `gcs` y override local, 21 nov 2026): con el
 override borrado, `terraform output` termina con `Error: Backend initialization required` y el
 bucket llega vacío.
-Dónde: `stages/0-bootstrap/README.md`, "Migración al bucket".
-Si falla: usar el orden del runbook 01 (tomar el nombre antes de borrar el override). Pendiente
-corregir el README de la etapa.
+Ahora: el README de la etapa toma `STATE_BUCKET` antes de borrar el override, en el mismo orden
+que el runbook [01](runbooks/01-arranque-etapa-0.md) (paso 4) y el README del repositorio. La
+migración en sí sigue pendiente (punto 13).
 
 **22. Proyecto de cuota de la etapa 0 (HYPOTHESIS).**
 Qué: la etapa 0 usa las credenciales de aplicación de una persona sin proyecto de cuota
@@ -207,7 +213,7 @@ proyecto donde la persona tenga `serviceusage.services.use` (propuesta).
 **23. SCC activo antes de la etapa 1 (HYPOTHESIS).**
 Qué: `google_scc_v2_organization_notification_config` probablemente falla si SCC no está
 activado en la organización.
-Dónde: `stages/1-org/main.tf:136`.
+Dónde: `stages/1-org/main.tf:139`.
 Si falla: activar SCC (runbook 01) y repetir el apply de la etapa 1.
 
 **24. Reconciliar la réplica de Cloud SQL después de promoverla.**
@@ -227,14 +233,64 @@ Dónde: `stages/5-workloads/envs/prod/terraform.tfvars.example` (`cloud_run_imag
 Si falla: usar un repositorio multirregional de Artifact Registry (`us-docker.pkg.dev`) o
 replicar la imagen en `dr_region` (propuesta).
 
-**26. Llave de aplicación con guion.**
-Qué: la etapa 4 admite llaves de `applications` con guiones (`^[a-z][a-z0-9-]*[a-z0-9]$`), pero
-`application` de la etapa 5 solo admite `^[a-z][a-z0-9]{1,9}$`. Una aplicación con guion o de
-más de 10 caracteres tiene proyecto pero no puede tener cargas.
-Dónde: `stages/4-projects/envs/*/variables.tf` (`applications`),
-`stages/5-workloads/envs/*/variables.tf` (`application`).
-Si falla: usar llaves sin guion y de 2 a 10 caracteres (runbook
-[02](runbooks/02-alta-proyecto-aplicacion.md)) hasta alinear las validaciones.
+**26. Llave de aplicación con guion. Resuelto en el código (21 nov 2026).**
+Era: la etapa 4 admitía llaves de `applications` con guiones (`^[a-z][a-z0-9-]*[a-z0-9]$`) y
+`application` de la etapa 5 solo `^[a-z][a-z0-9]{1,9}$`: una aplicación con guion tenía proyecto
+pero no podía tener cargas.
+Ahora: las dos validan `^[a-z][a-z0-9]{1,7}$` (2 a 8 caracteres, sin guion;
+`stages/4-projects/envs/*/variables.tf` y `stages/5-workloads/envs/*/variables.tf`). Regla de
+nombres en el runbook [02](runbooks/02-alta-proyecto-aplicacion.md). En la misma corrección:
+`prefix` valida `^[a-z][a-z0-9]{1,5}$` en todos los módulos y raíces, la etapa 4 exige que
+`workloads_service_account` empiece con `<prefix>-tf-5-workloads@`, los
+`terraform.tfvars.example` usan `bnt-bootstrap-ops-tfstate` como `state_bucket` (el nombre que
+crea la etapa 0 sin sufijo) y `.gitignore` ignora `tfplan`, `*.tfplan` y `plan.json`.
+
+**27. Agente de Cloud Storage consultado por número de proyecto.**
+Qué: `google_storage_project_service_account` se consulta con el número del proyecto, no con
+su ID, en las tres raíces que crean el proyecto en el mismo plan: el ID se conoce en el plan y
+la lectura correría en el plan del primer apply contra un proyecto que todavía no existe; el
+número solo se conoce al crearlo, así que la lectura se pospone al apply. Verificar que la API
+de Cloud Storage acepte el número en `projects/<proyecto>/serviceAccount` y devuelva el mismo
+agente.
+Dónde: `stages/0-bootstrap/main.tf:106` (proyecto semilla); `modules/log-export/main.tf:29`
+(variable opcional `project_number`, que la etapa 1 pasa para el proyecto `logging`);
+`stages/4-projects/envs/*/service_agents.tf:55`.
+Si falla: sin indicación en el código. Propuesta: volver a consultar con el ID y crear el
+proyecto en un apply previo con `-target` del módulo del proyecto.
+
+**28. Concesiones delegadas de `projectIamAdmin` en las carpetas de entorno (HYPOTHESIS).**
+Qué: la etapa 1 da a `<prefix>-tf-4-projects` y a `<prefix>-tf-5-workloads`
+`roles/resourcemanager.projectIamAdmin` en las carpetas `dev`, `qa` y `prod` con la condición
+`api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`: la de la
+etapa 4 solo puede asignar `roles/container.hostServiceAgentUser` (agente de GKE en el host del
+spoke) y la de la etapa 5 solo `roles/cloudsql.client` y `roles/cloudsql.instanceUser` (módulo
+`cloud-sql`). Verificar que una condición de ese tipo se acepte en una carpeta, que se evalúe al
+cambiar el IAM de los proyectos de abajo, y que las asignaciones de proyecto que esas etapas
+hacen sobre proyectos que no crean (el host del spoke en la 4; el proyecto de servicio en la 5,
+`modules/cloud-sql/main.tf`, recurso `login`) se limiten a esos roles.
+Dónde: `stages/1-org/iam.tf:125` (`stage_delegated_project_iam`); README de la etapa 1.
+Si falla: sin indicación en el código. Propuesta: asignar el rol en el proyecto (la etapa 3 en
+el host; la etapa 4 en el proyecto de servicio) en lugar de la carpeta, con PR revisado por
+seguridad.
+
+**29. Permisos heredados de la cuenta `<prefix>-tf-4-projects` (HYPOTHESIS).**
+Qué: que `roles/resourcemanager.tagAdmin` en la carpeta del entorno se herede a las llaves de
+etiqueta cuyo padre es el proyecto `net-spoke` (y a sus valores), y que `roles/compute.xpnAdmin`
+incluya `resourcemanager.folders.get` y `resourcemanager.projects.get` para las fuentes de datos
+`google_folder` y `google_project` del host.
+Dónde: `stages/4-projects/envs/*/README.md`, "Roles de la cuenta de servicio de la etapa" (el
+marcador está en el README, no en un `.tf`).
+Si falla: sin indicación. Propuesta: `roles/browser` en la carpeta para la lectura; para las
+etiquetas, `tagAdmin` sobre las llaves desde la etapa 3, que es la dueña del proyecto.
+
+**30. La cuenta de `3-networks` queda dueña de `net-spoke` (HYPOTHESIS).**
+Qué: los spokes no reciben en las carpetas `networkAdmin`, `securityAdmin`, `tagAdmin`, `dns.admin`
+ni `serviceUsageAdmin`: cuentan con que GCP haga dueña (`roles/owner`) del proyecto `net-spoke` a
+la cuenta que lo crea. Verificar que así sea y que ninguna política de organización lo impida.
+Dónde: `stages/3-networks/envs/*/README.md`, "Roles de la cuenta de servicio" (el marcador está
+en el README, no en un `.tf`).
+Si falla: sin indicación. Propuesta: asignar esos roles en el proyecto desde la propia raíz del
+spoke o en las carpetas desde la etapa 1.
 
 ---
 
@@ -243,20 +299,22 @@ Si falla: usar llaves sin guion y de 2 a 10 caracteres (runbook
 Conteo al 21 nov 2026:
 
 ```bash
-grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l    # 78
-grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l   # 45 archivos
+grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l    # 84
+grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l   # 46 archivos
 ```
 
 Fuera de los `.tf`, solo los README mencionan `VERIFICAR-EN-APPLY`; esta lista cuenta los
-`.tf`. Las raíces de `envs/{dev,qa,prod}` son
-idénticas, así que sus marcadores se listan una vez con `envs/*` y "(x3)": las 78 líneas son
-60 marcadores distintos (40 en módulos y 20 en etapas). "Si falla" cita el código cuando lo dice; si no, la entrada dice "sin indicación".
+`.tf`, salvo dos marcadores que solo están en README (al final de esta sección). Las raíces de
+`envs/{dev,qa,prod}` son idénticas, así que sus marcadores se listan una vez con `envs/*` y
+"(x3)": las 84 líneas son 64 marcadores distintos (41 en módulos y 23 en etapas). "Si falla"
+cita el código cuando lo dice; si no, la entrada dice "sin indicación".
 
 ### Etapa 0 (`stages/0-bootstrap`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `main.tf:159` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply (propagación de IAM) |
+| `main.tf:106` | Que la API de Cloud Storage acepte el número del proyecto semilla al consultar su agente (punto 27) | Ver punto 27 |
+| `main.tf:166` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply (propagación de IAM) |
 | `service_accounts.tf:89` | `init`/`plan`/`apply` del backend con las condiciones de §6.2 (punto 1) | Carpetas administradas con IAM propio por prefijo |
 | `service_accounts.tf:208` | Que los permisos del rol personalizado `<prefix>TfKmsSecretIamGranter` se admitan en roles personalizados | Sin indicación; quitar el permiso rechazado y revisar si la etapa 4 lo necesita |
 | `wif.tf:32` | Que el mapeo de `attribute.environment` no falle en trabajos sin entorno de GitHub | Sin indicación |
@@ -265,9 +323,10 @@ idénticas, así que sus marcadores se listan una vez con `envs/*` y "(x3)": las
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `main.tf:115` | Que `iam.allowedPolicyMemberDomains` no rechace los `principalSet://` de WIF en cambios futuros | Sin indicación |
-| `main.tf:136` | Activación de SCC (punto 2) | Paso manual del runbook 01 |
-| `main.tf:170` | Que la cuenta de SCC pueda publicar en el tema de hallazgos | Sin indicación |
+| `iam.tf:125` | Condición con `iam.googleapis.com/modifiedGrantsByRole` aceptada en una carpeta y evaluada al cambiar el IAM de los proyectos de abajo (punto 28) | Ver punto 28 |
+| `main.tf:118` | Que `iam.allowedPolicyMemberDomains` no rechace los `principalSet://` de WIF en cambios futuros | Sin indicación |
+| `main.tf:139` | Activación de SCC (punto 2) | Paso manual del runbook 01 |
+| `main.tf:173` | Que la cuenta de SCC pueda publicar en el tema de hallazgos | Sin indicación |
 | `providers.tf:4` | Que todas las APIs acepten el proyecto semilla como proyecto de cuota | Sin indicación |
 
 ### Etapa 2 (`stages/2-security`)
@@ -281,7 +340,7 @@ idénticas, así que sus marcadores se listan una vez con `envs/*` y "(x3)": las
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
 | `dns.tf:8` | Con `simulate_onprem = true` no hay servidor DNS en `onprem_dns_servers` | Probar con un servidor real o una VM DNS creada a mano en `onprem-sim` |
-| `firewall.tf:53` | Que el tráfico delegado con `goto_next` llegue a la política del spoke y que las verificaciones de salud lleguen a los backends | Sin indicación |
+| `firewall.tf:54` | Que el tráfico delegado con `goto_next` (la política de la organización no tiene reglas allow) llegue a la política del spoke, que las verificaciones de salud lleguen a los backends con `lb_backend` y que IAP solo entre a las VM con `iap_ssh` | Sin indicación |
 
 ### Etapa 3, spokes (`stages/3-networks/envs/*`)
 
@@ -296,6 +355,7 @@ idénticas, así que sus marcadores se listan una vez con `envs/*` y "(x3)": las
 | `iam.tf:169` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
 | `service_agents.tf:10` (x3) | Que `generateServiceIdentity` acepte `sqladmin`, `file`, `redis` y `gkebackup` | Quitar el servicio de la lista (su agente existe al habilitar la API) |
 | `service_agents.tf:12` (x3) | Que los agentes de `container`, `compute` y `run` existan justo después de habilitar sus APIs | Agregar esos servicios a la lista |
+| `service_agents.tf:55` (x3) | Que la API de Cloud Storage acepte el número del proyecto de servicio al consultar su agente (punto 27) | Ver punto 27 |
 | `vpc_sc.tf:10` (x3) | CMEK de `security` con el perímetro forzado (punto 4) | Ver punto 4 |
 
 ### Etapa 5 (`stages/5-workloads/envs/*`)
@@ -335,8 +395,9 @@ idénticas, así que sus marcadores se listan una vez con `envs/*` y "(x3)": las
 | `hybrid-connectivity/main.tf:141` | Interfaces y sesiones BGP de los attachments DEDICATED y PARTNER | Sin indicación |
 | `load-balancer/main.tf:187` | Certificado administrado ACTIVE cuando los registros A apuntan a la IP; puede tardar hasta 60 min | Crear los registros A |
 | `load-balancer/main.tf:357` | Certificado interno tras los registros de `dns_authorization_records`; una CA pública no emite para `*.internal` | Usar `certificate_manager_certificates` |
-| `log-export/main.tf:63` | Bloqueo sobre un bucket ya creado (punto 15) | Ver punto 15 |
-| `log-export/main.tf:95` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply |
+| `log-export/main.tf:29` | Que la API de Cloud Storage acepte el número de proyecto (`project_number`) al consultar el agente (punto 27) | Ver punto 27 |
+| `log-export/main.tf:65` | Bloqueo sobre un bucket ya creado (punto 15) | Ver punto 15 |
+| `log-export/main.tf:97` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply |
 | `memorystore/main.tf:65` | Permiso del agente sobre la llave y PSA sobre la red del host | Sin indicación |
 | `network-spoke/main.tf:158` | Destroy de la conexión de PSA después de borrar las instancias de la etapa 5 | Sin indicación; esperar a que servicenetworking libere el peering y repetir (propuesta) |
 | `network-spoke/main.tf:181` | Dos spokes no crean su peering a la vez; las rutas BGP llegan al spoke (punto 6) | El pipeline aplica los entornos en serie |
@@ -351,6 +412,15 @@ idénticas, así que sus marcadores se listan una vez con `envs/*` y "(x3)": las
 | `storage/main.tf:89` | `gcp.resourceLocations` y la doble región (punto 3) | Ver punto 3 |
 | `vpc-sc/main.tf:37` | Perímetro en dry-run sin bloque `status`; paso a forzado en un solo plan | Sin indicación |
 | `vpc-sc/main.tf:46` | Regla de entrada del pipeline (punto 5) | Ver punto 5 |
+
+### Marcadores solo en README
+
+No entran en el conteo de los `.tf` de arriba.
+
+| Archivo | Qué verificar | Si falla |
+|---|---|---|
+| `stages/3-networks/envs/*/README.md` (x3), "Roles de la cuenta de servicio" | Que la cuenta que crea `net-spoke` quede como dueña del proyecto (punto 30) | Ver punto 30 |
+| `stages/4-projects/envs/*/README.md` (x3), "Roles de la cuenta de servicio de la etapa" | Que `compute.xpnAdmin` incluya `folders.get` y `projects.get` y que `tagAdmin` en la carpeta se herede a las llaves de etiqueta de `net-spoke` (punto 29) | Ver punto 29 |
 
 ---
 
@@ -415,8 +485,9 @@ las versiones las carga "el equipo dueño fuera de Terraform", pero ningún grup
 `roles/secretmanager.secretVersionAdder` (`stages/1-org`, `stages/2-security`). Definir el grupo y
 otorgarlo en la etapa 2 por secreto (propuesta) antes de dar de alta aplicaciones con secretos.
 
-**El grupo de soporte no tiene permiso de IAP.** La política jerárquica y el spoke permiten el
-rango de IAP, pero ningún grupo recibe `roles/iap.tunnelResourceAccessor` ni OS Login. Si se
+**El grupo de soporte no tiene permiso de IAP.** La política de red del spoke permite el rango de
+IAP hacia las VM con `iap_ssh` (la política jerárquica solo lo delega con `goto_next`), pero
+ningún grupo recibe `roles/iap.tunnelResourceAccessor` ni OS Login. Si se
 necesita acceso por IAP: asignarlo a un grupo en la etapa 4 (propuesta).
 
 **Una aplicación con cargas por entorno.** La raíz `5-workloads/envs/<env>` tiene un solo
@@ -434,5 +505,6 @@ and DR vive en el proyecto de servicio de cada entorno (`stages/5-workloads/envs
 **Restauración de Backup for GKE no construida.** Hay plan de respaldo, no plan de restauración;
 restaurar en el clúster de DR es un paso manual (runbook 04).
 
-**Prueba de extremo a extremo sin ejecutar.** `tests/` está en construcción (paquete 13) y la
-prueba de extremo a extremo solo se escribe; ningún criterio de ejecución está demostrado.
+**Terratest y prueba de extremo a extremo sin ejecutar.** `tests/` (paquete 13) compila
+(`go build`, `go vet`, `go test -run XXX`) y sus fixtures validan con `terraform validate`, pero
+ninguna prueba se ha corrido contra GCP; ningún criterio de ejecución está demostrado.

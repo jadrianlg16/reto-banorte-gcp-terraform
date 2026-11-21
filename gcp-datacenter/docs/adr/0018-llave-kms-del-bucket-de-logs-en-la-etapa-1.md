@@ -48,4 +48,6 @@ recibe `roles/storage.objectCreator` sobre el bucket y no necesita permisos de K
 - Primer apply: que el agente de Cloud Storage tenga el permiso sobre la llave antes de crear el
   bucket y que el bloqueo se aplique sobre un bucket ya creado (`VERIFICAR-EN-APPLY` en
   `modules/log-export/main.tf`); sin entrada propia en §12, se propone agregarla a
-  [`docs/pendientes-apply.md`](../pendientes-apply.md). Relacionado: punto 3 (ubicaciones).
+  [`docs/pendientes-apply.md`](../pendientes-apply.md) (quedó como punto 15). Relacionados:
+  punto 3 (ubicaciones) y punto 27 (la etapa 1 pasa a `log-export` el número del proyecto
+  `logging` en `project_number`, para que el agente se consulte en el apply).

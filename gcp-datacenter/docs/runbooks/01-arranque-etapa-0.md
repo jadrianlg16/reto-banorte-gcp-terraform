@@ -8,7 +8,7 @@ Federation para GitHub y el rol personalizado de la etapa 4; migrar el estado lo
 al bucket; activar Security Command Center y dejar GitHub listo para aplicar las etapas 1 a 5.
 
 Nada de esto se ha ejecutado todavía: los pasos son el procedimiento diseñado, pendiente de
-verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2, 13, 21, 22 y 23).
+verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2, 13, 22, 23 y 27).
 
 ## Cuándo usarlo
 
@@ -80,12 +80,14 @@ Todas las rutas son relativas a `gcp-datacenter/`.
 
    Si la creación del bucket falla por permisos sobre la llave, repetir `terraform plan` y
    `terraform apply`: el permiso del agente de Cloud Storage puede tardar en propagarse
-   (`main.tf:159`). Si una API rechaza la llamada por falta de proyecto de cuota (HYPOTHESIS,
-   pendiente 22): `gcloud auth application-default set-quota-project <proyecto-existente>`.
+   (`main.tf:166`). El agente se consulta con el número del proyecto semilla para que la
+   lectura ocurra en el apply y no en el plan, cuando el proyecto aún no existe; que la API lo
+   acepte está por verificar (`main.tf:106`, pendiente 27). Si una API rechaza la llamada por
+   falta de proyecto de cuota (HYPOTHESIS, pendiente 22): `gcloud auth application-default set-quota-project <proyecto-existente>`.
 
 4. Migrar el estado al bucket. El nombre del bucket se toma **antes** de borrar el override:
    después, `terraform output` falla con `Backend initialization required` (comprobado sin GCP,
-   pendiente 21).
+   pendiente 21). El README de `stages/0-bootstrap` sigue el mismo orden.
 
    ```bash
    STATE_BUCKET="$(terraform output -raw state_bucket)"

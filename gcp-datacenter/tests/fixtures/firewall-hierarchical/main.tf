@@ -35,16 +35,19 @@ module "firewall" {
   policy_type = "hierarchical"
   parent      = google_folder.container.name
 
+  # Mismas reglas que stages/3-networks/firewall.tf (§7.3): ninguna allow en la política
+  # jerárquica; las verificaciones de salud y el IAP se delegan con goto_next a la política de
+  # red del spoke, que los permite por etiqueta segura.
   rules = {
-    allow-health-checks = {
+    delegate-health-checks = {
       priority       = 1000
-      action         = "allow"
+      action         = "goto_next"
       src_ip_ranges  = ["35.191.0.0/16", "130.211.0.0/22"]
       layer4_configs = [{ ip_protocol = "tcp" }]
     }
-    allow-iap = {
+    delegate-iap = {
       priority       = 1010
-      action         = "allow"
+      action         = "goto_next"
       src_ip_ranges  = ["35.235.240.0/20"]
       layer4_configs = [{ ip_protocol = "tcp", ports = ["22", "3389"] }]
     }

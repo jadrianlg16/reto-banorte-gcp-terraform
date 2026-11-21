@@ -21,14 +21,21 @@ sus cargas (etapa 5). Procedimiento diseñado, sin ejecutar en GCP.
   ([`pipeline.md`](../pipeline.md) §2). Un cambio de esa variable no pasa por revisión de PR:
   registrar el cambio en un PR o una incidencia antes de aplicarlo (propuesta).
 - Nombre de la aplicación `<app>`:
-  - 2 a 10 caracteres, minúsculas y dígitos, empieza con letra, **sin guion**
-    (`^[a-z][a-z0-9]{1,9}$`). La etapa 4 admitiría guiones, pero la variable `application` de la
-    etapa 5 no (pendiente 26);
-  - `<prefix>-<env>-<app>-gke-nodes` cabe en 30 caracteres (validación de la etapa 4, ADR 0017);
-    con `prefix = "bnt"` y `prod` quedan 11 caracteres, así que el límite real es el de 10 de la
-    etapa 5;
+  - 2 a 8 caracteres, minúsculas y dígitos, empieza con letra, **sin guion**
+    (`^[a-z][a-z0-9]{1,7}$`). Es la misma validación en las llaves de `applications` de la
+    etapa 4 y en `application` de la etapa 5, así que una aplicación que tiene proyecto también
+    puede tener cargas;
+  - con el prefijo más largo (6 caracteres) y `prod`, `<prefix>-prod-<app>-gke-nodes` llega
+    justo a 30 caracteres (límite del ID de cuenta de servicio, ADR 0017); la etapa 4 lo valida
+    además por separado;
   - el ID de proyecto `<prefix>-<env>-<app>[-<project_suffix>]` cabe en 30 caracteres
     (validación de `project-factory`).
+- `workloads_service_account` de la etapa 4 (llave `stages/4-projects/envs/<env>` de
+  `GCP_TFVARS_JSON`) debe ser igual a `stage_service_accounts["5-workloads"]` de las salidas de
+  la etapa 0 (`terraform output -json stage_service_accounts` en `stages/0-bootstrap`). La etapa 4
+  rechaza un correo que no empiece con `<prefix>-tf-5-workloads@`; con otra cuenta del mismo
+  nombre en otro proyecto la validación pasa, pero la etapa 5 falla por permisos al crear las
+  cargas.
 
 ## Pasos
 
