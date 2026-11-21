@@ -1,0 +1,4 @@
+NO ADMINISTRADO compute.googleapis.com/Firewall projects/example-dev-net-spoke/global/firewalls/allow-all-temp
+NO ADMINISTRADO compute.googleapis.com/Instance projects/111111111111/zones/us-central1-a/instances/manual-vm
+NO ADMINISTRADO container.googleapis.com/NodePool projects/111111111111/locations/us-central1/clusters/bnt-dev-app-gke/nodePools/manual
+NO ADMINISTRADO storage.googleapis.com/Bucket manual-bucket

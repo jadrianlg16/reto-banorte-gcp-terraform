@@ -1,10 +1,17 @@
 # Despliegue de las etapas 1 → 5 al integrar en main (CONTRATO §9.3). Ver docs/pipeline.md.
 #
 # Orden (cada flecha espera a que el trabajo anterior termine con éxito):
-#   común:  1-org → 2-security → 3-networks (hub)
-#   dev:    3-networks/envs/dev → 4-projects/envs/dev → 5-workloads/envs/dev   (automático)
-#   qa:     mismo encadenado, después de que dev termine con éxito
-#   prod:   mismo encadenado, después de qa, en el entorno protegido de GitHub `prod`
+#   común:  1-org → 2-security → 3-networks (hub)                   entorno `common`
+#   dev:    3-networks/envs/dev → 4-projects/envs/dev → 5-workloads/envs/dev   entorno `dev`
+#           → prueba de humo de dev
+#   qa:     mismo encadenado, después de la prueba de humo de dev     entorno `qa`
+#   prod:   mismo encadenado, después de qa                           entorno `prod`
+#
+# Cada raíz llama a _terraform-root.yml: un trabajo `plan` sin entorno (plan, Conftest y
+# resumen del plan) y un trabajo `apply` en el entorno, solo si el plan tiene cambios. Las
+# reglas de protección del entorno (revisores) se cumplen antes del apply, con el resumen del
+# plan ya visible en la ejecución; el apply aplica exactamente el plan revisado (huella).
+# Sin cambios no hay apply ni pedido de aprobación.
 #
 # Los spokes (3-networks/envs/<env>) quedan en serie por el encadenado entre entornos: GCP no
 # admite dos operaciones de peering a la vez sobre la VPC hub.
@@ -12,10 +19,9 @@
 # 0-bootstrap no está aquí: la aplica una persona administradora, una sola vez y a mano
 # (no tiene cuenta de servicio de pipeline, CONTRATO §6.1).
 #
-# Entorno `prod`: el equipo debe configurar en GitHub (Settings → Environments → prod) la
-# regla "Required reviewers" con dos revisores. Eso no se puede declarar en YAML; sin esa
-# regla, prod se aplicaría sin aprobación. Cada una de las tres raíces de prod pide su propia
-# aprobación antes de empezar.
+# Entornos `common` y `prod`: el equipo debe configurar en GitHub (Settings → Environments) la
+# regla "Required reviewers". Eso no se puede declarar en YAML; sin esa regla se aplicarían sin
+# aprobación (ver docs/pipeline.md §4 sobre el plan de GitHub).
 #
 # Sin GCP: mientras la variable de repositorio GCP_ENABLED no sea "true", todos los trabajos
 # de Terraform se omiten y el flujo termina en verde. Una ejecución manual desde otra rama
@@ -31,12 +37,20 @@ on:
     paths:
       - "gcp-datacenter/**"
   workflow_dispatch:
+    inputs:
+      omitir_prueba_de_humo:
+        description: "Omitir la prueba de humo de dev (queda registrado en el resumen). Solo para una emergencia."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 # Un solo apply a la vez en todo el repositorio. No se cancela uno en curso: el siguiente
-# queda en espera (GitHub conserva solo el más reciente en espera).
+# queda en espera (GitHub conserva solo el más reciente en espera). Una ejecución que espera
+# una aprobación también retiene el grupo: los push siguientes quedan en espera detrás de ella
+# y solo el último sobrevive. Por eso conviene aprobar o rechazar pronto; el trabajo apply
+# vuelve a planear y rechaza el plan si cambió desde la revisión.
 concurrency:
   group: apply-gcp-datacenter
   cancel-in-progress: false
@@ -59,7 +73,7 @@ jobs:
             echo "GCP_ENABLED=true en main: se aplican las etapas 1 a 5."
           fi
 
-  # --- Raíces comunes -------------------------------------------------------------------
+  # --- Raíces comunes (entorno protegido `common`, con revisores) ------------------------
 
   org:
     name: 1-org
@@ -100,7 +114,7 @@ jobs:
       stage: 3-networks
       environment: common
 
-  # --- dev (automático) -----------------------------------------------------------------
+  # --- dev (entorno `dev`, sin revisores) -----------------------------------------------
 
   dev-networks:
     name: dev / 3-networks
@@ -141,12 +155,103 @@ jobs:
       stage: 5-workloads
       environment: dev
 
-  # --- qa (después de dev) --------------------------------------------------------------
+  # Prueba de humo de dev: qa no empieza si falla. Lee las salidas de las raíces de dev ya
+  # aplicadas y corre las Connectivity Tests de dev (tests/e2e, TestDevSmoke). No aplica nada.
+  # Solo se omite a pedido, en una ejecución manual con omitir_prueba_de_humo = true.
+  dev-smoke:
+    name: dev / prueba de humo
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: dev-workloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SKIP_SMOKE: ${{ inputs.omitir_prueba_de_humo == true }}
+      TERRAFORM_VERSION: "1.16.5"
+      TF_IN_AUTOMATION: "1"
+    defaults:
+      run:
+        shell: bash
+        working-directory: gcp-datacenter
+    steps:
+      - name: Omisión pedida
+        if: env.SKIP_SMOKE == 'true'
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          echo "::warning::Prueba de humo de dev OMITIDA a pedido de ${ACTOR} (omitir_prueba_de_humo = true)."
+          {
+            echo "### Prueba de humo de dev: OMITIDA"
+            echo
+            echo "La pidió omitir \`${ACTOR}\` en una ejecución manual. qa sigue sin la prueba."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.SKIP_SMOKE != 'true'
+
+      - name: Comprobar variables
+        if: env.SKIP_SMOKE != 'true'
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+          GCP_STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          missing=""
+          for v in GCP_AUDIT_SERVICE_ACCOUNT GCP_STATE_BUCKET; do
+            if [ -z "${!v:-}" ]; then
+              missing="${missing} ${v}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::Faltan variables de repositorio:${missing}. La prueba de humo no se omite sola: configúrelas (docs/pipeline.md §2) o corra el flujo a mano con omitir_prueba_de_humo."
+            exit 1
+          fi
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: env.SKIP_SMOKE != 'true'
+        with:
+          go-version-file: gcp-datacenter/tests/go.mod
+          cache-dependency-path: gcp-datacenter/tests/go.sum
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        if: env.SKIP_SMOKE != 'true'
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Autenticar con Workload Identity Federation (cuenta de auditoría)
+        if: env.SKIP_SMOKE != 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        if: env.SKIP_SMOKE != 'true'
+
+      - name: go test -run TestDevSmoke
+        if: env.SKIP_SMOKE != 'true'
+        working-directory: gcp-datacenter/tests
+        env:
+          TEST_SMOKE: "true"
+          TEST_E2E_STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+          TEST_E2E_RUN_ID: smoke-${{ github.run_id }}
+        run: |
+          set +e
+          go test -count=1 -json -timeout 25m -run '^TestDevSmoke$' ./e2e > "${RUNNER_TEMP}/smoke.json"
+          code=$?
+          set -e
+          # Máximo de omitidas 0: una prueba de humo omitida (variables faltantes) es una falla.
+          bash ../scripts/go-test-report.sh "${RUNNER_TEMP}/smoke.json" 0 "${GITHUB_STEP_SUMMARY}" || code=1
+          exit "${code}"
+
+  # --- qa (después de la prueba de humo de dev) -----------------------------------------
 
   qa-networks:
     name: qa / 3-networks
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: dev-workloads
+    needs: dev-smoke
     permissions:
       contents: read
       id-token: write
@@ -182,7 +287,7 @@ jobs:
       stage: 5-workloads
       environment: qa
 
-  # --- prod (después de qa; entorno protegido `prod` con dos revisores) -----------------
+  # --- prod (después de qa; entorno protegido `prod`, con revisores) --------------------
 
   prod-networks:
     name: prod / 3-networks

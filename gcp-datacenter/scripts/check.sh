@@ -297,6 +297,17 @@ run_step() {
   fi
 }
 
+# Con `--skip test`, init y validate no leen tests/*.tftest.hcl: los archivos de prueba pueden
+# usar atributos posteriores a la versión mínima de Terraform (override_during, 1.11), y init
+# y validate de una versión anterior fallarían al leerlos. La pata 1.9.8 de pr.yml usa esto.
+# Un directorio de pruebas que no existe hace que init no lea ninguno (flags desde 1.6).
+NO_TESTS_INIT=""
+NO_TESTS_VALIDATE=""
+if is_skipped test; then
+  NO_TESTS_INIT="-test-directory=.check-sh-sin-pruebas"
+  NO_TESTS_VALIDATE="-no-tests"
+fi
+
 report_status() {
   printf '  %-4s  %s\n' "$1" "$2"
 }
@@ -336,9 +347,9 @@ for target in "${TARGETS[@]}"; do
     if [ -n "$reason" ]; then
       echo "$reason" >"$log"
     else
-      echo "\$ terraform init -backend=false -input=false" >"$log"
+      echo "\$ terraform init -backend=false -input=false${NO_TESTS_INIT:+ $NO_TESTS_INIT}" >"$log"
       if (cd "$target" && env ${lock_env:+TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE="$lock_env"} \
-        terraform init -backend=false -input=false -no-color) >>"$log" 2>&1; then
+        terraform init -backend=false -input=false -no-color ${NO_TESTS_INIT:+"$NO_TESTS_INIT"}) >>"$log" 2>&1; then
         init_ok=1
       fi
     fi
@@ -348,8 +359,8 @@ for target in "${TARGETS[@]}"; do
         echo "  (init falló; se necesita para test)"; print_log "$log"
       fi
     elif [ "$init_ok" -eq 1 ]; then
-      echo "\$ terraform validate" >>"$log"
-      run_step validate "$target" "$log" terraform validate -no-color
+      echo "\$ terraform validate${NO_TESTS_VALIDATE:+ $NO_TESTS_VALIDATE}" >>"$log"
+      run_step validate "$target" "$log" terraform validate -no-color ${NO_TESTS_VALIDATE:+"$NO_TESTS_VALIDATE"}
       s_validate="$STEP_STATUS"
     else
       s_validate="FAIL"; report_status FAIL validate; print_log "$log"

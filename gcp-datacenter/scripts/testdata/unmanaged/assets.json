@@ -1,0 +1,23 @@
+[
+  {"name": "//cloudresourcemanager.googleapis.com/projects/111111111111", "assetType": "cloudresourcemanager.googleapis.com/Project", "displayName": "example-dev-app", "state": "ACTIVE"},
+  {"name": "//storage.googleapis.com/bnt-dev-app-data", "assetType": "storage.googleapis.com/Bucket", "displayName": "bnt-dev-app-data"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/regions/us-central1/instanceTemplates/bnt-dev-app-tpl-1", "assetType": "compute.googleapis.com/InstanceTemplate", "displayName": "bnt-dev-app-tpl-1"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/regions/us-central1/instanceGroupManagers/bnt-dev-app-mig", "assetType": "compute.googleapis.com/InstanceGroupManager", "displayName": "bnt-dev-app-mig"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/zones/us-central1-a/instances/bnt-dev-app-mig-ab12", "assetType": "compute.googleapis.com/Instance", "displayName": "bnt-dev-app-mig-ab12"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/zones/us-central1-a/disks/bnt-dev-app-mig-ab12", "assetType": "compute.googleapis.com/Disk", "displayName": "bnt-dev-app-mig-ab12"},
+  {"name": "//secretmanager.googleapis.com/projects/111111111111/secrets/bnt-dev-app-db", "assetType": "secretmanager.googleapis.com/Secret", "displayName": "bnt-dev-app-db"},
+  {"name": "//secretmanager.googleapis.com/projects/111111111111/secrets/bnt-dev-app-db/versions/1", "assetType": "secretmanager.googleapis.com/SecretVersion", "displayName": "1"},
+  {"name": "//iam.googleapis.com/projects/example-dev-app/serviceAccounts/100000000000000000001", "assetType": "iam.googleapis.com/ServiceAccount", "displayName": "bnt-dev-app-run"},
+  {"name": "//iam.googleapis.com/projects/example-dev-app/serviceAccounts/100000000000000000009", "assetType": "iam.googleapis.com/ServiceAccount", "displayName": "Compute Engine default service account"},
+  {"name": "//serviceusage.googleapis.com/projects/111111111111/services/run.googleapis.com", "assetType": "serviceusage.googleapis.com/Service", "displayName": "run.googleapis.com"},
+  {"name": "//logging.googleapis.com/projects/example-dev-app/locations/global/buckets/_Default", "assetType": "logging.googleapis.com/LogBucket", "displayName": "_Default"},
+  {"name": "//container.googleapis.com/projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke", "assetType": "container.googleapis.com/Cluster", "displayName": "bnt-dev-app-gke"},
+  {"name": "//container.googleapis.com/projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke/nodePools/general", "assetType": "container.googleapis.com/NodePool", "displayName": "general"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/zones/us-central1-b/instances/gke-bnt-dev-app-gke-general-1a2b3c4d-x7k9", "assetType": "compute.googleapis.com/Instance", "displayName": "gke-bnt-dev-app-gke-general-1a2b3c4d-x7k9"},
+  {"name": "//cloudkms.googleapis.com/projects/example-common-security/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/storage/cryptoKeyVersions/3", "assetType": "cloudkms.googleapis.com/CryptoKeyVersion", "displayName": "3"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/zones/us-central1-a/instances/old-vm", "assetType": "compute.googleapis.com/Instance", "displayName": "old-vm", "state": "DELETED"},
+  {"name": "//compute.googleapis.com/projects/example-dev-app/zones/us-central1-a/instances/manual-vm", "assetType": "compute.googleapis.com/Instance", "displayName": "manual-vm"},
+  {"name": "//storage.googleapis.com/manual-bucket", "assetType": "storage.googleapis.com/Bucket", "displayName": "manual-bucket"},
+  {"name": "//container.googleapis.com/projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke/nodePools/manual", "assetType": "container.googleapis.com/NodePool", "displayName": "manual"},
+  {"name": "//compute.googleapis.com/projects/example-dev-net-spoke/global/firewalls/allow-all-temp", "assetType": "compute.googleapis.com/Firewall", "displayName": "allow-all-temp"}
+]

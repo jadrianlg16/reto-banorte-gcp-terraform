@@ -8,8 +8,8 @@
 #
 # Gana la última línea que coincide, así que la regla general va primero.
 
-# Plataforma: todo lo que no tenga dueño más específico abajo (incluye .github/ y el resto
-# de etapas y módulos).
+# Plataforma: todo lo que no tenga dueño más específico abajo (el resto de etapas y módulos,
+# las pruebas de Go y la documentación).
 *                                                   @PENDIENTE-plataforma
 
 # Red: etapa 3 (hub y spokes) y módulos de red.
@@ -31,3 +31,12 @@
 /gcp-datacenter/modules/kms/                        @PENDIENTE-seguridad
 /gcp-datacenter/modules/secrets/                    @PENDIENTE-seguridad
 /gcp-datacenter/modules/vpc-sc/                     @PENDIENTE-seguridad
+
+# Seguridad: lo que decide quién puede aplicar y qué se revisa. Los flujos usan las cuentas de
+# servicio que pueden aplicar; 0-bootstrap crea esas cuentas, el WIF y el bucket de estado; los
+# scripts eligen qué raíces se planean y corren las políticas. Solo seguridad, sin plataforma:
+# GitHub acepta la aprobación de cualquiera de los dueños de una ruta, así que agregar a
+# plataforma permitiría cambiarlos sin que seguridad los revise.
+/.github/                                           @PENDIENTE-seguridad
+/gcp-datacenter/stages/0-bootstrap/                 @PENDIENTE-seguridad
+/gcp-datacenter/scripts/                            @PENDIENTE-seguridad

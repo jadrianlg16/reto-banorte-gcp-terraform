@@ -1,17 +1,28 @@
-# Flujo reutilizable: plan, Conftest y apply de una sola raíz de etapa (CONTRATO §9.3).
+# Flujo reutilizable: plan, Conftest, aprobación y apply de una sola raíz de etapa
+# (CONTRATO §9.3). Lo llama apply.yml una vez por raíz. Ver gcp-datacenter/docs/pipeline.md.
 #
-# Lo llama apply.yml una vez por raíz. Pasos: autenticación por Workload Identity Federation
-# con la cuenta de servicio de la etapa (sin llaves), terraform init con el bucket de estado,
-# plan guardado (-out), Conftest sobre el plan en JSON (policies/) y apply de ese mismo plan.
-# Si el plan no tiene cambios, no se aplica nada.
+# Dos trabajos:
+#   plan   sin entorno de GitHub: WIF con la cuenta de la etapa, plan guardado, Conftest sobre
+#          el plan y resumen del plan (acciones por dirección y la línea "Plan:") en el resumen
+#          del trabajo, que se ve en la página de la ejecución mientras se espera la
+#          aprobación. Calcula la huella del plan (ver abajo).
+#   apply  en el entorno de GitHub que recibe en `environment` (common, dev, qa o prod) y solo
+#          si el plan tiene cambios: sin cambios no hay apply ni pedido de aprobación. Las
+#          reglas del entorno (revisores) se cumplen antes de que el trabajo empiece. Vuelve a
+#          planear, exige que la huella sea igual a la del plan revisado, corre Conftest sobre
+#          ese plan y aplica exactamente ese archivo.
+#
+# Por qué se vuelve a planear en vez de pasar el archivo del plan entre trabajos: `tfplan` y
+# `terraform show -json` llevan los valores sensibles en claro, y un artefacto de Actions lo
+# puede descargar cualquiera con lectura del repositorio. Cifrarlo exigiría administrar una
+# llave. La huella (SHA-256 de las acciones y valores planeados por dirección, sin el estado
+# anterior) no expone valores y garantiza que lo que se aplica es lo que se revisó: si algo
+# cambió entre el plan y la aprobación (drift, otra ejecución), la huella no coincide, el
+# apply se detiene sin tocar nada y hay que volver a correr el flujo.
 #
 # Usa las mismas variables de repositorio que pr.yml (ver docs/pipeline.md):
 #   GCP_ENABLED, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_STAGE_SERVICE_ACCOUNTS,
 #   GCP_STATE_BUCKET, GCP_TFVARS_JSON.
-#
-# El trabajo se liga al entorno de GitHub que recibe en `environment`. Las reglas de
-# protección del entorno (por ejemplo, los dos revisores de `prod`) se configuran en GitHub,
-# no aquí, y se cumplen antes de que el trabajo empiece.
 
 name: _terraform-root
 
@@ -27,7 +38,7 @@ on:
         type: string
         required: true
       environment:
-        description: Entorno de GitHub del trabajo (common, dev, qa o prod).
+        description: Entorno de GitHub del apply (common, dev, qa o prod).
         type: string
         required: true
 
@@ -45,22 +56,24 @@ defaults:
     working-directory: gcp-datacenter
 
 jobs:
-  apply:
-    name: apply ${{ inputs.root }}
+  plan:
+    name: plan ${{ inputs.root }}
     # Defensa adicional: apply.yml ya omite la llamada si GCP_ENABLED no es "true" o si la
     # ejecución no es de main.
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+      fingerprint: ${{ steps.plan.outputs.fingerprint }}
     env:
       ROOT: ${{ inputs.root }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
@@ -78,7 +91,7 @@ jobs:
           conftest --version
 
       - name: Autenticar con Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[inputs.stage] }}
@@ -116,41 +129,147 @@ jobs:
             2) changes=true ;;
             *) exit "${code}" ;;
           esac
-          echo "changes=${changes}" >> "${GITHUB_OUTPUT}"
           terraform show -json tfplan > plan.json
           terraform show -no-color tfplan > plan.txt
+          fingerprint="$(python3 "${GITHUB_WORKSPACE}/gcp-datacenter/scripts/plan-fingerprint.py" plan.json)"
+          echo "changes=${changes}" >> "${GITHUB_OUTPUT}"
+          echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
 
       - name: Conftest sobre el plan
         id: conftest
         run: conftest test "${ROOT}/plan.json" --policy policies --no-color
 
-      - name: terraform apply del plan guardado
-        id: apply
-        if: steps.plan.outputs.changes == 'true'
-        run: |
-          cd "${ROOT}"
-          terraform apply -input=false -no-color -lock-timeout=5m tfplan
-
-      - name: Resumen de la raíz
+      - name: Resumen del plan (lo que se aprueba)
         if: always()
         env:
           PLAN_OUTCOME: ${{ steps.plan.outcome }}
           CHANGES: ${{ steps.plan.outputs.changes }}
+          FINGERPRINT: ${{ steps.plan.outputs.fingerprint }}
           CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
-          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           line=""
           if [ -f "${ROOT}/plan.txt" ]; then
             line="$(grep -E '^(Plan:|No changes\.)' "${ROOT}/plan.txt" | head -n 1 || true)"
           fi
           {
-            echo "### \`${ROOT}\`"
+            echo "### Plan de \`${ROOT}\`"
             echo
             echo "- Plan: ${PLAN_OUTCOME:-no corrió}${line:+ (${line})}"
             echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
-            if [ "${CHANGES}" = "false" ]; then
-              echo "- Apply: sin cambios, no se aplicó"
-            else
-              echo "- Apply: ${APPLY_OUTCOME:-no corrió}"
+            if [ "${CHANGES}" = "true" ]; then
+              echo "- Huella: \`${FINGERPRINT}\`"
+              echo "- Apply: espera la aprobación del entorno \`${ENVIRONMENT}\` (si tiene revisores)"
+              echo
+              echo "Recursos con cambios (acción y dirección; los valores están en el registro de este trabajo):"
+              echo
+              echo '```'
+              jq -r '.resource_changes[]? | select(.change.actions != ["no-op"])
+                | "\(.change.actions | join("/")) \(.address)"' "${ROOT}/plan.json" | head -n 300
+              echo '```'
+            elif [ "${CHANGES}" = "false" ]; then
+              echo "- Apply: sin cambios; no se pide aprobación ni se aplica"
             fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  apply:
+    name: apply ${{ inputs.root }}
+    needs: plan
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.plan.outputs.changes == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ROOT: ${{ inputs.root }}
+      REVIEWED_FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+    steps:
+      # Mismo commit que el trabajo plan (github.sha es fijo en la ejecución).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Instalar conftest
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          file="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep "  ${file}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${file}" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          conftest --version
+
+      - name: Autenticar con Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[inputs.stage] }}
+
+      - name: Variables de la raíz
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: |
+          cd "${ROOT}"
+          if [ -f terraform.tfvars.example ]; then
+            cp terraform.tfvars.example terraform.tfvars
+          fi
+          printf '%s' "${TFVARS_JSON:-"{}"}" |
+            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          cd "${ROOT}"
+          terraform init -input=false -no-color -backend-config="bucket=${STATE_BUCKET}"
+
+      - name: Volver a planear y comparar con el plan revisado
+        id: plan
+        run: |
+          cd "${ROOT}"
+          set +e
+          terraform plan -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          if [ "${code}" -ne 2 ]; then
+            echo "::error::El plan ya no tiene cambios (código ${code}) o falló: no coincide con el revisado. Volver a correr el flujo."
+            exit 1
+          fi
+          terraform show -json tfplan > plan.json
+          fingerprint="$(python3 "${GITHUB_WORKSPACE}/gcp-datacenter/scripts/plan-fingerprint.py" plan.json)"
+          if [ "${fingerprint}" != "${REVIEWED_FINGERPRINT}" ]; then
+            echo "::error::El plan cambió desde la revisión (huella ${fingerprint}, revisada ${REVIEWED_FINGERPRINT}). No se aplica nada; volver a correr el flujo y revisar el plan nuevo."
+            exit 1
+          fi
+          echo "Huella igual a la revisada: ${fingerprint}"
+
+      - name: Conftest sobre el plan que se aplica
+        id: conftest
+        run: conftest test "${ROOT}/plan.json" --policy policies --no-color
+
+      - name: terraform apply del plan guardado
+        id: apply
+        run: |
+          cd "${ROOT}"
+          terraform apply -input=false -no-color -lock-timeout=5m tfplan
+
+      - name: Resumen del apply
+        if: always()
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+        run: |
+          {
+            echo "### Apply de \`${ROOT}\`"
+            echo
+            echo "- Plan igual al revisado (\`${REVIEWED_FINGERPRINT}\`): ${PLAN_OUTCOME:-no corrió}"
+            echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
+            echo "- Apply: ${APPLY_OUTCOME:-no corrió}"
           } >> "${GITHUB_STEP_SUMMARY}"

@@ -15,7 +15,8 @@ import (
 
 // Variables de entorno que leen las pruebas. Las cuatro TERRATEST_* y GOOGLE_CLOUD_PROJECT son
 // las que exporta .github/workflows/terratest.yml (mismos nombres que las variables de
-// repositorio); las TEST_* son compuertas y ajustes locales que el flujo no define.
+// repositorio); las TEST_* son compuertas y ajustes que el flujo toma de variables de
+// repositorio con el mismo nombre (salvo TEST_REUSE_PROJECT, solo local).
 const (
 	EnvOrgID          = "TERRATEST_ORG_ID"          // número de la organización, sin "organizations/"
 	EnvFolderID       = "TERRATEST_FOLDER_ID"       // opcional: carpeta de los proyectos y carpetas efímeros

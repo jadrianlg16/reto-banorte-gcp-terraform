@@ -11,6 +11,7 @@ Niveles del contrato (§9.2) que viven aquí:
 |---|---|---|---|
 | Integración | `integration/` | Un proyecto efímero por módulo: `init`/`apply` de `fixtures/<módulo>/`, comprobaciones en salidas y en la API de GCP, `destroy` | Solo se compila |
 | Extremo a extremo | `e2e/` | Aplica 0 → 5, mide el tiempo, segundo plan sin cambios, conectividad, destroy de dev y búsqueda de huérfanos | Solo se compila |
+| Prueba de humo de dev | `e2e/` (`TestDevSmoke`) | Sin aplicar nada: lee las salidas de dev ya aplicado y corre sus Connectivity Tests. La corre `apply.yml` antes de qa | Solo se compila |
 
 Los niveles estático, de políticas y unitario no están aquí: `scripts/check.sh`, `policies/` y
 `modules/<m>/tests/`.
@@ -26,7 +27,8 @@ tests/
   fixtures/firewall-hierarchical/   segunda variante del módulo firewall
   fixtures/support/       project (proyecto efímero), cmek (llave de apoyo), network (VPC de apoyo)
   integration/            pruebas de los 24 módulos
-  e2e/                    prueba de extremo a extremo y config.example.json
+  e2e/                    prueba de extremo a extremo, config.example.json y la prueba de humo
+                          de dev (smoke_test.go)
 ```
 
 Cada prueba de integración:
@@ -45,8 +47,9 @@ minúsculas, y todo recurso etiquetable lleva las cinco etiquetas obligatorias m
 
 ## Variables de entorno
 
-Las cuatro `TERRATEST_*` y `GOOGLE_CLOUD_PROJECT` son las que exporta
-`.github/workflows/terratest.yml` (mismos nombres que las variables de repositorio). Ningún ID,
+`.github/workflows/terratest.yml` exporta las `TERRATEST_*`, `GOOGLE_CLOUD_PROJECT` y las
+`TEST_*` de esta tabla salvo `TEST_REUSE_PROJECT`, con los mismos nombres que las variables de
+repositorio (`docs/pipeline.md` §2); las que no estén definidas llegan vacías. Ningún ID,
 correo ni secreto vive en el código.
 
 | Variable | Uso | Quién la necesita |
@@ -77,6 +80,7 @@ facturación en el padre, y para las pruebas de organización, los roles de cada
 | `TEST_ALLOW_ORG=true` | `TestOrg`, `TestVPCSC`, `TestFirewallHierarchical` | Alcance de organización. Para acotar el efecto: las nueve políticas y la política jerárquica se aplican a una carpeta contenedora vacía creada por la prueba; el sink de `org` sí es de organización, con un filtro que no coincide con nada; el perímetro va en dry-run |
 | `TEST_ALLOW_EXPENSIVE=true` | `TestGKE`, `TestCloudSQL`, `TestMemorystore`, `TestFilestore`, `TestHybridConnectivity`, `TestBackupDR` | Lentas (10–20 min) o con cobro por hora relevante |
 | `TEST_E2E=true` | `TestEndToEnd` | Aplica la landing zone completa en una organización real |
+| `TEST_SMOKE=true` (más `TEST_E2E_STATE_BUCKET`) | `TestDevSmoke` | Lee el estado real y crea Connectivity Tests en dev; la activa `apply.yml` |
 
 Sin compuerta (proyecto efímero y recursos baratos o gratuitos): `storage`, `kms`, `secrets`,
 `log-export`, `iam`, `folders`, `project-factory`, `network-hub`, `network-spoke`, `firewall` (de
@@ -134,10 +138,17 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 - **compile** (siempre): `go vet ./...` y `go test -count=1 -run XXX ./...`. Compila los binarios de
   prueba sin ejecutar ninguna.
 - **integration** (solo si la variable de repositorio `GCP_ENABLED` es `true`): autentica con WIF y
-  corre `go test -count=1 -v -timeout 170m` sobre todos los paquetes salvo `e2e`. Como CI no define
-  `TEST_ALLOW_EXPENSIVE`, `TEST_ALLOW_ORG` ni las `TEST_*` específicas, las pruebas con compuerta se
-  omiten; corren las de la lista "sin compuerta" que tengan sus variables.
+  corre `go test -count=1 -json -timeout 170m` sobre todos los paquetes salvo `e2e`; con una
+  etiqueta `modules/<módulo>/vX.Y.Z`, solo las pruebas de ese módulo
+  (`scripts/module-tests.sh`). Las compuertas y datos (`TEST_ALLOW_EXPENSIVE`, `TEST_ALLOW_ORG` y
+  las `TEST_*` específicas) llegan de variables de repositorio; sin ellas, esas pruebas se
+  omiten. `scripts/go-test-report.sh` lista en el resumen cada prueba omitida con su motivo y
+  hace fallar el trabajo si hay más omitidas que `TERRATEST_MAX_SKIPS` (0 por defecto): una
+  omisión no pasa en silencio.
 - La prueba de extremo a extremo no corre en CI: se lanza a mano.
+- `TestDevSmoke` corre en `apply.yml` (trabajo `dev / prueba de humo`), no aquí, con
+  `TEST_SMOKE=true`, `TEST_E2E_STATE_BUCKET` y la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`; una omisión
+  también la hace fallar.
 
 ## Exigencias que comprueba cada prueba de integración
 
@@ -231,3 +242,23 @@ Compuerta `TEST_E2E=true`. Variables:
 - **Desmontaje de lo compartido** (etapas 0, 1, 2, hub y entornos distintos de dev): no se
   destruye. Lleva llaves con `prevent_destroy`, el bucket de estado y, si se bloqueó, la retención
   de logs.
+
+## Prueba de humo de dev (`e2e/smoke_test.go`)
+
+`TestDevSmoke`, compuerta `TEST_SMOKE=true` más `TEST_E2E_STATE_BUCKET`. No aplica ni destruye
+nada:
+
+1. `terraform init` con `-backend-config=bucket=…` en `stages/3-networks`,
+   `stages/3-networks/envs/dev` y `stages/5-workloads/envs/dev`, y lectura de sus salidas.
+2. Las Connectivity Tests de dev de la prueba de extremo a extremo (dev → Cloud SQL, Internet →
+   balanceador de dev, dev → on-premises simulado), sin la de prod. Falla si no hay ninguna
+   expresable o si alguna no da lo esperado.
+
+La corre `apply.yml` (trabajo `dev / prueba de humo`) después de aplicar dev y antes de qa, con
+la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`; sus permisos están en `docs/pipeline.md` §3. Local:
+
+```bash
+TEST_SMOKE=true TEST_E2E_STATE_BUCKET=<bucket> go test -count=1 -v -timeout 25m -run '^TestDevSmoke$' ./e2e
+```
+
+Estado: compilada; sin variables se omite (comprobado). Nunca ejecutada contra GCP.

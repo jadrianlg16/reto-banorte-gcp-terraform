@@ -1,0 +1,23 @@
+# Recursos que Cloud Asset Inventory lista en una carpeta de entorno y que no crea una persona:
+# los crea Google al habilitar una API o un servicio administrado a partir de un recurso de
+# Terraform. scripts/unmanaged-resources.py no los reporta.
+#
+# Formato: una expresión regular (sintaxis de Python) por línea, seguida de " # " y el motivo.
+# Se evalúa con search sobre "<assetType> <nombre normalizado> <displayName>"; el nombre
+# normalizado no lleva //servicio.googleapis.com/ y usa el número del proyecto.
+#
+# VERIFICAR-EN-APPLY: cada regla se escribió con la documentación de Google, no con una carpeta
+# real. En la primera corrida, revisar lo que queda permitido y lo que sale como no
+# administrado, y ajustar aquí (nunca agregar una regla que cubra un tipo completo sin motivo).
+
+^serviceusage\.googleapis\.com/Service  # APIs habilitadas como dependencia de otra (p. ej. container habilita compute); no crean recursos por sí mismas
+^logging\.googleapis\.com/LogBucket .*/buckets/_(Default|Required)( |$)  # buckets de registros que crea Cloud Logging en cada proyecto
+^logging\.googleapis\.com/LogSink .*/sinks/_(Default|Required)( |$)  # sinks que crea Cloud Logging en cada proyecto
+^iam\.googleapis\.com/ServiceAccount .* (Compute Engine default service account|App Engine default service account)$  # cuentas por defecto que crea Google al habilitar la API
+^compute\.googleapis\.com/Route .*/routes/default-route-[0-9a-f]+( |$)  # rutas por defecto de cada VPC y subred
+^compute\.googleapis\.com/Route .*/routes/peering-route-[0-9a-f]+( |$)  # rutas que importa un peering de VPC
+^compute\.googleapis\.com/(Instance|Disk|InstanceGroup|InstanceGroupManager|InstanceTemplate) .*/gke-[a-z0-9-]+( |$)  # nodos, discos, grupos y plantillas que crea GKE para los node pools
+^compute\.googleapis\.com/Firewall .*/firewalls/(gke|k8s)-[a-z0-9-]+( |$)  # reglas de firewall que crea GKE para el clúster y sus Services
+^compute\.googleapis\.com/(ForwardingRule|BackendService|HealthCheck|TargetPool|NetworkEndpointGroup|UrlMap|TargetHttpProxy|TargetHttpsProxy) .*/(k8s[0-9]?-[a-z0-9-]+|a[0-9a-f]{31})( |$)  # balanceadores y NEG que crea GKE para Services e Ingress
+^container\.googleapis\.com/NodePool .*/nodePools/default-pool( |$)  # pool por defecto que GKE crea y Terraform elimina (remove_default_node_pool) mientras el índice se actualiza
+^cloudbilling\.googleapis\.com/ProjectBillingInfo  # facturación del proyecto: atributo de google_project, no un recurso aparte

@@ -1,0 +1,11 @@
+{"Time":"2026-11-21T10:00:00Z","Action":"start","Package":"gcp-datacenter/tests/integration"}
+{"Time":"2026-11-21T10:00:01Z","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestStorage"}
+{"Time":"2026-11-21T10:00:01Z","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"=== RUN   TestStorage\n"}
+{"Time":"2026-11-21T10:09:00Z","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"--- PASS: TestStorage (539.00s)\n"}
+{"Time":"2026-11-21T10:09:00Z","Action":"pass","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Elapsed":539}
+{"Time":"2026-11-21T10:00:01Z","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestKMS"}
+{"Time":"2026-11-21T10:05:00Z","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"    kms_test.go:40: rotation_period: se esperaba 7776000s\n"}
+{"Time":"2026-11-21T10:05:00Z","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"--- FAIL: TestKMS (299.00s)\n"}
+{"Time":"2026-11-21T10:05:00Z","Action":"fail","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Elapsed":299}
+{"Time":"2026-11-21T10:09:00Z","Action":"output","Package":"gcp-datacenter/tests/integration","Output":"FAIL\n"}
+{"Time":"2026-11-21T10:09:00Z","Action":"fail","Package":"gcp-datacenter/tests/integration","Elapsed":540}

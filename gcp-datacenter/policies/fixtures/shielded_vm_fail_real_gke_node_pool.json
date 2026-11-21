@@ -1,0 +1,220 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_container_node_pool.no_secure_boot",
+          "expressions": {
+            "cluster": {
+              "references": [
+                "local.cluster"
+              ]
+            },
+            "location": {
+              "constant_value": "us-central1"
+            },
+            "name": {
+              "constant_value": "nosecureboot"
+            },
+            "node_config": [
+              {
+                "machine_type": {
+                  "constant_value": "e2-standard-4"
+                },
+                "resource_labels": {
+                  "references": [
+                    "local.labels"
+                  ]
+                },
+                "shielded_instance_config": [
+                  {
+                    "enable_integrity_monitoring": {
+                      "constant_value": true
+                    },
+                    "enable_secure_boot": {
+                      "constant_value": false
+                    }
+                  }
+                ]
+              }
+            ],
+            "node_count": {
+              "constant_value": 1
+            }
+          },
+          "mode": "managed",
+          "name": "no_secure_boot",
+          "provider_config_key": "google",
+          "schema_version": 1,
+          "type": "google_container_node_pool"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_container_node_pool.no_secure_boot",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "autoscaling": [],
+          "cluster": "projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke",
+          "location": "us-central1",
+          "name": "nosecureboot",
+          "node_config": [
+            {
+              "advanced_machine_features": [],
+              "boot_disk_kms_key": null,
+              "containerd_config": [],
+              "enable_confidential_storage": null,
+              "ephemeral_storage_local_ssd_config": [],
+              "fast_socket": [],
+              "flex_start": null,
+              "gvnic": [],
+              "host_maintenance_policy": [],
+              "local_nvme_ssd_block_config": [],
+              "local_ssd_encryption_mode": null,
+              "machine_type": "e2-standard-4",
+              "max_run_duration": null,
+              "node_group": null,
+              "preemptible": false,
+              "reservation_affinity": [],
+              "resource_labels": {
+                "app": "app",
+                "cost_center": "ti-001",
+                "env": "dev",
+                "managed_by": "terraform",
+                "owner": "plataforma"
+              },
+              "resource_manager_tags": null,
+              "secondary_boot_disks": [],
+              "shielded_instance_config": [
+                {
+                  "enable_integrity_monitoring": true,
+                  "enable_secure_boot": false
+                }
+              ],
+              "sole_tenant_config": [],
+              "spot": false,
+              "storage_pools": null,
+              "tags": null,
+              "taint": []
+            }
+          ],
+          "node_count": 1,
+          "placement_policy": [],
+          "project": "example-project",
+          "queued_provisioning": [],
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "autoscaling": [],
+          "instance_group_urls": [],
+          "managed_instance_group_urls": [],
+          "management": [],
+          "network_config": [],
+          "node_config": [
+            {
+              "advanced_machine_features": [],
+              "boot_disk": [],
+              "confidential_nodes": [],
+              "containerd_config": [],
+              "effective_taints": [],
+              "ephemeral_storage_local_ssd_config": [],
+              "fast_socket": [],
+              "gcfs_config": [],
+              "guest_accelerator": [],
+              "gvnic": [],
+              "host_maintenance_policy": [],
+              "kubelet_config": [],
+              "labels": {},
+              "linux_node_config": [],
+              "local_nvme_ssd_block_config": [],
+              "metadata": {},
+              "oauth_scopes": [],
+              "reservation_affinity": [],
+              "resource_labels": {},
+              "secondary_boot_disks": [],
+              "shielded_instance_config": [
+                {}
+              ],
+              "sole_tenant_config": [],
+              "taint": [],
+              "windows_node_config": [],
+              "workload_metadata_config": []
+            }
+          ],
+          "node_locations": [],
+          "placement_policy": [],
+          "queued_provisioning": [],
+          "upgrade_settings": []
+        },
+        "after_unknown": {
+          "autoscaling": [],
+          "id": true,
+          "initial_node_count": true,
+          "instance_group_urls": true,
+          "managed_instance_group_urls": true,
+          "management": true,
+          "max_pods_per_node": true,
+          "name_prefix": true,
+          "network_config": true,
+          "node_config": [
+            {
+              "advanced_machine_features": [],
+              "boot_disk": true,
+              "confidential_nodes": true,
+              "containerd_config": [],
+              "disk_size_gb": true,
+              "disk_type": true,
+              "effective_taints": true,
+              "ephemeral_storage_local_ssd_config": [],
+              "fast_socket": [],
+              "gcfs_config": true,
+              "guest_accelerator": true,
+              "gvnic": [],
+              "host_maintenance_policy": [],
+              "image_type": true,
+              "kubelet_config": true,
+              "labels": true,
+              "linux_node_config": true,
+              "local_nvme_ssd_block_config": [],
+              "local_ssd_count": true,
+              "logging_variant": true,
+              "metadata": true,
+              "min_cpu_platform": true,
+              "oauth_scopes": true,
+              "reservation_affinity": [],
+              "resource_labels": {},
+              "secondary_boot_disks": [],
+              "service_account": true,
+              "shielded_instance_config": [
+                {}
+              ],
+              "sole_tenant_config": [],
+              "taint": [],
+              "windows_node_config": true,
+              "workload_metadata_config": true
+            }
+          ],
+          "node_locations": true,
+          "operation": true,
+          "placement_policy": [],
+          "queued_provisioning": [],
+          "upgrade_settings": true,
+          "version": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "no_secure_boot",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_container_node_pool"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

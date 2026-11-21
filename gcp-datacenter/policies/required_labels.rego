@@ -10,8 +10,13 @@
 # - `terraform_labels`: `labels` más las `default_labels` del bloque `provider`. Se conoce en el
 #   plan, así que una etiqueta puesta solo en `default_labels` cuenta.
 # - `effective_labels`: además incluye etiquetas puestas fuera de Terraform; no se usa.
-# - GKE usa `resource_labels` (las `labels` de `node_config` son de Kubernetes).
+# - GKE usa `resource_labels` (las `labels` de `node_config` son de Kubernetes). En
+#   `google_container_node_pool`, `node_config[0].resource_labels` (etiquetas de las VM de
+#   los nodos; no recibe `default_labels`).
 # - Cloud SQL usa `settings[0].user_labels` y no recibe `default_labels`.
+# - Cloud Monitoring (políticas de alerta, servicios, SLO y verificaciones de tiempo de
+#   actividad) usa `user_labels` y no recibe `default_labels`.
+# Rutas revisadas contra `terraform providers schema -json` de google 6.50.0.
 #
 # Valores desconocidos: una etiqueta cuya llave existe pero cuyo valor se calcula en el apply
 # cuenta como presente; `managed_by` debe ser conocido e igual a "terraform".
@@ -47,6 +52,22 @@ label_paths_by_type := {
 	"google_pubsub_topic": standard_label_paths,
 	"google_pubsub_subscription": standard_label_paths,
 	"google_bigquery_dataset": standard_label_paths,
+	"google_backup_dr_backup_vault": standard_label_paths,
+	"google_gke_backup_backup_plan": standard_label_paths,
+	"google_certificate_manager_certificate": standard_label_paths,
+	"google_certificate_manager_dns_authorization": standard_label_paths,
+	"google_container_node_pool": [["node_config", 0, "resource_labels"]],
+	"google_monitoring_alert_policy": [["user_labels"]],
+	"google_monitoring_custom_service": [["user_labels"]],
+	"google_monitoring_slo": [["user_labels"]],
+	"google_monitoring_uptime_check_config": [["user_labels"]],
+	# En los canales de notificación, `labels` es la configuración del canal (por ejemplo, el
+	# correo); las etiquetas del recurso son `user_labels`.
+	"google_monitoring_notification_channel": [["user_labels"]],
+	"google_compute_ha_vpn_gateway": standard_label_paths,
+	"google_compute_external_vpn_gateway": standard_label_paths,
+	"google_compute_vpn_tunnel": standard_label_paths,
+	"google_compute_interconnect_attachment": standard_label_paths,
 }
 
 # Llaves de etiqueta presentes en el plan, conocidas o con valor desconocido.

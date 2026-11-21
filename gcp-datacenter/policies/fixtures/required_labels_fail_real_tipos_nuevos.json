@@ -1,0 +1,971 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_backup_dr_backup_vault.unlabelled",
+          "expressions": {
+            "backup_minimum_enforced_retention_duration": {
+              "constant_value": "604800s"
+            },
+            "backup_vault_id": {
+              "constant_value": "bnt-dev-app-bv"
+            },
+            "location": {
+              "constant_value": "us-central1"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_backup_dr_backup_vault"
+        },
+        {
+          "address": "google_certificate_manager_certificate.unlabelled",
+          "expressions": {
+            "managed": [
+              {
+                "dns_authorizations": {
+                  "references": [
+                    "google_certificate_manager_dns_authorization.unlabelled.id",
+                    "google_certificate_manager_dns_authorization.unlabelled"
+                  ]
+                },
+                "domains": {
+                  "constant_value": [
+                    "app.example.com"
+                  ]
+                }
+              }
+            ],
+            "name": {
+              "constant_value": "bnt-dev-app-cert"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 1,
+          "type": "google_certificate_manager_certificate"
+        },
+        {
+          "address": "google_certificate_manager_dns_authorization.unlabelled",
+          "expressions": {
+            "domain": {
+              "constant_value": "app.example.com"
+            },
+            "name": {
+              "constant_value": "bnt-dev-app-dnsauth"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 1,
+          "type": "google_certificate_manager_dns_authorization"
+        },
+        {
+          "address": "google_container_node_pool.unlabelled",
+          "expressions": {
+            "cluster": {
+              "references": [
+                "local.cluster"
+              ]
+            },
+            "location": {
+              "constant_value": "us-central1"
+            },
+            "name": {
+              "constant_value": "unlabelled"
+            },
+            "node_config": [
+              {
+                "machine_type": {
+                  "constant_value": "e2-standard-4"
+                },
+                "shielded_instance_config": [
+                  {
+                    "enable_integrity_monitoring": {
+                      "constant_value": true
+                    },
+                    "enable_secure_boot": {
+                      "constant_value": true
+                    }
+                  }
+                ]
+              }
+            ],
+            "node_count": {
+              "constant_value": 1
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 1,
+          "type": "google_container_node_pool"
+        },
+        {
+          "address": "google_gke_backup_backup_plan.unlabelled",
+          "expressions": {
+            "backup_config": [
+              {
+                "all_namespaces": {
+                  "constant_value": true
+                }
+              }
+            ],
+            "cluster": {
+              "references": [
+                "local.cluster"
+              ]
+            },
+            "location": {
+              "constant_value": "us-central1"
+            },
+            "name": {
+              "constant_value": "bnt-dev-app-gkebp"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_gke_backup_backup_plan"
+        },
+        {
+          "address": "google_monitoring_alert_policy.unlabelled",
+          "expressions": {
+            "combiner": {
+              "constant_value": "OR"
+            },
+            "conditions": [
+              {
+                "condition_threshold": [
+                  {
+                    "comparison": {
+                      "constant_value": "COMPARISON_GT"
+                    },
+                    "duration": {
+                      "constant_value": "300s"
+                    },
+                    "filter": {
+                      "constant_value": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" resource.type=\"gce_instance\""
+                    },
+                    "threshold_value": {
+                      "constant_value": 0.9
+                    }
+                  }
+                ],
+                "display_name": {
+                  "constant_value": "cpu"
+                }
+              }
+            ],
+            "display_name": {
+              "constant_value": "bnt-dev-app-alert"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_monitoring_alert_policy"
+        },
+        {
+          "address": "google_monitoring_custom_service.unlabelled",
+          "expressions": {
+            "display_name": {
+              "constant_value": "bnt-dev-app-svc"
+            },
+            "service_id": {
+              "constant_value": "bnt-dev-app-svc"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_monitoring_custom_service"
+        },
+        {
+          "address": "google_monitoring_slo.unlabelled",
+          "expressions": {
+            "goal": {
+              "constant_value": 0.999
+            },
+            "request_based_sli": [
+              {
+                "good_total_ratio": [
+                  {
+                    "good_service_filter": {
+                      "constant_value": "metric.type=\"loadbalancing.googleapis.com/https/request_count\" resource.type=\"https_lb_rule\" metric.labels.response_code_class=\"200\""
+                    },
+                    "total_service_filter": {
+                      "constant_value": "metric.type=\"loadbalancing.googleapis.com/https/request_count\" resource.type=\"https_lb_rule\""
+                    }
+                  }
+                ]
+              }
+            ],
+            "rolling_period_days": {
+              "constant_value": 28
+            },
+            "service": {
+              "references": [
+                "google_monitoring_custom_service.unlabelled.service_id",
+                "google_monitoring_custom_service.unlabelled"
+              ]
+            },
+            "slo_id": {
+              "constant_value": "availability"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_monitoring_slo"
+        },
+        {
+          "address": "google_monitoring_uptime_check_config.unlabelled",
+          "expressions": {
+            "display_name": {
+              "constant_value": "bnt-dev-app-uptime"
+            },
+            "http_check": [
+              {
+                "path": {
+                  "constant_value": "/healthz"
+                },
+                "port": {
+                  "constant_value": 443
+                },
+                "use_ssl": {
+                  "constant_value": true
+                }
+              }
+            ],
+            "monitored_resource": [
+              {
+                "labels": {
+                  "constant_value": {
+                    "host": "app.example.com",
+                    "project_id": "example-project"
+                  }
+                },
+                "type": {
+                  "constant_value": "uptime_url"
+                }
+              }
+            ],
+            "timeout": {
+              "constant_value": "10s"
+            }
+          },
+          "mode": "managed",
+          "name": "unlabelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_monitoring_uptime_check_config"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_backup_dr_backup_vault.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "access_restriction": "WITHIN_ORGANIZATION",
+          "allow_missing": false,
+          "annotations": null,
+          "backup_minimum_enforced_retention_duration": "604800s",
+          "backup_retention_inheritance": null,
+          "backup_vault_id": "bnt-dev-app-bv",
+          "description": null,
+          "effective_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "effective_time": null,
+          "force_delete": false,
+          "force_update": false,
+          "ignore_backup_plan_references": false,
+          "ignore_inactive_datasources": false,
+          "labels": null,
+          "location": "us-central1",
+          "project": "example-project",
+          "terraform_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_annotations": {},
+          "effective_labels": {},
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "backup_count": true,
+          "create_time": true,
+          "deletable": true,
+          "effective_annotations": true,
+          "effective_labels": {},
+          "etag": true,
+          "id": true,
+          "name": true,
+          "service_account": true,
+          "state": true,
+          "terraform_labels": {},
+          "total_stored_bytes": true,
+          "uid": true,
+          "update_time": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_backup_dr_backup_vault"
+    },
+    {
+      "address": "google_certificate_manager_certificate.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "labels": null,
+          "location": "global",
+          "managed": [
+            {
+              "domains": [
+                "app.example.com"
+              ],
+              "issuance_config": null
+            }
+          ],
+          "name": "bnt-dev-app-cert",
+          "project": "example-project",
+          "scope": null,
+          "self_managed": [],
+          "terraform_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "managed": [
+            {
+              "authorization_attempt_info": [],
+              "dns_authorizations": [],
+              "domains": [
+                false
+              ],
+              "provisioning_issue": []
+            }
+          ],
+          "san_dnsnames": [],
+          "self_managed": [],
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "effective_labels": {},
+          "id": true,
+          "managed": [
+            {
+              "authorization_attempt_info": true,
+              "dns_authorizations": true,
+              "domains": [
+                false
+              ],
+              "provisioning_issue": true,
+              "state": true
+            }
+          ],
+          "san_dnsnames": true,
+          "self_managed": [],
+          "terraform_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_certificate_manager_certificate"
+    },
+    {
+      "address": "google_certificate_manager_dns_authorization.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "domain": "app.example.com",
+          "effective_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "labels": null,
+          "location": "global",
+          "name": "bnt-dev-app-dnsauth",
+          "project": "example-project",
+          "terraform_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "dns_resource_record": [],
+          "effective_labels": {},
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "dns_resource_record": true,
+          "effective_labels": {},
+          "id": true,
+          "terraform_labels": {},
+          "type": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_certificate_manager_dns_authorization"
+    },
+    {
+      "address": "google_container_node_pool.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "autoscaling": [],
+          "cluster": "projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke",
+          "location": "us-central1",
+          "name": "unlabelled",
+          "node_config": [
+            {
+              "advanced_machine_features": [],
+              "boot_disk_kms_key": null,
+              "containerd_config": [],
+              "enable_confidential_storage": null,
+              "ephemeral_storage_local_ssd_config": [],
+              "fast_socket": [],
+              "flex_start": null,
+              "gvnic": [],
+              "host_maintenance_policy": [],
+              "local_nvme_ssd_block_config": [],
+              "local_ssd_encryption_mode": null,
+              "machine_type": "e2-standard-4",
+              "max_run_duration": null,
+              "node_group": null,
+              "preemptible": false,
+              "reservation_affinity": [],
+              "resource_labels": null,
+              "resource_manager_tags": null,
+              "secondary_boot_disks": [],
+              "shielded_instance_config": [
+                {
+                  "enable_integrity_monitoring": true,
+                  "enable_secure_boot": true
+                }
+              ],
+              "sole_tenant_config": [],
+              "spot": false,
+              "storage_pools": null,
+              "tags": null,
+              "taint": []
+            }
+          ],
+          "node_count": 1,
+          "placement_policy": [],
+          "project": "example-project",
+          "queued_provisioning": [],
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "autoscaling": [],
+          "instance_group_urls": [],
+          "managed_instance_group_urls": [],
+          "management": [],
+          "network_config": [],
+          "node_config": [
+            {
+              "advanced_machine_features": [],
+              "boot_disk": [],
+              "confidential_nodes": [],
+              "containerd_config": [],
+              "effective_taints": [],
+              "ephemeral_storage_local_ssd_config": [],
+              "fast_socket": [],
+              "gcfs_config": [],
+              "guest_accelerator": [],
+              "gvnic": [],
+              "host_maintenance_policy": [],
+              "kubelet_config": [],
+              "labels": {},
+              "linux_node_config": [],
+              "local_nvme_ssd_block_config": [],
+              "metadata": {},
+              "oauth_scopes": [],
+              "reservation_affinity": [],
+              "secondary_boot_disks": [],
+              "shielded_instance_config": [
+                {}
+              ],
+              "sole_tenant_config": [],
+              "taint": [],
+              "windows_node_config": [],
+              "workload_metadata_config": []
+            }
+          ],
+          "node_locations": [],
+          "placement_policy": [],
+          "queued_provisioning": [],
+          "upgrade_settings": []
+        },
+        "after_unknown": {
+          "autoscaling": [],
+          "id": true,
+          "initial_node_count": true,
+          "instance_group_urls": true,
+          "managed_instance_group_urls": true,
+          "management": true,
+          "max_pods_per_node": true,
+          "name_prefix": true,
+          "network_config": true,
+          "node_config": [
+            {
+              "advanced_machine_features": [],
+              "boot_disk": true,
+              "confidential_nodes": true,
+              "containerd_config": [],
+              "disk_size_gb": true,
+              "disk_type": true,
+              "effective_taints": true,
+              "ephemeral_storage_local_ssd_config": [],
+              "fast_socket": [],
+              "gcfs_config": true,
+              "guest_accelerator": true,
+              "gvnic": [],
+              "host_maintenance_policy": [],
+              "image_type": true,
+              "kubelet_config": true,
+              "labels": true,
+              "linux_node_config": true,
+              "local_nvme_ssd_block_config": [],
+              "local_ssd_count": true,
+              "logging_variant": true,
+              "metadata": true,
+              "min_cpu_platform": true,
+              "oauth_scopes": true,
+              "reservation_affinity": [],
+              "secondary_boot_disks": [],
+              "service_account": true,
+              "shielded_instance_config": [
+                {}
+              ],
+              "sole_tenant_config": [],
+              "taint": [],
+              "windows_node_config": true,
+              "workload_metadata_config": true
+            }
+          ],
+          "node_locations": true,
+          "operation": true,
+          "placement_policy": [],
+          "queued_provisioning": [],
+          "upgrade_settings": true,
+          "version": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_container_node_pool"
+    },
+    {
+      "address": "google_gke_backup_backup_plan.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "backup_config": [
+            {
+              "all_namespaces": true,
+              "encryption_key": [],
+              "permissive_mode": null,
+              "selected_applications": [],
+              "selected_namespaces": []
+            }
+          ],
+          "backup_schedule": [],
+          "cluster": "projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke",
+          "description": null,
+          "effective_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "labels": null,
+          "location": "us-central1",
+          "name": "bnt-dev-app-gkebp",
+          "project": "example-project",
+          "retention_policy": [],
+          "terraform_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "backup_config": [
+            {
+              "encryption_key": [],
+              "selected_applications": [],
+              "selected_namespaces": []
+            }
+          ],
+          "backup_schedule": [],
+          "effective_labels": {},
+          "retention_policy": [],
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "backup_config": [
+            {
+              "encryption_key": [],
+              "include_secrets": true,
+              "include_volume_data": true,
+              "selected_applications": [],
+              "selected_namespaces": []
+            }
+          ],
+          "backup_schedule": [],
+          "deactivated": true,
+          "effective_labels": {},
+          "etag": true,
+          "id": true,
+          "protected_pod_count": true,
+          "retention_policy": [],
+          "state": true,
+          "state_reason": true,
+          "terraform_labels": {},
+          "uid": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_gke_backup_backup_plan"
+    },
+    {
+      "address": "google_monitoring_alert_policy.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "alert_strategy": [],
+          "combiner": "OR",
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [],
+                  "comparison": "COMPARISON_GT",
+                  "denominator_aggregations": [],
+                  "denominator_filter": null,
+                  "duration": "300s",
+                  "evaluation_missing_data": null,
+                  "filter": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" resource.type=\"gce_instance\"",
+                  "forecast_options": [],
+                  "threshold_value": 0.9,
+                  "trigger": []
+                }
+              ],
+              "display_name": "cpu"
+            }
+          ],
+          "display_name": "bnt-dev-app-alert",
+          "documentation": [],
+          "enabled": true,
+          "notification_channels": null,
+          "project": "example-project",
+          "severity": null,
+          "timeouts": null,
+          "user_labels": null
+        },
+        "after_sensitive": {
+          "alert_strategy": [],
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": []
+                }
+              ]
+            }
+          ],
+          "creation_record": [],
+          "documentation": []
+        },
+        "after_unknown": {
+          "alert_strategy": [],
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": []
+                }
+              ],
+              "name": true
+            }
+          ],
+          "creation_record": true,
+          "documentation": [],
+          "id": true,
+          "name": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_alert_policy"
+    },
+    {
+      "address": "google_monitoring_custom_service.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "display_name": "bnt-dev-app-svc",
+          "project": "example-project",
+          "service_id": "bnt-dev-app-svc",
+          "telemetry": [],
+          "timeouts": null,
+          "user_labels": null
+        },
+        "after_sensitive": {
+          "telemetry": []
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "telemetry": []
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_custom_service"
+    },
+    {
+      "address": "google_monitoring_slo.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "basic_sli": [],
+          "calendar_period": null,
+          "display_name": null,
+          "goal": 0.999,
+          "project": "example-project",
+          "request_based_sli": [
+            {
+              "distribution_cut": [],
+              "good_total_ratio": [
+                {
+                  "bad_service_filter": null,
+                  "good_service_filter": "metric.type=\"loadbalancing.googleapis.com/https/request_count\" resource.type=\"https_lb_rule\" metric.labels.response_code_class=\"200\"",
+                  "total_service_filter": "metric.type=\"loadbalancing.googleapis.com/https/request_count\" resource.type=\"https_lb_rule\""
+                }
+              ]
+            }
+          ],
+          "rolling_period_days": 28,
+          "service": "bnt-dev-app-svc",
+          "slo_id": "availability",
+          "timeouts": null,
+          "user_labels": null,
+          "windows_based_sli": []
+        },
+        "after_sensitive": {
+          "basic_sli": [],
+          "request_based_sli": [
+            {
+              "distribution_cut": [],
+              "good_total_ratio": [
+                {}
+              ]
+            }
+          ],
+          "windows_based_sli": []
+        },
+        "after_unknown": {
+          "basic_sli": [],
+          "id": true,
+          "name": true,
+          "request_based_sli": [
+            {
+              "distribution_cut": [],
+              "good_total_ratio": [
+                {}
+              ]
+            }
+          ],
+          "windows_based_sli": []
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_slo"
+    },
+    {
+      "address": "google_monitoring_uptime_check_config.unlabelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "content_matchers": [],
+          "display_name": "bnt-dev-app-uptime",
+          "http_check": [
+            {
+              "accepted_response_status_codes": [],
+              "auth_info": [],
+              "body": null,
+              "content_type": null,
+              "custom_content_type": null,
+              "mask_headers": null,
+              "path": "/healthz",
+              "ping_config": [],
+              "port": 443,
+              "request_method": "GET",
+              "service_agent_authentication": [],
+              "use_ssl": true,
+              "validate_ssl": null
+            }
+          ],
+          "log_check_failures": null,
+          "monitored_resource": [
+            {
+              "labels": {
+                "host": "app.example.com",
+                "project_id": "example-project"
+              },
+              "type": "uptime_url"
+            }
+          ],
+          "period": "300s",
+          "project": "example-project",
+          "resource_group": [],
+          "selected_regions": null,
+          "synthetic_monitor": [],
+          "tcp_check": [],
+          "timeout": "10s",
+          "timeouts": null,
+          "user_labels": null
+        },
+        "after_sensitive": {
+          "content_matchers": [],
+          "http_check": [
+            {
+              "accepted_response_status_codes": [],
+              "auth_info": [],
+              "headers": {},
+              "ping_config": [],
+              "service_agent_authentication": []
+            }
+          ],
+          "monitored_resource": [
+            {
+              "labels": {}
+            }
+          ],
+          "resource_group": [],
+          "synthetic_monitor": [],
+          "tcp_check": []
+        },
+        "after_unknown": {
+          "checker_type": true,
+          "content_matchers": [],
+          "http_check": [
+            {
+              "accepted_response_status_codes": [],
+              "auth_info": [],
+              "headers": true,
+              "ping_config": [],
+              "service_agent_authentication": []
+            }
+          ],
+          "id": true,
+          "monitored_resource": [
+            {
+              "labels": {}
+            }
+          ],
+          "name": true,
+          "resource_group": [],
+          "synthetic_monitor": [],
+          "tcp_check": [],
+          "uptime_check_id": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "unlabelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_uptime_check_config"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

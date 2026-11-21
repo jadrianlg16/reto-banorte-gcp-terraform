@@ -2,9 +2,12 @@
 # Comprueba las políticas de Conftest sin GCP (§9.1 y §9.2 del contrato).
 #
 # 1. `conftest verify`: corre las pruebas de Rego de policies/*_test.rego.
-# 2. Cada policies/fixtures/<regla>_pass.json debe pasar todas las políticas.
-# 3. Cada policies/fixtures/<regla>_fail.json debe ser rechazado, y solo por <regla>
-#    (los mensajes empiezan con "[<regla>]"). Un plan de falla que pasa es un error.
+# 2. Cada policies/fixtures/<regla>_pass.json o <regla>_pass_<caso>.json debe pasar todas
+#    las políticas.
+# 3. Cada policies/fixtures/<regla>_fail.json o <regla>_fail_<caso>.json debe ser rechazado,
+#    y solo por <regla> (los mensajes empiezan con "[<regla>]"). Un plan de falla que pasa es
+#    un error. Los `_real_` se recortaron de planes reales del proveedor
+#    (scripts/plan-offline.sh y scripts/cut-plan.py; ver policies/README.md).
 #
 # Comando de Conftest: variable de entorno CONFTEST_CMD (puede llevar argumentos); si no
 # está definida, `conftest` del PATH; si no, $HOME/go/bin/conftest (o conftest.exe).
@@ -61,7 +64,8 @@ fi
 echo
 echo "== Planes de ejemplo (${fixture_dir})"
 shopt -s nullglob
-fixtures=("${fixture_dir}"/*_pass.json "${fixture_dir}"/*_fail.json)
+fixtures=("${fixture_dir}"/*_pass.json "${fixture_dir}"/*_pass_*.json
+  "${fixture_dir}"/*_fail.json "${fixture_dir}"/*_fail_*.json)
 shopt -u nullglob
 if [[ ${#fixtures[@]} -eq 0 ]]; then
   echo "ERROR: no hay planes de ejemplo en ${fixture_dir}." >&2
@@ -69,12 +73,12 @@ if [[ ${#fixtures[@]} -eq 0 ]]; then
 fi
 
 errors=0
-printf '%-32s %-10s %-10s %s\n' "PLAN" "ESPERADO" "OBTENIDO" "RESULTADO"
+printf '%-52s %-10s %-10s %s\n' "PLAN" "ESPERADO" "OBTENIDO" "RESULTADO"
 for fixture in "${fixtures[@]}"; do
   name="$(basename "${fixture}" .json)"
   case "${name}" in
-    *_pass) expected="pasa"; rule="${name%_pass}" ;;
-    *_fail) expected="rechaza"; rule="${name%_fail}" ;;
+    *_pass | *_pass_*) expected="pasa"; rule="${name%%_pass*}" ;;
+    *_fail | *_fail_*) expected="rechaza"; rule="${name%%_fail*}" ;;
   esac
 
   output="$("${conftest_cmd[@]}" test "${fixture}" --policy "${policy_dir}" --no-color 2>&1)"
@@ -100,7 +104,7 @@ for fixture in "${fixtures[@]}"; do
     fi
   fi
 
-  printf '%-32s %-10s %-10s %s\n' "${name}" "${expected}" "${actual}" "${verdict}${detail:+ (${detail})}"
+  printf '%-52s %-10s %-10s %s\n' "${name}" "${expected}" "${actual}" "${verdict}${detail:+ (${detail})}"
   if [[ -n "${failures}" ]]; then
     printf '%s\n' "${failures}" | sed 's/^/    /'
   fi

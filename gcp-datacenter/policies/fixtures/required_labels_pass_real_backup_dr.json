@@ -1,0 +1,365 @@
+{
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "backup_dr": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_backup_dr_backup_vault.this",
+                "expressions": {
+                  "access_restriction": {
+                    "constant_value": "WITHIN_ORGANIZATION"
+                  },
+                  "backup_minimum_enforced_retention_duration": {
+                    "references": [
+                      "local.retention_seconds"
+                    ]
+                  },
+                  "backup_retention_inheritance": {
+                    "constant_value": "INHERIT_VAULT_RETENTION"
+                  },
+                  "backup_vault_id": {
+                    "references": [
+                      "local.name",
+                      "local.dr_region_code"
+                    ]
+                  },
+                  "description": {
+                    "references": [
+                      "var.environment",
+                      "var.dr_region"
+                    ]
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "location": {
+                    "references": [
+                      "var.dr_region"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_backup_dr_backup_vault"
+              },
+              {
+                "address": "google_gke_backup_backup_plan.this",
+                "expressions": {
+                  "backup_config": [
+                    {
+                      "all_namespaces": {
+                        "constant_value": true
+                      },
+                      "encryption_key": [
+                        {
+                          "gcp_kms_encryption_key": {
+                            "references": [
+                              "var.gke_backup_kms_key"
+                            ]
+                          }
+                        }
+                      ],
+                      "include_secrets": {
+                        "constant_value": true
+                      },
+                      "include_volume_data": {
+                        "constant_value": true
+                      }
+                    }
+                  ],
+                  "backup_schedule": [
+                    {
+                      "cron_schedule": {
+                        "references": [
+                          "var.gke_backup_cron"
+                        ]
+                      }
+                    }
+                  ],
+                  "cluster": {
+                    "references": [
+                      "var.gke_cluster_id"
+                    ]
+                  },
+                  "description": {
+                    "references": [
+                      "var.environment",
+                      "var.retention_days"
+                    ]
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "location": {
+                    "references": [
+                      "var.dr_region"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.name",
+                      "local.dr_region_code"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "retention_policy": [
+                    {
+                      "backup_delete_lock_days": {
+                        "references": [
+                          "var.gke_backup_delete_lock_days"
+                        ]
+                      },
+                      "backup_retain_days": {
+                        "references": [
+                          "var.retention_days"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.gke"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_gke_backup_backup_plan"
+              }
+            ]
+          },
+          "source": "../.."
+        }
+      }
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "module.backup_dr.google_backup_dr_backup_vault.this",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "access_restriction": "WITHIN_ORGANIZATION",
+          "allow_missing": false,
+          "annotations": null,
+          "backup_minimum_enforced_retention_duration": "2592000s",
+          "backup_retention_inheritance": "INHERIT_VAULT_RETENTION",
+          "backup_vault_id": "bnt-prod-bkp-vault-use4",
+          "description": "Bóveda de respaldos de prod en la región secundaria (us-east4).",
+          "effective_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "effective_time": null,
+          "force_delete": false,
+          "force_update": false,
+          "ignore_backup_plan_references": false,
+          "ignore_inactive_datasources": false,
+          "labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "location": "us-east4",
+          "project": "example-prod-app",
+          "terraform_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_annotations": {},
+          "effective_labels": {},
+          "labels": {},
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "backup_count": true,
+          "create_time": true,
+          "deletable": true,
+          "effective_annotations": true,
+          "effective_labels": {},
+          "etag": true,
+          "id": true,
+          "labels": {},
+          "name": true,
+          "service_account": true,
+          "state": true,
+          "terraform_labels": {},
+          "total_stored_bytes": true,
+          "uid": true,
+          "update_time": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.backup_dr",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_backup_dr_backup_vault"
+    },
+    {
+      "address": "module.backup_dr.google_gke_backup_backup_plan.this[\"gke\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "backup_config": [
+            {
+              "all_namespaces": true,
+              "encryption_key": [
+                {
+                  "gcp_kms_encryption_key": "projects/example-common-security/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/backup"
+                }
+              ],
+              "include_secrets": true,
+              "include_volume_data": true,
+              "permissive_mode": null,
+              "selected_applications": [],
+              "selected_namespaces": []
+            }
+          ],
+          "backup_schedule": [
+            {
+              "cron_schedule": "0 7 * * *",
+              "rpo_config": []
+            }
+          ],
+          "cluster": "projects/example-prod-app/locations/us-central1/clusters/bnt-prod-app-gke-usc1",
+          "description": "Respaldo diario del clúster de GKE de prod con retención de 30 días.",
+          "effective_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "location": "us-east4",
+          "name": "bnt-prod-bkp-gke-plan-use4",
+          "project": "example-prod-app",
+          "retention_policy": [
+            {
+              "backup_delete_lock_days": 7,
+              "backup_retain_days": 30
+            }
+          ],
+          "terraform_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "backup_config": [
+            {
+              "encryption_key": [
+                {}
+              ],
+              "selected_applications": [],
+              "selected_namespaces": []
+            }
+          ],
+          "backup_schedule": [
+            {
+              "rpo_config": []
+            }
+          ],
+          "effective_labels": {},
+          "labels": {},
+          "retention_policy": [
+            {}
+          ],
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "backup_config": [
+            {
+              "encryption_key": [
+                {}
+              ],
+              "selected_applications": [],
+              "selected_namespaces": []
+            }
+          ],
+          "backup_schedule": [
+            {
+              "paused": true,
+              "rpo_config": []
+            }
+          ],
+          "deactivated": true,
+          "effective_labels": {},
+          "etag": true,
+          "id": true,
+          "labels": {},
+          "protected_pod_count": true,
+          "retention_policy": [
+            {
+              "locked": true
+            }
+          ],
+          "state": true,
+          "state_reason": true,
+          "terraform_labels": {},
+          "uid": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "gke",
+      "mode": "managed",
+      "module_address": "module.backup_dr",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_gke_backup_backup_plan"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

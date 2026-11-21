@@ -11,6 +11,13 @@
 # La incidencia lleva solo las direcciones de los recursos y la línea "Plan:", no el plan
 # completo: las incidencias de un repositorio público las ve cualquiera.
 #
+# Recursos no administrados (objetivo "cero recursos manuales", verificado con Cloud Asset
+# Inventory): por cada entorno (dev, qa, prod), lista con Cloud Asset los recursos de su
+# carpeta y los compara con todos los estados del bucket (scripts/unmanaged-resources.py).
+# Falla si hay recursos que ningún estado administra y los lista en el resumen. El drift de
+# arriba no los ve: un recurso creado a mano fuera de Terraform no cambia ningún plan.
+# Identidad: GCP_AUDIT_SERVICE_ACCOUNT (solo lectura; docs/pipeline.md §2).
+#
 # Sin GCP: mientras GCP_ENABLED no sea "true", el flujo no hace nada y termina en verde.
 
 name: drift
@@ -44,7 +51,7 @@ jobs:
     outputs:
       roots: ${{ steps.roots.outputs.roots }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - id: roots
         name: Listar raíces (sin 0-bootstrap)
@@ -78,15 +85,15 @@ jobs:
     env:
       ROOT: ${{ matrix.root }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
       - name: Autenticar con Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[matrix.stage] }}
@@ -135,7 +142,7 @@ jobs:
 
       - name: Abrir o actualizar la incidencia de drift
         if: steps.plan.outputs.drift == 'true'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           SUMMARY_FILE: ${{ steps.plan.outputs.summary }}
         with:
@@ -186,3 +193,85 @@ jobs:
               const created = await github.rest.issues.create({ owner, repo, title, body, labels: [label] });
               core.notice(`Incidencia #${created.data.number} abierta para ${root}.`);
             }
+
+  unmanaged:
+    name: recursos no administrados (${{ matrix.env }})
+    if: vars.GCP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, qa, prod]
+    env:
+      ENV_NAME: ${{ matrix.env }}
+      STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          missing=""
+          for v in GCP_AUDIT_SERVICE_ACCOUNT STATE_BUCKET; do
+            if [ -z "${!v:-}" ]; then
+              missing="${missing} ${v}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::Faltan variables de repositorio:${missing} (docs/pipeline.md §2)."
+            exit 1
+          fi
+
+      - name: Autenticar con Workload Identity Federation (cuenta de auditoría)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # Los estados crudos llevan valores sensibles: quedan en la carpeta temporal del runner y
+      # no se suben como artefacto.
+      - name: Descargar los estados del bucket
+        run: |
+          dir="${RUNNER_TEMP}/states"
+          mkdir -p "${dir}"
+          gcloud storage ls "gs://${STATE_BUCKET}/**/default.tfstate" > "${RUNNER_TEMP}/state-list.txt"
+          while IFS= read -r url; do
+            name="$(printf '%s' "${url#gs://"${STATE_BUCKET}"/}" | tr '/' '_')"
+            gcloud storage cp --quiet "${url}" "${dir}/${name}"
+          done < "${RUNNER_TEMP}/state-list.txt"
+          ls "${dir}"
+          [ -f "${dir}/1-org_default.tfstate" ] || {
+            echo "::error::No está el estado de 1-org (gs://${STATE_BUCKET}/1-org/default.tfstate)."
+            exit 1
+          }
+
+      - name: Listar la carpeta del entorno con Cloud Asset
+        run: |
+          folder="$(jq -r --arg e "${ENV_NAME}" '.outputs.folder_ids.value[$e] // empty' "${RUNNER_TEMP}/states/1-org_default.tfstate")"
+          if [ -z "${folder}" ]; then
+            echo "::error::La salida folder_ids de 1-org no tiene la carpeta ${ENV_NAME}."
+            exit 1
+          fi
+          echo "Carpeta de ${ENV_NAME}: ${folder}"
+          # VERIFICAR-EN-APPLY: cuota de la API cloudasset con la cuenta de auditoría.
+          gcloud asset search-all-resources --scope="${folder}" --format=json > "${RUNNER_TEMP}/assets.json"
+
+      - name: Comparar con los estados
+        run: |
+          args=()
+          for s in "${RUNNER_TEMP}"/states/*; do
+            args+=(--state "${s}")
+          done
+          {
+            echo "### Recursos no administrados: ${ENV_NAME}"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+          python3 scripts/unmanaged-resources.py --assets "${RUNNER_TEMP}/assets.json" "${args[@]}" \
+            --summary "${GITHUB_STEP_SUMMARY}"

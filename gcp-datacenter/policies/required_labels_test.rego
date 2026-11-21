@@ -74,7 +74,8 @@ test_labels_gke_resource_labels_passes if {
 		"resource_labels": mk_labels,
 		"terraform_labels": mk_labels,
 	})
-	count(all_denials(mk_plan([rc]))) == 0
+	# Solo la regla de etiquetas: este clúster mínimo no trae nodos privados ni Shielded VM.
+	count(rule_denials(mk_plan([rc]), "required_labels")) == 0
 }
 
 test_labels_gke_node_labels_do_not_count if {
@@ -113,4 +114,64 @@ test_labels_pure_delete_ignored if {
 test_labels_pure_delete_with_after_ignored if {
 	rc := mk_change("google_secret_manager_secret.old", "google_secret_manager_secret", ["delete"], {"secret_id": "old", "labels": {}}, {})
 	count(all_denials(mk_plan([rc]))) == 0
+}
+
+# --- Tipos agregados tras la revisión (rutas del esquema de google 6.50.0) -------------------
+
+# Tipo -> ruta de las etiquetas. Cada caso: sin etiquetas se rechaza; con ellas pasa.
+new_label_cases := {
+	"google_backup_dr_backup_vault": ["labels"],
+	"google_gke_backup_backup_plan": ["labels"],
+	"google_certificate_manager_certificate": ["labels"],
+	"google_certificate_manager_dns_authorization": ["labels"],
+	"google_compute_ha_vpn_gateway": ["labels"],
+	"google_compute_external_vpn_gateway": ["labels"],
+	"google_compute_vpn_tunnel": ["labels"],
+	"google_compute_interconnect_attachment": ["labels"],
+	"google_monitoring_alert_policy": ["user_labels"],
+	"google_monitoring_custom_service": ["user_labels"],
+	"google_monitoring_slo": ["user_labels"],
+	"google_monitoring_uptime_check_config": ["user_labels"],
+	"google_monitoring_notification_channel": ["user_labels"],
+	"google_container_node_pool": ["node_config", 0, "resource_labels"],
+}
+
+labels_at(path, labels) := {path[0]: labels} if {
+	count(path) == 1
+} else := {path[0]: [{path[2]: labels}]}
+
+test_labels_new_types_missing_denied if {
+	denied := {type |
+		some type, path in new_label_cases
+		rc := mk_create(sprintf("%s.this", [type]), type, labels_at(path, {"env": "dev"}))
+		count(rule_denials(mk_plan([rc]), "required_labels")) == 1
+	}
+	denied == object.keys(new_label_cases)
+}
+
+test_labels_new_types_complete_pass if {
+	passed := {type |
+		some type, path in new_label_cases
+		rc := mk_create(sprintf("%s.this", [type]), type, labels_at(path, mk_labels))
+		count(rule_denials(mk_plan([rc]), "required_labels")) == 0
+	}
+	passed == object.keys(new_label_cases)
+}
+
+# Monitoring: `labels` del canal es su configuración (por ejemplo, el correo) y no cuenta.
+test_labels_notification_channel_config_labels_do_not_count if {
+	rc := mk_create("google_monitoring_notification_channel.email", "google_monitoring_notification_channel", {
+		"type": "email",
+		"labels": object.union(mk_labels, {"email_address": "alertas@example.com"}),
+		"user_labels": {},
+	})
+	count(rule_denials(mk_plan([rc]), "required_labels")) == 1
+}
+
+# Node pool: las `labels` de Kubernetes del nodo no cuentan, solo `resource_labels`.
+test_labels_node_pool_kubernetes_labels_do_not_count if {
+	rc := mk_create("google_container_node_pool.this", "google_container_node_pool", {
+		"node_config": [{"labels": mk_labels, "resource_labels": {}}],
+	})
+	count(rule_denials(mk_plan([rc]), "required_labels")) == 1
 }

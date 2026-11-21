@@ -1,0 +1,268 @@
+{
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "internal_lb": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_certificate_manager_certificate.this",
+                "expressions": {
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "location": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "managed": [
+                    {
+                      "dns_authorizations": {
+                        "references": [
+                          "local.internal_cert_domains",
+                          "google_certificate_manager_dns_authorization.this"
+                        ]
+                      },
+                      "domains": {
+                        "references": [
+                          "var.domain_names"
+                        ]
+                      }
+                    }
+                  ],
+                  "name": {
+                    "references": [
+                      "local.base_name",
+                      "local.cert_suffix"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.create_internal_cert",
+                    "local.internal"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 1,
+                "type": "google_certificate_manager_certificate"
+              },
+              {
+                "address": "google_certificate_manager_dns_authorization.this",
+                "expressions": {
+                  "domain": {
+                    "references": [
+                      "each.value"
+                    ]
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "location": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.base_name",
+                      "each.value"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "type": {
+                    "constant_value": "PER_PROJECT_RECORD"
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.internal_cert_domains"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 1,
+                "type": "google_certificate_manager_dns_authorization"
+              }
+            ]
+          },
+          "source": "../.."
+        }
+      }
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "module.internal_lb.google_certificate_manager_certificate.this[\"this\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "location": "us-central1",
+          "managed": [
+            {
+              "domains": [
+                "core.example.com"
+              ],
+              "issuance_config": null
+            }
+          ],
+          "name": "bnt-prod-app-core-ilb-usc1-cert-1c73bed0",
+          "project": "example-prod-app",
+          "scope": null,
+          "self_managed": [],
+          "terraform_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "managed": [
+            {
+              "authorization_attempt_info": [],
+              "dns_authorizations": [],
+              "domains": [
+                false
+              ],
+              "provisioning_issue": []
+            }
+          ],
+          "san_dnsnames": [],
+          "self_managed": [],
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "effective_labels": {},
+          "id": true,
+          "labels": {},
+          "managed": [
+            {
+              "authorization_attempt_info": true,
+              "dns_authorizations": true,
+              "domains": [
+                false
+              ],
+              "provisioning_issue": true,
+              "state": true
+            }
+          ],
+          "san_dnsnames": true,
+          "self_managed": [],
+          "terraform_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "this",
+      "mode": "managed",
+      "module_address": "module.internal_lb",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_certificate_manager_certificate"
+    },
+    {
+      "address": "module.internal_lb.google_certificate_manager_dns_authorization.this[\"core-example-com\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "domain": "core.example.com",
+          "effective_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "location": "us-central1",
+          "name": "bnt-prod-app-core-ilb-usc1-dnsauth-1c73bed0",
+          "project": "example-prod-app",
+          "terraform_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null,
+          "type": "PER_PROJECT_RECORD"
+        },
+        "after_sensitive": {
+          "dns_resource_record": [],
+          "effective_labels": {},
+          "labels": {},
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "dns_resource_record": true,
+          "effective_labels": {},
+          "id": true,
+          "labels": {},
+          "terraform_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "core-example-com",
+      "mode": "managed",
+      "module_address": "module.internal_lb",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_certificate_manager_dns_authorization"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

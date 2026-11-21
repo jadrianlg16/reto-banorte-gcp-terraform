@@ -1,0 +1,18 @@
+# Actualizaciones de las acciones de GitHub fijadas por SHA en .github/workflows/
+# (docs/pipeline.md §6). Dependabot abre un PR por grupo con el SHA nuevo y la versión en el
+# comentario; el PR pasa por pr.yml y por la revisión de CODEOWNERS (seguridad) como cualquier
+# cambio de los flujos.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      acciones:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

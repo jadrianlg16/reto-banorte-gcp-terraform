@@ -1,0 +1,27 @@
+{"Time":"2026-11-21T10:27:19.2563276-06:00","Action":"start","Package":"gcp-datacenter/tests/integration"}
+{"Time":"2026-11-21T10:27:23.6723979-06:00","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestGKE"}
+{"Time":"2026-11-21T10:27:23.6723979-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Output":"=== RUN   TestGKE\n"}
+{"Time":"2026-11-21T10:27:23.6741502-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Output":"    gke_test.go:18: se omite: TestGKE es lenta o cara; exporta TEST_ALLOW_EXPENSIVE=true para correrla (ver tests/README.md)\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Output":"--- SKIP: TestGKE (0.00s)\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"skip","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Elapsed":0}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestKMS"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"=== RUN   TestKMS\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"=== PAUSE TestKMS\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"pause","Package":"gcp-datacenter/tests/integration","Test":"TestKMS"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestStorage"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"=== RUN   TestStorage\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"=== PAUSE TestStorage\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"pause","Package":"gcp-datacenter/tests/integration","Test":"TestStorage"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"cont","Package":"gcp-datacenter/tests/integration","Test":"TestKMS"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"=== CONT  TestKMS\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"cont","Package":"gcp-datacenter/tests/integration","Test":"TestStorage"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"=== CONT  TestStorage\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"    storage_test.go:17: se omite: faltan variables de entorno TERRATEST_BILLING_ACCOUNT (ver tests/README.md)\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Output":"--- SKIP: TestStorage (0.00s)\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"skip","Package":"gcp-datacenter/tests/integration","Test":"TestStorage","Elapsed":0}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"    kms_test.go:20: se omite: faltan variables de entorno TERRATEST_BILLING_ACCOUNT (ver tests/README.md)\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Output":"--- SKIP: TestKMS (0.00s)\n"}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"skip","Package":"gcp-datacenter/tests/integration","Test":"TestKMS","Elapsed":0}
+{"Time":"2026-11-21T10:27:23.6746665-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Output":"PASS\n"}
+{"Time":"2026-11-21T10:27:24.9483769-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Output":"ok  \tgcp-datacenter/tests/integration\t5.332s\n"}
+{"Time":"2026-11-21T10:27:24.9493777-06:00","Action":"pass","Package":"gcp-datacenter/tests/integration","Elapsed":5.694}
