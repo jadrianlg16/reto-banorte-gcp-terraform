@@ -45,10 +45,10 @@ En la etapa 4 (`stages/4-projects/envs/<env>/artifacts.tf`), por cada aplicació
   `artifactregistry.googleapis.com`; con el mismo criterio de modo que las altas
   (`..._ingress_policy` con el perímetro forzado, `..._dry_run_ingress_policy` en dry-run).
   `identities` admite cuentas de servicio, grupos e identidades de terceros individuales (no
-  `principalSet://`), según la descripción del esquema del proveedor 6.50.0. Esa regla solo
-  convive con el perímetro de la etapa 2 si este ignora sus `ingress_policies` y la regla de
-  las cuentas de etapa pasa a un recurso de política aparte: es un cambio pendiente en
-  `modules/vpc-sc` y `stages/2-security` (pendiente 53). Las imágenes se referencian con una
+  `principalSet://`), según la descripción del esquema del proveedor 6.50.0. Esa regla convive
+  con el perímetro de la etapa 2 porque este ignora sus `ingress_policies` y la regla de las
+  cuentas de etapa es un recurso de política aparte (`modules/vpc-sc`, ADR 0009); lo que falta
+  comprobar en el apply está en el pendiente 53. Las imágenes se referencian con una
   versión o un digest, nunca `latest`: con etiquetas inmutables una etiqueta publicada no se
   mueve.
 - **Política.** `google_binary_authorization_policy.this` con

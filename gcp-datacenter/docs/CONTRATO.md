@@ -411,7 +411,8 @@ Crea, en el proyecto `security`: por cada entorno y ubicación (`primary_region`
 y la multirregión `us` para buckets de doble región) un llavero, y en él una llave por uso;
 contenedores de secretos por entorno (sin valores, ADR 0015); política de acceso y perímetro
 de VPC-SC `prod` con el proyecto `security` dentro, regla de entrada para las cuentas de
-servicio del pipeline y modo dry-run por defecto (ADR 0009).
+servicio del pipeline (recurso de regla aparte; el perímetro ignora sus `ingress_policies`
+para no quitar las que agrega la etapa 4) y modo dry-run por defecto (ADR 0009).
 
 Usos de llave (llaves del mapa): `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`,
 `secrets`, `backup`, `run`, `artifacts`. En la multirregión `us` solo se crean `storage`,
@@ -531,7 +532,7 @@ los publicadores de `artifact_registry_publishers` (solo `serviceAccount:` y `gr
 política de Binary Authorization del proyecto que solo admite ese repositorio (ADR 0024); en
 prod, una regla de entrada del perímetro por aplicación con publicadores, limitada a
 `artifactregistry.googleapis.com` en su proyecto de servicio (normal o de dry-run según
-`vpc_sc_enforced`; requiere que el perímetro de la etapa 2 ignore sus `ingress_policies`); los permisos de la
+`vpc_sc_enforced`; el perímetro de la etapa 2 ignora sus `ingress_policies`, así que no las quita); los permisos de la
 cuenta de la etapa 5 sobre cada proyecto de servicio (`workloads_project_roles` y
 `projectIamAdmin` condicionado a `roles/cloudsql.client` y `roles/cloudsql.instanceUser`),
 `serviceAccountAdmin` solo sobre la cuenta `workload` (enlace de Workload Identity) y
@@ -628,7 +629,7 @@ que se pueda apagar en prod.
 | `memorystore` | Instancia de Redis | IP privada; CMEK; HA si prod | `project_id`, `region`, `tier`, `memory_gb`, `network`, `kms_key` | `host`, `port` |
 | `kms` | Llavero y llaves | Rotación de 90 días; `prevent_destroy` en las llaves | `project_id`, `location`, `keys` (map uso → opciones), `rotation_period` | `key_ids` (map), `keyring_id` |
 | `secrets` | Contenedores de secretos e IAM | Nunca recibe valores; CMEK | `project_id`, `names`, `kms_keys`, `accessors` | `secret_ids` (map) |
-| `vpc-sc` | Política de acceso (opcional), perímetro, reglas de entrada y salida | Perímetro para proyectos de prod con datos | `org_id`, `access_policy_id`, `perimeter_name`, `resources`, `restricted_services`, `ingress_identities`, `enforced` | `perimeter_name`, `access_policy_id`, `status_ingress_policies`, `spec_ingress_policies` |
+| `vpc-sc` | Política de acceso (opcional), perímetro (ignora sus proyectos y reglas de entrada, que entran por recursos aparte), regla de entrada del pipeline como recurso aparte, reglas de salida | Perímetro para proyectos de prod con datos | `org_id`, `access_policy_id`, `perimeter_name`, `resources`, `restricted_services`, `ingress_identities`, `enforced` | `perimeter_name`, `access_policy_id`, `status_ingress_policies`, `spec_ingress_policies` |
 | `observability` | Canales de notificación, verificaciones de disponibilidad, alertas, tableros, SLO | Alertas y tableros base; SLO 99.9 % | `project_id`, `notification_emails`, `uptime_checks`, `slo_target` | `notification_channel_ids`, `dashboard_ids` |
 | `log-export` | Bucket de logs y sink | Retención bloqueada (por variable) | `project_id`, `parent` (organización, carpeta o proyecto), `filter`, `retention_days`, `retention_locked`, `kms_key` | `bucket_name`, `writer_identity` |
 | `backup-dr` | Bóveda y plan de Backup and DR; plan de Backup for GKE | Política diaria; retención de 30 días; región secundaria | `project_id`, `region`, `dr_region`, `retention_days`, `gke_cluster_id` (opcional), `sql_log_retention_days` (7 por defecto) | `vault_id`, `plan_ids` |

@@ -1,7 +1,9 @@
 # Política de Access Context Manager (opcional), perímetro de VPC Service Controls y alta de
-# proyectos en él. La membresía de proyectos se maneja SIEMPRE con recursos separados
-# (..._service_perimeter_resource o ..._dry_run_resource), tanto la de este módulo como la
-# que agrega la etapa 4 (ADR 0009); el perímetro ignora sus listas de recursos.
+# proyectos en él. La membresía de proyectos y las reglas de entrada se manejan SIEMPRE con
+# recursos separados (..._service_perimeter_resource / ..._dry_run_resource y
+# ..._ingress_policy / ..._dry_run_ingress_policy), tanto las de este módulo como las que
+# agrega la etapa 4 (ADR 0009); el perímetro ignora sus listas de recursos y de reglas de
+# entrada. Las reglas de salida siguen en línea: nadie más las agrega.
 
 locals {
   create_policy    = var.access_policy_id == null
@@ -12,9 +14,12 @@ locals {
   # Configuración común: va en status (forzado) o en spec (dry-run), nunca en los dos.
   config = {
     restricted_services = sort(var.restricted_services)
-    ingress_identities  = sort(var.ingress_identities)
     egress_policies     = var.egress_policies
   }
+
+  # Regla de entrada de las cuentas del pipeline: una sola, en status (forzado) o en spec
+  # (dry-run), según el modo.
+  pipeline_ingress = length(var.ingress_identities) > 0 ? { pipeline = sort(var.ingress_identities) } : {}
 }
 
 # Solo puede haber una política de organización. Si ya existe, se pasa access_policy_id.
@@ -43,24 +48,7 @@ resource "google_access_context_manager_service_perimeter" "this" {
     content {
       restricted_services = status.value.restricted_services
 
-      # VERIFICAR-EN-APPLY: regla de entrada de las cuentas del pipeline (pendiente 5).
-      dynamic "ingress_policies" {
-        for_each = length(status.value.ingress_identities) > 0 ? [status.value.ingress_identities] : []
-        content {
-          ingress_from {
-            identities = ingress_policies.value
-            sources {
-              access_level = "*"
-            }
-          }
-          ingress_to {
-            resources = ["*"]
-            operations {
-              service_name = "*"
-            }
-          }
-        }
-      }
+      # Reglas de entrada: recursos aparte (abajo y en la etapa 4).
 
       dynamic "egress_policies" {
         for_each = status.value.egress_policies
@@ -95,23 +83,7 @@ resource "google_access_context_manager_service_perimeter" "this" {
     content {
       restricted_services = spec.value.restricted_services
 
-      dynamic "ingress_policies" {
-        for_each = length(spec.value.ingress_identities) > 0 ? [spec.value.ingress_identities] : []
-        content {
-          ingress_from {
-            identities = ingress_policies.value
-            sources {
-              access_level = "*"
-            }
-          }
-          ingress_to {
-            resources = ["*"]
-            operations {
-              service_name = "*"
-            }
-          }
-        }
-      }
+      # Reglas de entrada: recursos aparte (abajo y en la etapa 4).
 
       dynamic "egress_policies" {
         for_each = spec.value.egress_policies
@@ -142,20 +114,84 @@ resource "google_access_context_manager_service_perimeter" "this" {
   }
 
   lifecycle {
-    # Los proyectos entran por recursos separados (abajo y en la etapa 4). Sin esto, cada plan
-    # de esta raíz querría sacar los proyectos que agregó otra etapa (drift falso).
+    # Los proyectos y las reglas de entrada entran por recursos separados (abajo y en la
+    # etapa 4). Sin esto, cada apply de la raíz que llama al módulo quitaría los proyectos y
+    # las reglas de entrada que agregó otra etapa (la documentación del proveedor de los
+    # recursos ..._ingress_policy y ..._dry_run_ingress_policy exige este ignore_changes).
     ignore_changes = [
       status[0].resources,
       spec[0].resources,
+      status[0].ingress_policies,
+      spec[0].ingress_policies,
     ]
   }
 }
 
+# Regla de entrada de las cuentas del pipeline: desde cualquier origen (el pipeline corre fuera
+# de GCP), a todos los servicios y proyectos del perímetro. Forzado → status; dry-run → spec.
+# create_before_destroy: el proveedor quita y vuelve a agregar la regla al cambiarla; así la
+# nueva entra antes de quitar la vieja (recomendación de la documentación del proveedor).
+# VERIFICAR-EN-APPLY: regla de entrada de las cuentas del pipeline (pendiente 5).
+resource "google_access_context_manager_service_perimeter_ingress_policy" "pipeline" {
+  for_each = var.enforced ? local.pipeline_ingress : {}
+
+  perimeter = google_access_context_manager_service_perimeter.this.name
+  title     = "${local.short_name}-pipeline"
+
+  ingress_from {
+    identities = each.value
+    sources {
+      access_level = "*"
+    }
+  }
+
+  ingress_to {
+    resources = ["*"]
+    operations {
+      service_name = "*"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "google_access_context_manager_service_perimeter_dry_run_ingress_policy" "pipeline" {
+  for_each = var.enforced ? {} : local.pipeline_ingress
+
+  perimeter = google_access_context_manager_service_perimeter.this.name
+  title     = "${local.short_name}-pipeline"
+
+  ingress_from {
+    identities = each.value
+    sources {
+      access_level = "*"
+    }
+  }
+
+  ingress_to {
+    resources = ["*"]
+    operations {
+      service_name = "*"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Los proyectos entran DESPUÉS de la regla de entrada del pipeline (depends_on): el perímetro
+# recién creado no tiene proyectos y no restringe nada, así que no hay ventana en que el
+# pipeline quede fuera de un proyecto ya protegido.
 resource "google_access_context_manager_service_perimeter_resource" "this" {
   for_each = var.enforced ? toset(var.resources) : toset([])
 
   perimeter_name = google_access_context_manager_service_perimeter.this.name
   resource       = each.value
+
+  depends_on = [google_access_context_manager_service_perimeter_ingress_policy.pipeline]
 }
 
 resource "google_access_context_manager_service_perimeter_dry_run_resource" "this" {
@@ -163,4 +199,6 @@ resource "google_access_context_manager_service_perimeter_dry_run_resource" "thi
 
   perimeter_name = google_access_context_manager_service_perimeter.this.name
   resource       = each.value
+
+  depends_on = [google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline]
 }

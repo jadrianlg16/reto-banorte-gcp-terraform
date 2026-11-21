@@ -13,7 +13,7 @@ Llaves, secretos y perímetro de VPC Service Controls (§7.2 del contrato), todo
 | En `us`, solo `storage`, `backup` y `artifacts` (repositorios de Artifact Registry de la etapa 4, en la multirregión `us`) | `bnt-<env>-sec-<uso>` | `kms` |
 | Agente de Secret Manager del proyecto y su permiso `cryptoKeyEncrypterDecrypter` sobre las llaves `secrets` regionales | `service-<n>@gcp-sa-secretmanager.iam.gserviceaccount.com` | `google_project_service_identity`, `encrypter_decrypters` de `kms` |
 | Contenedores de secretos por entorno (sin valores, ADR 0015), replicados en las dos regiones con la llave `secrets` de cada región | `bnt-<env>-sec-<nombre>` | `secrets` |
-| Política de Access Context Manager (si `access_policy_id = null`) y perímetro de prod con el proyecto `security` dentro, regla de entrada para las cinco cuentas del pipeline, dry-run por defecto (ADR 0009) | `bnt_prod_sec_perimeter` | `vpc-sc` |
+| Política de Access Context Manager (si `access_policy_id = null`) y perímetro de prod con el proyecto `security` dentro, regla de entrada para las cinco cuentas del pipeline (recurso de regla aparte: el perímetro ignora sus reglas de entrada para no quitar las que agrega la etapa 4), dry-run por defecto (ADR 0009) | `bnt_prod_sec_perimeter` | `vpc-sc` |
 | Permiso para la etapa 4 sobre la política de acceso | ver abajo | `google_access_context_manager_access_policy_iam_member` |
 
 Rotación de todas las llaves: `key_rotation_period` (por defecto `7776000s`, 90 días; la
@@ -104,7 +104,7 @@ y 1-org con la forma de §7.0 y §7.1, y `command = plan`. Comprueba la forma de
 permiso del agente de Secret Manager, los secretos por entorno, el perímetro en dry-run, los
 servicios restringidos del ADR 0019, el permiso de 4-projects sobre la política de acceso (el override de 0-bootstrap no trae
 `kms_secret_iam_role_id`: la raíz ya no lo lee) y el perímetro forzado con una
-política existente (con la regla de entrada de las cinco cuentas en `status`); y que una rotación de más de 90 días y secretos de un entorno no pedido se
+política existente; la regla de entrada de las cinco cuentas, en `spec` (dry-run) y en `status` (forzado); y que una rotación de más de 90 días y secretos de un entorno no pedido se
 rechazan.
 
 <!-- BEGIN_TF_DOCS -->

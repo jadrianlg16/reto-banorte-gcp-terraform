@@ -153,6 +153,21 @@ run "plan_con_valores_de_ejemplo" {
     condition     = output.vpc_sc_enforced == false && module.vpc_sc.perimeter_short_name == "bnt_prod_sec_perimeter"
     error_message = "El perímetro de prod arranca en modo dry-run."
   }
+  # Dry-run: la regla de entrada de las cinco cuentas del pipeline existe (recurso de spec).
+  assert {
+    condition = alltrue([
+      length(module.vpc_sc.status_ingress_policies) == 0,
+      toset(module.vpc_sc.spec_ingress_policies[0].ingress_from[0].identities) == toset([
+        "serviceAccount:bnt-tf-1-org@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-2-security@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-3-networks@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-4-projects@bnt-bootstrap-seed.iam.gserviceaccount.com",
+        "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com",
+      ]),
+      module.vpc_sc.spec_ingress_policies[0].ingress_to[0].operations[0].service_name == "*",
+    ])
+    error_message = "En dry-run, la regla de entrada de las cuentas del pipeline debe existir (spec)."
+  }
   assert {
     condition = alltrue([
       !contains(var.vpc_sc_restricted_services, "cloudkms.googleapis.com"),
@@ -190,7 +205,7 @@ run "perimetro_forzado_con_politica_existente" {
     condition     = output.perimeter_name == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter"
     error_message = "El perímetro se crea en la política recibida."
   }
-  # Forzado: la regla de entrada de las cuentas del pipeline va en status (si faltara, forzar
+  # Forzado: la regla de entrada de las cuentas del pipeline existe como recurso de status (si faltara, forzar
   # el perímetro dejaría al pipeline fuera del proyecto security).
   assert {
     condition = alltrue([

@@ -68,7 +68,7 @@ VPC-SC del modo dry-run qué servicio se bloqueó y agregar la regla de entrada 
 
 **5. Regla de entrada del perímetro para las cuentas del pipeline.**
 Qué: que las cinco cuentas `<prefix>-tf-<etapa>` sigan operando dentro del perímetro forzado.
-Dónde: `modules/vpc-sc/main.tf:46`; `stages/2-security` (`ingress_identities`).
+Dónde: `modules/vpc-sc/main.tf:134`; `stages/2-security` (`ingress_identities`).
 Si falla: volver a `vpc_sc_enforced = false` (aplicar 2-security y luego 4-projects de prod),
 leer las violaciones registradas y ajustar la regla.
 
@@ -504,11 +504,13 @@ Qué: que una identidad de `artifact_registry_publishers` haga `docker push` al 
 aplicación (writer sobre el repositorio) y, en prod, que la regla de entrada
 `<prefix>-prod-<app>-artifact-push` (solo `artifactregistry.googleapis.com`, solo el proyecto de
 servicio) lo deje pasar con el perímetro forzado y lo registre en dry-run; que un `group:` se
-acepte en `identities` (VPC-SC documenta límites para grupos en reglas de entrada). **Bloqueado
-por un cambio fuera de la etapa 4**: el perímetro de 2-security debe ignorar sus
-`ingress_policies` (`lifecycle` del módulo `vpc-sc`) y su regla de las cuentas de etapa debe
-pasar a un recurso `..._ingress_policy` aparte; sin eso, el apply siguiente de 2-security quita
-la regla de los publicadores.
+acepte en `identities` (VPC-SC documenta límites para grupos en reglas de entrada). El bloqueo
+anterior está resuelto en el código: el perímetro del módulo `vpc-sc` ignora sus
+`ingress_policies` (`status` y `spec`) y la regla de las cuentas de etapa es un recurso
+`..._ingress_policy` / `..._dry_run_ingress_policy` aparte, así que el apply de 2-security ya
+no quita la regla de los publicadores. Falta comprobar en el apply que las reglas de las dos
+etapas convivan en el mismo perímetro (cada recurso modifica la lista con el etag del
+perímetro).
 Dónde: `stages/4-projects/envs/*/vpc_sc.tf:53`, `stages/4-projects/envs/*/artifacts.tf`
 (`writer`).
 Si falla: sin indicación en el código; con un grupo rechazado, usar cuentas de servicio.
@@ -660,8 +662,8 @@ indicación".
 | `secrets/main.tf:21` | Agente de Secret Manager con permiso sobre las llaves antes de crear los secretos | Lo da la etapa que llama al módulo (etapa 2) |
 | `storage/main.tf:86` | Agente de Cloud Storage con permiso sobre la llave; llave de `us` para un bucket con `custom_placement_config` | Sin indicación |
 | `storage/main.tf:89` | `gcp.resourceLocations` y la doble región (punto 3) | Ver punto 3 |
-| `vpc-sc/main.tf:37` | Perímetro en dry-run sin bloque `status`; paso a forzado en un solo plan | Sin indicación |
-| `vpc-sc/main.tf:46` | Regla de entrada del pipeline (punto 5) | Ver punto 5 |
+| `vpc-sc/main.tf:42` | Perímetro en dry-run sin bloque `status`; paso a forzado en un solo plan | Sin indicación |
+| `vpc-sc/main.tf:134` | Regla de entrada del pipeline (punto 5), como recurso aparte en dry-run y forzado | Ver punto 5 |
 
 ### Marcadores solo en README
 

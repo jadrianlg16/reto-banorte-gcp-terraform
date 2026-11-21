@@ -3,8 +3,8 @@
 Crea, si hace falta, la política de Access Context Manager de la organización
 (`access_policy_id = null`), un perímetro regular de VPC Service Controls con sus servicios
 restringidos, una regla de entrada para las cuentas de servicio del pipeline
-(`ingress_identities`), reglas de salida opcionales (`egress_policies`) y el alta de los
-proyectos de `resources` en el perímetro.
+(`ingress_identities`, como recurso aparte), reglas de salida opcionales (`egress_policies`) y
+el alta de los proyectos de `resources` en el perímetro.
 
 La especificación (sección "Componentes del datacenter", seguridad) pide un perímetro para
 los proyectos de prod que guardan datos. Por eso `restricted_services` debe incluir al menos
@@ -15,14 +15,16 @@ identidades de entrada y salida rechazan `user:`.
 
 `enforced` elige dónde vive la configuración (ADR 0009, dry-run por defecto):
 
-| `enforced` | Configuración | `use_explicit_dry_run_spec` | Alta de proyectos |
-|---|---|---|---|
-| `false` | `spec` (solo registra violaciones) | `true` | `google_access_context_manager_service_perimeter_dry_run_resource` |
-| `true` | `status` (bloquea) | `false` | `google_access_context_manager_service_perimeter_resource` |
+| `enforced` | Configuración | `use_explicit_dry_run_spec` | Alta de proyectos | Regla de entrada del pipeline |
+|---|---|---|---|---|
+| `false` | `spec` (solo registra violaciones) | `true` | `google_access_context_manager_service_perimeter_dry_run_resource` | `google_access_context_manager_service_perimeter_dry_run_ingress_policy` |
+| `true` | `status` (bloquea) | `false` | `google_access_context_manager_service_perimeter_resource` | `google_access_context_manager_service_perimeter_ingress_policy` |
 
-La salida `enforced` le dice a la etapa 4 cuál de los dos recursos usar.
+La salida `enforced` le dice a la etapa 4 cuál de los recursos usar. Las salidas
+`status_ingress_policies` y `spec_ingress_policies` muestran la regla de entrada que administra
+este módulo (construidas desde sus recursos; no incluyen las reglas de otras etapas).
 
-## Proyectos agregados desde otras etapas
+## Proyectos y reglas de entrada agregados desde otras etapas
 
 La etapa 2 crea el perímetro con el proyecto `security` dentro, y la etapa 4 agrega después
 los proyectos de prod, que no existen cuando corre la etapa 2. Para que esas altas externas
@@ -38,6 +40,23 @@ no aparezcan como drift en la etapa 2:
   `enforced`. Al pasar de dry-run a forzado, primero se aplica la etapa 2 y luego la etapa 4,
   que cambia sus altas de un recurso al otro; mientras tanto la etapa 4 muestra el cambio
   pendiente.
+
+Lo mismo con las reglas de entrada: la etapa 4 agrega reglas propias (publicadores de
+Artifact Registry) con `..._ingress_policy` / `..._dry_run_ingress_policy`. Si el perímetro
+declarara sus reglas en línea, el siguiente apply de la etapa 2 las quitaría. Por eso:
+
+- El perímetro tampoco declara `ingress_policies` y tiene en `ignore_changes`
+  `status[0].ingress_policies` y `spec[0].ingress_policies`, como exigen las páginas del
+  proveedor 6.x de esos dos recursos.
+- La regla de las cuentas del pipeline (`ingress_identities`) también es un recurso aparte, con
+  `create_before_destroy = true` (el proveedor la quita y la vuelve a agregar al cambiarla; así
+  la nueva entra antes de quitar la vieja).
+- Orden en la primera creación: perímetro (sin proyectos ni reglas) → regla de entrada del
+  pipeline → alta de proyectos (`depends_on`). Un perímetro sin proyectos no restringe nada, así
+  que no hay ventana en que el pipeline quede fuera de un proyecto ya protegido, ni siquiera
+  creándolo directamente en modo forzado.
+- Las reglas de salida (`egress_policies`) siguen en línea: ninguna otra etapa agrega reglas de
+  salida al perímetro.
 
 Nombre (§4.2 del contrato, adaptado): los perímetros no admiten guiones, así que el nombre
 corto por defecto es `<prefix>_<environment>_sec_perimeter`.
@@ -66,7 +85,9 @@ No modules.
 | ---- | ---- |
 | [google_access_context_manager_access_policy.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_access_policy) | resource |
 | [google_access_context_manager_service_perimeter.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter) | resource |
+| [google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_dry_run_ingress_policy) | resource |
 | [google_access_context_manager_service_perimeter_dry_run_resource.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_dry_run_resource) | resource |
+| [google_access_context_manager_service_perimeter_ingress_policy.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_ingress_policy) | resource |
 | [google_access_context_manager_service_perimeter_resource.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_resource) | resource |
 
 ## Inputs
@@ -93,6 +114,6 @@ No modules.
 | <a name="output_enforced"></a> [enforced](#output\_enforced) | true si el perímetro está forzado; false si está en dry-run. La etapa 4 lo usa para elegir el recurso de alta. |
 | <a name="output_perimeter_name"></a> [perimeter\_name](#output\_perimeter\_name) | Nombre completo del perímetro (accessPolicies/<política>/servicePerimeters/<nombre>), el que piden los recursos de alta de proyectos. |
 | <a name="output_perimeter_short_name"></a> [perimeter\_short\_name](#output\_perimeter\_short\_name) | Nombre corto del perímetro. |
-| <a name="output_spec_ingress_policies"></a> [spec\_ingress\_policies](#output\_spec\_ingress\_policies) | Reglas de entrada de la configuración dry-run (spec) del perímetro, tal como las lleva el recurso; lista vacía si está forzado. Para revisión y pruebas. |
-| <a name="output_status_ingress_policies"></a> [status\_ingress\_policies](#output\_status\_ingress\_policies) | Reglas de entrada de la configuración forzada (status) del perímetro, tal como las lleva el recurso; lista vacía en dry-run. Para revisión y pruebas. |
+| <a name="output_spec_ingress_policies"></a> [spec\_ingress\_policies](#output\_spec\_ingress\_policies) | Reglas de entrada dry-run (spec) que administra este módulo (recursos ...\_dry\_run\_ingress\_policy): lista de { title, ingress\_from, ingress\_to }; vacía si está forzado. No incluye las que agrega la etapa 4. Para revisión y pruebas. |
+| <a name="output_status_ingress_policies"></a> [status\_ingress\_policies](#output\_status\_ingress\_policies) | Reglas de entrada forzadas (status) que administra este módulo (recursos ...\_ingress\_policy): lista de { title, ingress\_from, ingress\_to }; vacía en dry-run. No incluye las que agrega la etapa 4. Para revisión y pruebas. |
 <!-- END_TF_DOCS -->

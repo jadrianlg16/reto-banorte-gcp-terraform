@@ -31,6 +31,16 @@ estén probadas.
   `google_access_context_manager_service_perimeter_resource` en forzado.
 - La etapa 4 de prod lee `perimeter_name` y `vpc_sc_enforced` de la etapa 2 y da de alta sus
   proyectos con el recurso que corresponda.
+- Las reglas de entrada siguen el mismo patrón: el perímetro no las declara y tiene también
+  `status[0].ingress_policies` y `spec[0].ingress_policies` en `ignore_changes` (lo exige la
+  documentación del proveedor de `google_access_context_manager_service_perimeter_ingress_policy`
+  y de su variante de dry-run). La regla de las cuentas del pipeline la crea el módulo con
+  `..._dry_run_ingress_policy` (dry-run) o `..._ingress_policy` (forzado), con
+  `create_before_destroy`, y la etapa 4 agrega las suyas (publicadores de Artifact Registry,
+  ADR 0024) sin que el apply de la etapa 2 las quite. Las altas de proyectos del módulo
+  dependen de la regla del pipeline: el perímetro nace vacío (no restringe nada), luego entra
+  la regla y después los proyectos, así que no hay ventana en que el pipeline quede fuera.
+  Las reglas de salida siguen en línea: ninguna otra etapa las agrega.
 
 ## Alternativas consideradas
 

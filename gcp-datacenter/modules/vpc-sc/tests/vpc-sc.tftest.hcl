@@ -40,8 +40,22 @@ run "dry_run_por_defecto" {
     error_message = "El perímetro debe ser regular."
   }
   assert {
-    condition     = contains(google_access_context_manager_service_perimeter.this.spec[0].ingress_policies[0].ingress_from[0].identities, "serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com")
-    error_message = "Falta la regla de entrada para las cuentas del pipeline."
+    # Dry-run: la regla de entrada del pipeline es un recurso aparte de spec, no un bloque en
+    # línea (el perímetro ignora sus ingress_policies para no quitar las de la etapa 4).
+    condition = alltrue([
+      length(google_access_context_manager_service_perimeter.this.spec[0].ingress_policies) == 0,
+      length(google_access_context_manager_service_perimeter_ingress_policy.pipeline) == 0,
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].perimeter == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter",
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_from[0].identities == tolist(["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]),
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_from[0].sources[0].access_level == "*",
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_to[0].resources == tolist(["*"]),
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_to[0].operations[0].service_name == "*",
+    ])
+    error_message = "Falta la regla de entrada (dry-run) para las cuentas del pipeline, como recurso aparte."
+  }
+  assert {
+    condition     = length(output.spec_ingress_policies) == 1 && length(output.status_ingress_policies) == 0
+    error_message = "Las salidas de reglas de entrada deben reflejar spec (dry-run) y status vacío."
   }
   assert {
     condition     = length(google_access_context_manager_service_perimeter_dry_run_resource.this) == 1 && length(google_access_context_manager_service_perimeter_resource.this) == 0
@@ -88,17 +102,19 @@ run "forzado" {
     condition     = length(google_access_context_manager_service_perimeter.this.status[0].egress_policies) == 1
     error_message = "Falta la regla de salida."
   }
-  # La regla de entrada de las cuentas del pipeline también va en status: sin ella, forzar el
-  # perímetro dejaría al pipeline fuera (pendiente 5).
+  # La regla de entrada de las cuentas del pipeline también existe en modo forzado (status),
+  # como recurso aparte: sin ella, forzar el perímetro dejaría al pipeline fuera (pendiente 5).
   assert {
     condition = alltrue([
-      length(google_access_context_manager_service_perimeter.this.status[0].ingress_policies) == 1,
-      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_from[0].identities == toset(["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]),
-      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_from[0].sources[0].access_level == "*",
-      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_to[0].resources == toset(["*"]),
-      google_access_context_manager_service_perimeter.this.status[0].ingress_policies[0].ingress_to[0].operations[0].service_name == "*",
+      length(google_access_context_manager_service_perimeter.this.status[0].ingress_policies) == 0,
+      length(google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline) == 0,
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].perimeter == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter",
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_from[0].identities == tolist(["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]),
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_from[0].sources[0].access_level == "*",
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_to[0].resources == tolist(["*"]),
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_to[0].operations[0].service_name == "*",
     ])
-    error_message = "Forzado: la regla de entrada de las cuentas del pipeline debe estar en status."
+    error_message = "Forzado: la regla de entrada de las cuentas del pipeline debe existir como recurso de status."
   }
   assert {
     condition     = length(output.status_ingress_policies) == 1 && length(output.spec_ingress_policies) == 0
@@ -111,6 +127,19 @@ run "forzado" {
   assert {
     condition     = output.enforced == true
     error_message = "La salida enforced debe reflejar el modo."
+  }
+}
+
+run "sin_identidades_no_hay_regla" {
+  command = plan
+
+  variables {
+    ingress_identities = []
+  }
+
+  assert {
+    condition     = length(google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline) == 0 && length(google_access_context_manager_service_perimeter_ingress_policy.pipeline) == 0
+    error_message = "Sin identidades no se crea regla de entrada."
   }
 }
 
