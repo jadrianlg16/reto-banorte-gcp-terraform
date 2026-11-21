@@ -73,13 +73,13 @@ esta etapa se asignan aquí (las cuentas se leen de `stage_service_accounts` de 
 | `2-security` | proyecto `security` | `roles/cloudkms.admin` | llaveros y llaves, y su IAM |
 | `2-security` | proyecto `security` | `organizations/<n>/roles/<prefix>TfSecretContainerAdmin` (rol personalizado de la etapa 0, salida `secret_container_admin_role_id`) | contenedores de secretos, sin `secretmanager.versions.access` ni `secrets.setIamPolicy`: el pipeline no lee valores de secretos (ADR 0015) |
 | `2-security` | proyecto `security` | `roles/serviceusage.serviceUsageAdmin` | crear el agente de Secret Manager (`google_project_service_identity`) |
-| `2-security` | proyecto `security` | `roles/resourcemanager.projectIamAdmin` **con condición**: solo puede asignar el rol personalizado `kms_secret_iam_role_id` de la etapa 0 | dar a 4-projects ese rol (IAM de llaves y secretos) |
 | `3-networks` | proyecto `net-hub` | `roles/compute.networkAdmin` | VPC hub, routers, HA VPN, peering |
 | `3-networks` | proyecto `net-hub` | `roles/compute.securityAdmin` | reglas y políticas de firewall de red |
 | `3-networks` | proyecto `net-hub` | `roles/dns.admin` | zonas de reenvío, política de servidor y peering de DNS desde los spokes |
 | `3-networks` | proyecto `net-hub` | `roles/serviceusage.serviceUsageAdmin` | habilitar APIs de red que falten |
 | `3-networks` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | crear `net-spoke` (queda como dueña) |
 | `3-networks` | carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | habilitar `net-spoke` como host de Shared VPC |
+| `4-projects` | proyecto `security` | `organizations/<n>/roles/<prefix>TfKmsSecretIamGranter` (rol personalizado de la etapa 0, salida `kms_secret_iam_role_id`) | dar a los agentes de servicio permiso sobre las llaves y `secretAccessor` a las cuentas de ejecución (§7.5), sin usar, administrar ni destruir llaves ni leer valores |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | proyectos de servicio |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | alta como servicio de Shared VPC y permisos de uso de subred |
 | `4-projects` | carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.tagAdmin` | dar `tagUser` sobre los valores de las etiquetas seguras del spoke (sus llaves viven en `net-spoke`, que crea 3-networks) |
@@ -91,24 +91,20 @@ ejemplo, reglas de firewall con `compute.securityAdmin`) y `iam.serviceAccountUs
 cualquier cuenta del entorno. Sus roles van sobre cada proyecto de servicio y los da
 `4-projects`, que crea esos proyectos y recibe la cuenta de 5-workloads como variable.
 
-Las asignaciones de `projectIamAdmin` usan una concesión delegada:
+La asignación de `projectIamAdmin` de 4-projects usa una concesión delegada:
 `api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`, así la cuenta
-solo puede agregar o quitar esos roles (en los proyectos de la carpeta, o en el proyecto
-`security`) (`VERIFICAR-EN-APPLY`; para el rol personalizado de 2-security, además, que
-`hasOnly` acepte el nombre completo `organizations/<n>/roles/<id>`, del que la documentación no
-da ejemplo). La condición limita los roles, no a quién se asignan: es un límite de Google.
+solo puede agregar o quitar esos roles en los proyectos de la carpeta (`VERIFICAR-EN-APPLY`).
+La condición limita los roles, no a quién se asignan: es un límite de Google.
 
-Residuales conocidos sobre secretos (la condición solo se admite en proyectos, carpetas y
-organizaciones, no en un secreto):
+Proyecto `security`: ninguna cuenta de etapa tiene `projectIamAdmin` ahí. El único rol de
+proyecto que hacía falta asignar en él (el de 4-projects) lo asigna esta etapa, que es dueña
+del proyecto; así `2-security` no puede darse a sí misma ese rol ni `secretAccessor`.
 
-- `2-security` puede asignarse a sí misma, en `security`, el rol personalizado de 4-projects
-  (que incluye `secretmanager.secrets.setIamPolicy`) y con él darse `secretAccessor` sobre un
-  secreto. Ya no puede leer valores directamente.
-- `4-projects` tiene `secretmanager.secrets.setIamPolicy` (lo necesita para dar
-  `secretAccessor` a las cuentas de ejecución) y podría darse `secretAccessor` a sí misma.
-
-Ambos cambios de IAM quedan en los registros de actividad administrativa del proyecto
-`security` y del sink de la organización.
+Residual conocido sobre secretos: `4-projects` tiene `secretmanager.secrets.setIamPolicy` (lo
+necesita para dar `secretAccessor` a las cuentas de ejecución) y podría darse `secretAccessor`
+a sí misma. No se puede limitar con una concesión delegada: Google solo la admite en
+proyectos, carpetas y organizaciones, no en un secreto. El cambio queda en los registros de
+actividad administrativa del proyecto `security` y del sink de la organización.
 
 ## Roles que necesita la cuenta de la etapa
 
@@ -144,8 +140,6 @@ retención con el área de cumplimiento.
   en el módulo `org`).
 - `iam.allowedPolicyMemberDomains` frente a los `principalSet://` de WIF y a los agentes de
   servicio de Google.
-- `modifiedGrantsByRole.hasOnly` con el nombre completo de un rol personalizado de
-  organización (projectIamAdmin de 2-security en `security`).
 - Proyecto de cuota aceptado por todas las APIs de la etapa.
 - Retención bloqueada y CMEK del bucket de logs (en el módulo `log-export`).
 
@@ -156,8 +150,8 @@ forma de §7.0 y `command = plan` con los valores de `terraform.tfvars.example`.
 salidas y nombres de §7.1, las nueve políticas, el sink único, las llaves de logging, Data
 Access en prod, SCC, el presupuesto, que los grupos solo tienen lectura, que `developers` solo
 está en dev y qa y los permisos de las cuentas de etapa (5-workloads sin ningún rol,
-projectIamAdmin de 4-projects y de 2-security con su condición exacta, 2-security sin
-`secretmanager.admin`), el almacenamiento del tema de SCC limitado a la región primaria; y
+projectIamAdmin de 4-projects con su condición exacta, 2-security sin `secretmanager.admin` ni
+`projectIamAdmin`, el rol personalizado de 4-projects sobre `security`), el almacenamiento del tema de SCC limitado a la región primaria; y
 que `groups` incompleto, una región
 de DR igual a la primaria y un `prefix` inválido se rechazan.
 

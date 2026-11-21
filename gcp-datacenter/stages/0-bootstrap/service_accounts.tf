@@ -207,7 +207,7 @@ module "stage_iam" {
 # proyecto security (§7.5: permisos de llaves a los agentes de servicio y de lectura de
 # secretos), sin poder administrar, usar ni destruir llaves o secretos. Lo crea esta etapa
 # porque crear roles de organización exige roles/iam.organizationRoleAdmin, que ninguna
-# cuenta de etapa tiene; la etapa 2 lo asigna sobre el proyecto security.
+# cuenta de etapa tiene; la etapa 1 (dueña del proyecto) lo asigna sobre el proyecto security.
 # VERIFICAR-EN-APPLY: que todos los permisos estén admitidos en roles personalizados.
 resource "google_organization_iam_custom_role" "kms_secret_iam_granter" {
   org_id      = var.org_id

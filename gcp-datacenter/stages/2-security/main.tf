@@ -117,18 +117,7 @@ resource "google_access_context_manager_access_policy_iam_member" "projects_stag
   member = "serviceAccount:${local.stage_service_accounts["4-projects"]}"
 }
 
-# 4-projects da a los agentes de servicio permiso sobre las llaves y lectura de secretos
-# (§7.5): rol personalizado de la etapa 0, solo IAM de llaves y secretos de este proyecto.
-module "iam" {
-  source = "../../modules/iam"
-
-  bindings = [
-    {
-      key      = "sa|4-projects|project:security|kms-secret-iam-granter"
-      scope    = "project"
-      resource = local.security_project_id
-      role     = local.kms_secret_iam_role_id
-      member   = "serviceAccount:${local.stage_service_accounts["4-projects"]}"
-    },
-  ]
-}
+# El rol personalizado de 4-projects sobre el proyecto security (IAM de llaves y secretos,
+# §7.5) ya no lo da esta etapa sino 1-org, dueña del proyecto: así la cuenta de 2-security no
+# tiene projectIamAdmin en security y no puede darse ese rol (ni secretAccessor) a sí misma.
+# Esta etapa no asigna nada a nivel de proyecto.

@@ -43,7 +43,7 @@ output "workload_identity_pool" {
 }
 
 output "kms_secret_iam_role_id" {
-  description = "Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 2 asigna a la cuenta de 4-projects sobre el proyecto security."
+  description = "Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 4-projects sobre el proyecto security."
   value       = google_organization_iam_custom_role.kms_secret_iam_granter.name
 }
 

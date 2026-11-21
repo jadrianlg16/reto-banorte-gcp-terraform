@@ -74,7 +74,7 @@ Storage (*managed folders*) por prefijo, cada una con su propio IAM sin condicio
 
 Los roles sobre carpetas y proyectos que todavía no existen cuando corre esta etapa (carpetas
 de entorno y proyectos de `common`) los asigna la etapa que los crea (`1-org`, ver su README);
-el rol sobre el proyecto `security` para `4-projects` lo asigna `2-security`. Esta etapa
+el rol sobre el proyecto `security` para `4-projects` también lo asigna `1-org`. Esta etapa
 asigna solo lo de nivel organización, facturación y proyecto semilla.
 
 Todas las cuentas reciben además, en el proyecto semilla,
@@ -153,7 +153,7 @@ Los crea esta etapa porque crear roles de organización exige
   (`cloudkms.cryptoKeys.{get,list,getIamPolicy,setIamPolicy}`, `cloudkms.keyRings.{get,list}`,
   `secretmanager.secrets.{get,list,getIamPolicy,setIamPolicy}`). Es lo que necesita
   `4-projects` para dar a los agentes de servicio permiso sobre las llaves y lectura de
-  secretos (§7.5) sin poder usar, administrar ni destruir llaves. La etapa `2-security` lo
+  secretos (§7.5) sin poder usar, administrar ni destruir llaves. La etapa `1-org` lo
   asigna sobre el proyecto `security` (salida `kms_secret_iam_role_id`).
 - `bntTfSecretContainerAdmin` crea, cambia y borra contenedores de secretos
   (`secretmanager.secrets.{create,delete,get,list,update}`, `secretmanager.locations.{get,list}`)
@@ -314,7 +314,7 @@ regional del estado y una doble región sin `primary_region`.
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_bootstrap_folder_id"></a> [bootstrap\_folder\_id](#output\_bootstrap\_folder\_id) | ID de la carpeta bootstrap ("folders/<número>"). |
-| <a name="output_kms_secret_iam_role_id"></a> [kms\_secret\_iam\_role\_id](#output\_kms\_secret\_iam\_role\_id) | Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 2 asigna a la cuenta de 4-projects sobre el proyecto security. |
+| <a name="output_kms_secret_iam_role_id"></a> [kms\_secret\_iam\_role\_id](#output\_kms\_secret\_iam\_role\_id) | Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 4-projects sobre el proyecto security. |
 | <a name="output_secret_container_admin_role_id"></a> [secret\_container\_admin\_role\_id](#output\_secret\_container\_admin\_role\_id) | Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 2-security sobre el proyecto security: administra contenedores de secretos sin leer sus valores. |
 | <a name="output_seed_project_id"></a> [seed\_project\_id](#output\_seed\_project\_id) | ID del proyecto semilla. |
 | <a name="output_seed_project_number"></a> [seed\_project\_number](#output\_seed\_project\_number) | Número del proyecto semilla. |

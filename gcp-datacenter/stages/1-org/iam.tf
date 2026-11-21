@@ -61,7 +61,8 @@ locals {
     "2-security" = {
       # KMS, contenedores de secretos (rol personalizado de la etapa 0, sin
       # secretmanager.versions.access: el pipeline no lee valores de secretos) y agente de
-      # Secret Manager. Su projectIamAdmin va condicionado (stage_delegated_security_iam).
+      # Secret Manager. Sin projectIamAdmin: no asigna ningún rol sobre el proyecto (el de
+      # 4-projects lo da esta etapa, abajo), así que no puede darse secretAccessor a sí misma.
       projects = {
         security = [
           "roles/cloudkms.admin",
@@ -84,7 +85,13 @@ locals {
       env_folder_roles = ["roles/compute.xpnAdmin", "roles/resourcemanager.projectCreator"]
     }
     "4-projects" = {
-      projects = {}
+      # Rol personalizado de la etapa 0 (IAM de llaves KMS y secretos, sin usarlas ni leer
+      # valores) sobre security: dar a los agentes de servicio permiso sobre las llaves y
+      # secretAccessor a las cuentas de ejecución (§7.5). Lo da 1-org, dueña del proyecto,
+      # y no 2-security: así ninguna cuenta de etapa necesita projectIamAdmin en security.
+      projects = {
+        security = [local.kms_secret_iam_role_id]
+      }
       # Proyectos de servicio, alta en Shared VPC y permisos de uso de subred. tagAdmin: dar
       # tagUser sobre los valores de las etiquetas seguras del spoke (las llaves viven en el
       # proyecto net-spoke, dentro de la carpeta del entorno).
@@ -113,15 +120,6 @@ locals {
       "roles/compute.networkViewer",
       "roles/container.hostServiceAgentUser",
     ]
-  }
-
-  # 2-security en el proyecto security: projectIamAdmin limitado al único rol que asigna ahí
-  # (el rol personalizado de 4-projects para el IAM de llaves y secretos). Sin la condición
-  # podría darse secretAccessor a sí misma.
-  # VERIFICAR-EN-APPLY: que hasOnly acepte el nombre completo de un rol personalizado de
-  # organización (organizations/<n>/roles/<id>); la documentación no da ejemplo.
-  stage_delegated_security_iam = {
-    "2-security" = [local.kms_secret_iam_role_id]
   }
 
   iam_bindings = concat(
@@ -197,20 +195,6 @@ locals {
         }
       ]
     ]),
-    [
-      for s, roles in local.stage_delegated_security_iam : {
-        key      = "sa|${s}|project:security|roles/resourcemanager.projectIamAdmin"
-        scope    = "project"
-        resource = module.common_project["security"].project_id
-        role     = "roles/resourcemanager.projectIamAdmin"
-        member   = "serviceAccount:${local.stage_service_accounts[s]}"
-        condition = {
-          title       = "solo-${replace(s, "-", "")}-roles"
-          description = "Solo asignar ${join(", ", roles)} (concesión delegada)."
-          expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in roles : "'${r}'"])}])"
-        }
-      }
-    ],
   )
 }
 

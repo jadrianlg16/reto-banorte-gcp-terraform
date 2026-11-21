@@ -18,7 +18,7 @@ override_data {
       seed_project_id     = "bnt-bootstrap-seed"
       bootstrap_folder_id = "folders/100000000000"
       state_bucket        = "bnt-bootstrap-ops-tfstate"
-      state_kms_key_id    = "projects/bnt-bootstrap-seed/locations/us-central1/keyRings/bnt-bootstrap-sec-keyring-usc1/cryptoKeys/bnt-bootstrap-sec-state"
+      state_kms_key_id    = "projects/bnt-bootstrap-seed/locations/us/keyRings/bnt-bootstrap-sec-keyring-us/cryptoKeys/bnt-bootstrap-sec-state"
       stage_service_accounts = {
         "1-org"       = "bnt-tf-1-org@bnt-bootstrap-seed.iam.gserviceaccount.com"
         "2-security"  = "bnt-tf-2-security@bnt-bootstrap-seed.iam.gserviceaccount.com"
@@ -27,7 +27,9 @@ override_data {
         "5-workloads" = "bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
       }
       workload_identity_provider = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/providers/bnt-bootstrap-sec-github"
-      kms_secret_iam_role_id     = "organizations/000000000000/roles/bntTfKmsSecretIamGranter"
+      # Sin kms_secret_iam_role_id a propósito (0-bootstrap sí lo exporta): 2-security ya no
+      # asigna el rol de 4-projects sobre security (lo hace 1-org). Si la raíz volviera a
+      # leerlo para asignarlo, el plan fallaría con "Unsupported attribute".
     }
   }
 }
@@ -165,10 +167,9 @@ run "plan_con_valores_de_ejemplo" {
     condition     = google_access_context_manager_access_policy_iam_member.projects_stage.member == "serviceAccount:bnt-tf-4-projects@bnt-bootstrap-seed.iam.gserviceaccount.com"
     error_message = "4-projects debe poder editar la política de acceso (alta de proyectos de prod)."
   }
-  assert {
-    condition     = module.iam.bindings["sa|4-projects|project:security|kms-secret-iam-granter"].role == "organizations/000000000000/roles/bntTfKmsSecretIamGranter"
-    error_message = "4-projects recibe el rol personalizado de la etapa 0 sobre el proyecto security."
-  }
+  # El rol personalizado de 4-projects sobre security lo asigna 1-org (su prueba lo comprueba);
+  # aquí no hay ninguna asignación de IAM de proyecto: el override del estado de 0-bootstrap no
+  # trae kms_secret_iam_role_id, así que volver a leerlo aquí hace fallar el plan.
 }
 
 run "perimetro_forzado_con_politica_existente" {

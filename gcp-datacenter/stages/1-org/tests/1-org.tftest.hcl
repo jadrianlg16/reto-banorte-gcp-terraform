@@ -222,8 +222,8 @@ run "plan_con_valores_de_ejemplo" {
     error_message = "projectIamAdmin condicionado en carpetas: solo 4-projects en dev, qa y prod (3 asignaciones)."
   }
 
-  # 2-security: sin secretmanager.admin (incluye versions.access) y con projectIamAdmin
-  # condicionado en el proyecto security al único rol que asigna ahí.
+  # 2-security: sin secretmanager.admin (incluye versions.access) y sin projectIamAdmin en
+  # ningún ámbito; el rol de IAM de llaves y secretos de 4-projects lo da 1-org.
   assert {
     condition = alltrue([
       module.iam.bindings["sa|2-security|project:security|organizations/000000000000/roles/bntTfSecretContainerAdmin"].resource == "bnt-common-security",
@@ -233,11 +233,22 @@ run "plan_con_valores_de_ejemplo" {
   }
   assert {
     condition = alltrue([
-      module.iam.bindings["sa|2-security|project:security|roles/resourcemanager.projectIamAdmin"].resource == "bnt-common-security",
-      module.iam.conditions["sa|2-security|project:security|roles/resourcemanager.projectIamAdmin"].expression == "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['organizations/000000000000/roles/bntTfKmsSecretIamGranter'])",
-      length([for b in local.iam_bindings : b if b.role == "roles/resourcemanager.projectIamAdmin" && b.condition == null]) == 0,
+      length([for b in values(module.iam.bindings) : b if b.role == "roles/resourcemanager.projectIamAdmin" && b.member == "serviceAccount:bnt-tf-2-security@bnt-bootstrap-seed.iam.gserviceaccount.com"]) == 0,
+      length([for b in local.iam_bindings : b if b.role == "roles/resourcemanager.projectIamAdmin" && try(b.condition, null) == null]) == 0,
     ])
-    error_message = "projectIamAdmin de 2-security en security debe quedar limitado al rol personalizado de 4-projects; ningún projectIamAdmin sin condición."
+    error_message = "2-security no recibe projectIamAdmin en ningún ámbito, y ningún projectIamAdmin va sin condición."
+  }
+  assert {
+    condition = alltrue([
+      module.iam.bindings["sa|4-projects|project:security|organizations/000000000000/roles/bntTfKmsSecretIamGranter"] == {
+        scope    = "project"
+        resource = "bnt-common-security"
+        role     = "organizations/000000000000/roles/bntTfKmsSecretIamGranter"
+        member   = "serviceAccount:bnt-tf-4-projects@bnt-bootstrap-seed.iam.gserviceaccount.com"
+      },
+      module.iam.conditions["sa|4-projects|project:security|organizations/000000000000/roles/bntTfKmsSecretIamGranter"] == null,
+    ])
+    error_message = "1-org asigna a 4-projects el rol personalizado de IAM de llaves y secretos sobre el proyecto security."
   }
 
   # Tema de SCC: llave regional, así que el almacenamiento se limita a su región y se impone

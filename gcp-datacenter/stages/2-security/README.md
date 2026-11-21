@@ -14,7 +14,7 @@ Llaves, secretos y perímetro de VPC Service Controls (§7.2 del contrato), todo
 | Agente de Secret Manager del proyecto y su permiso `cryptoKeyEncrypterDecrypter` sobre las llaves `secrets` regionales | `service-<n>@gcp-sa-secretmanager.iam.gserviceaccount.com` | `google_project_service_identity`, `encrypter_decrypters` de `kms` |
 | Contenedores de secretos por entorno (sin valores, ADR 0015), replicados en las dos regiones con la llave `secrets` de cada región | `bnt-<env>-sec-<nombre>` | `secrets` |
 | Política de Access Context Manager (si `access_policy_id = null`) y perímetro de prod con el proyecto `security` dentro, regla de entrada para las cinco cuentas del pipeline, dry-run por defecto (ADR 0009) | `bnt_prod_sec_perimeter` | `vpc-sc` |
-| Permisos para la etapa 4 | ver abajo | `iam`, `google_access_context_manager_access_policy_iam_member` |
+| Permiso para la etapa 4 sobre la política de acceso | ver abajo | `google_access_context_manager_access_policy_iam_member` |
 
 Rotación de todas las llaves: `key_rotation_period` (por defecto `7776000s`, 90 días; la
 validación rechaza más). Las llaves tienen `prevent_destroy` (módulo `kms`).
@@ -38,21 +38,21 @@ llaves. `storage.googleapis.com` es obligatorio (validación).
 | Cuenta | Ámbito | Rol | Motivo |
 |---|---|---|---|
 | `4-projects` | política de acceso | `roles/accesscontextmanager.policyEditor` | agregar los proyectos de prod al perímetro (§7.5) |
-| `4-projects` | proyecto `security` | rol personalizado `kms_secret_iam_role_id` de la etapa 0 | dar a los agentes de servicio permiso sobre las llaves y lectura de secretos (§7.5), sin poder administrar ni usar llaves |
 
-Este es el único rol que la etapa asigna sobre el proyecto `security`, y por eso su
-`projectIamAdmin` (lo da 1-org) está condicionado con
-`modifiedGrantsByRole.hasOnly(['<kms_secret_iam_role_id>'])`.
+El rol personalizado de 4-projects sobre el proyecto `security` (`kms_secret_iam_role_id`,
+IAM de llaves y secretos, §7.5) **no** lo da esta etapa sino `1-org`, dueña del proyecto: así
+la cuenta de 2-security no tiene `projectIamAdmin` en `security` y no puede darse ese rol ni
+`secretAccessor` a sí misma. Esta etapa no asigna nada a nivel de proyecto (el IAM de las
+llaves para el agente de Secret Manager es de cada llave y lo cubre `cloudkms.admin`).
 
 **Residual conocido (secretos).** El rol de 4-projects incluye
 `secretmanager.secrets.setIamPolicy`, que necesita para dar `secretAccessor` a las cuentas de
 ejecución; con él, 4-projects podría darse `secretAccessor` a sí misma sobre cualquier secreto
 y leer su valor. No se puede limitar con una condición de concesión delegada: Google solo la
-admite en proyectos, carpetas y organizaciones, no en un secreto. Del mismo modo, la condición
-limita roles y no miembros, así que esta etapa podría asignarse a sí misma ese rol en
-`security`. Ambos cambios quedan en los registros de actividad administrativa (sink de la
-organización). Mitigación posible fuera de este diseño: un proyecto de secretos por entorno o
-asignar `secretAccessor` desde una etapa sin acceso al pipeline de PR.
+admite en proyectos, carpetas y organizaciones, no en un secreto. El cambio queda en los
+registros de actividad administrativa (sink de la organización). Mitigación posible fuera de
+este diseño: un proyecto de secretos por entorno o asignar `secretAccessor` desde una etapa
+sin acceso al pipeline de PR.
 
 ## Roles que necesita la cuenta de la etapa
 
@@ -60,8 +60,7 @@ asignar `secretAccessor` desde una etapa sin acceso al pipeline de PR.
 `resourcemanager.organizationViewer` (etapa 0); en el proyecto `security`
 `cloudkms.admin`, el rol personalizado `secret_container_admin_role_id` de la etapa 0
 (contenedores de secretos sin `secretmanager.versions.access`: la cuenta no lee valores),
-`serviceusage.serviceUsageAdmin` y `resourcemanager.projectIamAdmin` **condicionado** a
-asignar solo el rol personalizado `kms_secret_iam_role_id` (etapa 1); en el proyecto semilla
+y `serviceusage.serviceUsageAdmin`, sin `projectIamAdmin` (etapa 1); en el proyecto semilla
 `serviceusage.serviceUsageConsumer`; en el bucket de estado, escritura de `2-security/` y
 lectura de `0-bootstrap/` y `1-org/`.
 
@@ -70,8 +69,7 @@ lectura de `0-bootstrap/` y `1-org/`.
 | Etapa | Salida | Tipo | Uso |
 |---|---|---|---|
 | `0-bootstrap` | `seed_project_id` | string | proyecto de cuota de los proveedores |
-| `0-bootstrap` | `stage_service_accounts` | map(string) | regla de entrada del perímetro y permisos de 4-projects |
-| `0-bootstrap` | `kms_secret_iam_role_id` | string | salida adicional de la etapa 0 (no está en la tabla de §7.0) |
+| `0-bootstrap` | `stage_service_accounts` | map(string) | regla de entrada del perímetro y permiso de 4-projects sobre la política de acceso |
 | `1-org` | `common_project_ids["security"]` | string | proyecto de llaves y secretos |
 | `1-org` | `common_project_numbers["security"]` | string | recurso del perímetro y agente de Secret Manager |
 
@@ -104,7 +102,8 @@ pasa su número en `access_policy_id` (solo puede haber una por organización).
 y 1-org con la forma de §7.0 y §7.1, y `command = plan`. Comprueba la forma de
 `kms_key_ids[entorno][ubicación][uso]` (diez usos en las regiones, tres en `us`, con la llave `artifacts`), nombres, el
 permiso del agente de Secret Manager, los secretos por entorno, el perímetro en dry-run, los
-servicios restringidos del ADR 0019, los permisos de 4-projects y el perímetro forzado con una
+servicios restringidos del ADR 0019, el permiso de 4-projects sobre la política de acceso (el override de 0-bootstrap no trae
+`kms_secret_iam_role_id`: la raíz ya no lo lee) y el perímetro forzado con una
 política existente (con la regla de entrada de las cinco cuentas en `status`); y que una rotación de más de 90 días y secretos de un entorno no pedido se
 rechazan.
 
@@ -129,7 +128,6 @@ rechazan.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
-| <a name="module_iam"></a> [iam](#module\_iam) | ../../modules/iam | n/a |
 | <a name="module_kms"></a> [kms](#module\_kms) | ../../modules/kms | n/a |
 | <a name="module_secrets"></a> [secrets](#module\_secrets) | ../../modules/secrets | n/a |
 | <a name="module_vpc_sc"></a> [vpc\_sc](#module\_vpc\_sc) | ../../modules/vpc-sc | n/a |

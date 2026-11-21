@@ -19,8 +19,6 @@ data "terraform_remote_state" "org" {
 locals {
   seed_project_id        = data.terraform_remote_state.bootstrap.outputs.seed_project_id
   stage_service_accounts = data.terraform_remote_state.bootstrap.outputs.stage_service_accounts
-  # Salida adicional de 0-bootstrap (no está en la tabla de §7.0): rol personalizado para 4-projects.
-  kms_secret_iam_role_id = data.terraform_remote_state.bootstrap.outputs.kms_secret_iam_role_id
 
   security_project_id     = data.terraform_remote_state.org.outputs.common_project_ids["security"]
   security_project_number = data.terraform_remote_state.org.outputs.common_project_numbers["security"]
