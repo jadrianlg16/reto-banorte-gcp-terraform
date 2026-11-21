@@ -1,0 +1,156 @@
+# Flujo reutilizable: plan, Conftest y apply de una sola raíz de etapa (CONTRATO §9.3).
+#
+# Lo llama apply.yml una vez por raíz. Pasos: autenticación por Workload Identity Federation
+# con la cuenta de servicio de la etapa (sin llaves), terraform init con el bucket de estado,
+# plan guardado (-out), Conftest sobre el plan en JSON (policies/) y apply de ese mismo plan.
+# Si el plan no tiene cambios, no se aplica nada.
+#
+# Usa las mismas variables de repositorio que pr.yml (ver docs/pipeline.md):
+#   GCP_ENABLED, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_STAGE_SERVICE_ACCOUNTS,
+#   GCP_STATE_BUCKET, GCP_TFVARS_JSON.
+#
+# El trabajo se liga al entorno de GitHub que recibe en `environment`. Las reglas de
+# protección del entorno (por ejemplo, los dos revisores de `prod`) se configuran en GitHub,
+# no aquí, y se cumplen antes de que el trabajo empiece.
+
+name: _terraform-root
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: Raíz relativa a gcp-datacenter/, por ejemplo stages/3-networks/envs/dev.
+        type: string
+        required: true
+      stage:
+        description: Llave de la etapa en GCP_STAGE_SERVICE_ACCOUNTS (1-org … 5-workloads).
+        type: string
+        required: true
+      environment:
+        description: Entorno de GitHub del trabajo (common, dev, qa o prod).
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.16.5"
+  CONFTEST_VERSION: "0.71.1"
+  TF_IN_AUTOMATION: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: gcp-datacenter
+
+jobs:
+  apply:
+    name: apply ${{ inputs.root }}
+    # Defensa adicional: apply.yml ya omite la llamada si GCP_ENABLED no es "true" o si la
+    # ejecución no es de main.
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ROOT: ${{ inputs.root }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Instalar conftest
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          file="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep "  ${file}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${file}" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          conftest --version
+
+      - name: Autenticar con Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[inputs.stage] }}
+
+      - name: Variables de la raíz
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: |
+          cd "${ROOT}"
+          if [ -f terraform.tfvars.example ]; then
+            cp terraform.tfvars.example terraform.tfvars
+          fi
+          # Los *.auto.tfvars.json se cargan después de terraform.tfvars y lo sobrescriben.
+          printf '%s' "${TFVARS_JSON:-"{}"}" |
+            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          cd "${ROOT}"
+          terraform init -input=false -no-color -backend-config="bucket=${STATE_BUCKET}"
+
+      - name: terraform plan
+        id: plan
+        run: |
+          cd "${ROOT}"
+          # -detailed-exitcode: 0 sin cambios, 1 error, 2 con cambios.
+          set +e
+          terraform plan -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          case "${code}" in
+            0) changes=false ;;
+            2) changes=true ;;
+            *) exit "${code}" ;;
+          esac
+          echo "changes=${changes}" >> "${GITHUB_OUTPUT}"
+          terraform show -json tfplan > plan.json
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Conftest sobre el plan
+        id: conftest
+        run: conftest test "${ROOT}/plan.json" --policy policies --no-color
+
+      - name: terraform apply del plan guardado
+        id: apply
+        if: steps.plan.outputs.changes == 'true'
+        run: |
+          cd "${ROOT}"
+          terraform apply -input=false -no-color -lock-timeout=5m tfplan
+
+      - name: Resumen de la raíz
+        if: always()
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          CHANGES: ${{ steps.plan.outputs.changes }}
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+        run: |
+          line=""
+          if [ -f "${ROOT}/plan.txt" ]; then
+            line="$(grep -E '^(Plan:|No changes\.)' "${ROOT}/plan.txt" | head -n 1 || true)"
+          fi
+          {
+            echo "### \`${ROOT}\`"
+            echo
+            echo "- Plan: ${PLAN_OUTCOME:-no corrió}${line:+ (${line})}"
+            echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
+            if [ "${CHANGES}" = "false" ]; then
+              echo "- Apply: sin cambios, no se aplicó"
+            else
+              echo "- Apply: ${APPLY_OUTCOME:-no corrió}"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

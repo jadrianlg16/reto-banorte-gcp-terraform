@@ -1,0 +1,224 @@
+# Despliegue de las etapas 1 → 5 al integrar en main (CONTRATO §9.3). Ver docs/pipeline.md.
+#
+# Orden (cada flecha espera a que el trabajo anterior termine con éxito):
+#   común:  1-org → 2-security → 3-networks (hub)
+#   dev:    3-networks/envs/dev → 4-projects/envs/dev → 5-workloads/envs/dev   (automático)
+#   qa:     mismo encadenado, después de que dev termine con éxito
+#   prod:   mismo encadenado, después de qa, en el entorno protegido de GitHub `prod`
+#
+# Los spokes (3-networks/envs/<env>) quedan en serie por el encadenado entre entornos: GCP no
+# admite dos operaciones de peering a la vez sobre la VPC hub.
+#
+# 0-bootstrap no está aquí: la aplica una persona administradora, una sola vez y a mano
+# (no tiene cuenta de servicio de pipeline, CONTRATO §6.1).
+#
+# Entorno `prod`: el equipo debe configurar en GitHub (Settings → Environments → prod) la
+# regla "Required reviewers" con dos revisores. Eso no se puede declarar en YAML; sin esa
+# regla, prod se aplicaría sin aprobación. Cada una de las tres raíces de prod pide su propia
+# aprobación antes de empezar.
+#
+# Sin GCP: mientras la variable de repositorio GCP_ENABLED no sea "true", todos los trabajos
+# de Terraform se omiten y el flujo termina en verde. Una ejecución manual desde otra rama
+# tampoco aplica nada: los trabajos exigen github.ref == refs/heads/main (la condición de WIF
+# no filtra por rama, ver docs/pipeline.md). Autenticación solo por Workload Identity
+# Federation; no hay llaves en ningún lado.
+
+name: apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gcp-datacenter/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Un solo apply a la vez en todo el repositorio. No se cancela uno en curso: el siguiente
+# queda en espera (GitHub conserva solo el más reciente en espera).
+concurrency:
+  group: apply-gcp-datacenter
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: GCP habilitado
+    runs-on: ubuntu-latest
+    steps:
+      - name: Estado de GCP_ENABLED y de la rama
+        env:
+          GCP_ENABLED: ${{ vars.GCP_ENABLED }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "${GCP_ENABLED}" != "true" ]; then
+            echo "::notice::GCP_ENABLED no es \"true\": no se aplica nada en GCP."
+          elif [ "${REF}" != "refs/heads/main" ]; then
+            echo "::warning::apply solo corre desde main (ref actual: ${REF}): no se aplica nada."
+          else
+            echo "GCP_ENABLED=true en main: se aplican las etapas 1 a 5."
+          fi
+
+  # --- Raíces comunes -------------------------------------------------------------------
+
+  org:
+    name: 1-org
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: gate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/1-org
+      stage: 1-org
+      environment: common
+
+  security:
+    name: 2-security
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: org
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/2-security
+      stage: 2-security
+      environment: common
+
+  networks-hub:
+    name: 3-networks (hub)
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: security
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-networks
+      stage: 3-networks
+      environment: common
+
+  # --- dev (automático) -----------------------------------------------------------------
+
+  dev-networks:
+    name: dev / 3-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: networks-hub
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-networks/envs/dev
+      stage: 3-networks
+      environment: dev
+
+  dev-projects:
+    name: dev / 4-projects
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: dev-networks
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/4-projects/envs/dev
+      stage: 4-projects
+      environment: dev
+
+  dev-workloads:
+    name: dev / 5-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: dev-projects
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/5-workloads/envs/dev
+      stage: 5-workloads
+      environment: dev
+
+  # --- qa (después de dev) --------------------------------------------------------------
+
+  qa-networks:
+    name: qa / 3-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: dev-workloads
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-networks/envs/qa
+      stage: 3-networks
+      environment: qa
+
+  qa-projects:
+    name: qa / 4-projects
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: qa-networks
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/4-projects/envs/qa
+      stage: 4-projects
+      environment: qa
+
+  qa-workloads:
+    name: qa / 5-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: qa-projects
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/5-workloads/envs/qa
+      stage: 5-workloads
+      environment: qa
+
+  # --- prod (después de qa; entorno protegido `prod` con dos revisores) -----------------
+
+  prod-networks:
+    name: prod / 3-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: qa-workloads
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-networks/envs/prod
+      stage: 3-networks
+      environment: prod
+
+  prod-projects:
+    name: prod / 4-projects
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: prod-networks
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/4-projects/envs/prod
+      stage: 4-projects
+      environment: prod
+
+  prod-workloads:
+    name: prod / 5-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: prod-projects
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/5-workloads/envs/prod
+      stage: 5-workloads
+      environment: prod

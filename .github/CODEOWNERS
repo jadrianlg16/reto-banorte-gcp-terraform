@@ -1,0 +1,33 @@
+# Dueños de código por etapa (CONTRATO §9.3).
+#
+# IMPORTANTE: @PENDIENTE-red, @PENDIENTE-seguridad y @PENDIENTE-plataforma son marcadores.
+# Hay que reemplazarlos por usuarios o equipos reales de GitHub (@usuario u @org/equipo, con
+# permiso de escritura en el repositorio) ANTES de activar la protección de rama de main con
+# "Require review from Code Owners". GitHub ignora a los dueños que no existen: con los
+# marcadores, ningún archivo tendría dueño válido y la regla no exigiría nada.
+#
+# Gana la última línea que coincide, así que la regla general va primero.
+
+# Plataforma: todo lo que no tenga dueño más específico abajo (incluye .github/ y el resto
+# de etapas y módulos).
+*                                                   @PENDIENTE-plataforma
+
+# Red: etapa 3 (hub y spokes) y módulos de red.
+/gcp-datacenter/stages/3-networks/                  @PENDIENTE-red
+/gcp-datacenter/modules/network-hub/                @PENDIENTE-red
+/gcp-datacenter/modules/network-spoke/              @PENDIENTE-red
+/gcp-datacenter/modules/firewall/                   @PENDIENTE-red
+/gcp-datacenter/modules/dns/                        @PENDIENTE-red
+/gcp-datacenter/modules/hybrid-connectivity/        @PENDIENTE-red
+/gcp-datacenter/modules/load-balancer/              @PENDIENTE-red
+/gcp-datacenter/modules/cloud-armor/                @PENDIENTE-red
+
+# Seguridad: etapas 1 y 2, políticas de Conftest y módulos de seguridad.
+/gcp-datacenter/stages/1-org/                       @PENDIENTE-seguridad
+/gcp-datacenter/stages/2-security/                  @PENDIENTE-seguridad
+/gcp-datacenter/policies/                           @PENDIENTE-seguridad
+/gcp-datacenter/modules/org/                        @PENDIENTE-seguridad
+/gcp-datacenter/modules/iam/                        @PENDIENTE-seguridad
+/gcp-datacenter/modules/kms/                        @PENDIENTE-seguridad
+/gcp-datacenter/modules/secrets/                    @PENDIENTE-seguridad
+/gcp-datacenter/modules/vpc-sc/                     @PENDIENTE-seguridad

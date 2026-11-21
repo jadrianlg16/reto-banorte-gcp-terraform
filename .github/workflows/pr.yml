@@ -1,7 +1,8 @@
 # Revisión de pull requests (CONTRATO §9.3).
 #
 # Sin GCP (siempre): fmt, validate, tflint, checkov y terraform test con scripts/check.sh;
-# conftest verify sobre policies/; terraform-docs al día.
+# scripts/policy-check.sh (conftest verify y planes de ejemplo de policies/); terraform-docs
+# al día.
 #
 # Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada,
 # Conftest sobre el plan y un comentario en el PR con el resumen y el costo (Infracost).
@@ -87,7 +88,7 @@ jobs:
         run: bash scripts/check.sh
 
   conftest:
-    name: conftest verify
+    name: conftest (pruebas y planes de ejemplo)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -104,13 +105,10 @@ jobs:
           sudo install -m 0755 conftest /usr/local/bin/conftest
           conftest --version
 
-      - name: conftest verify
-        run: |
-          if [ -z "$(find policies -name '*.rego' -type f 2>/dev/null | head -n 1)" ]; then
-            echo "policies/ todavía no tiene archivos .rego: no hay pruebas que verificar."
-            exit 0
-          fi
-          conftest verify --policy policies --no-color
+      # conftest verify y, por cada plan de ejemplo de policies/fixtures/, que pase o que lo
+      # rechace solo su regla (§9.1). Falla si faltan políticas o planes de ejemplo.
+      - name: scripts/policy-check.sh
+        run: bash scripts/policy-check.sh
 
   docs:
     name: terraform-docs al día

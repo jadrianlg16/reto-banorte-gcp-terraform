@@ -1,0 +1,188 @@
+# Detección diaria de drift (CONTRATO §9.3). Ver docs/pipeline.md.
+#
+# Por cada raíz de stages/ salvo 0-bootstrap: terraform plan -detailed-exitcode -lock=false
+# con la cuenta de servicio de la etapa (Workload Identity Federation, sin llaves).
+#   código 0  sin cambios: no hace nada.
+#   código 2  drift: abre una incidencia con la etiqueta `drift` para esa raíz o, si ya hay
+#             una abierta, actualiza su cuerpo y agrega un comentario.
+#   código 1  error: el trabajo falla.
+# -lock=false: el plan no escribe estado, así que no bloquea ni espera a un apply en curso.
+#
+# La incidencia lleva solo las direcciones de los recursos y la línea "Plan:", no el plan
+# completo: las incidencias de un repositorio público las ve cualquiera.
+#
+# Sin GCP: mientras GCP_ENABLED no sea "true", el flujo no hace nada y termina en verde.
+
+name: drift
+
+on:
+  schedule:
+    - cron: "17 12 * * *" # diario, 12:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-gcp-datacenter
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.16.5"
+  TF_IN_AUTOMATION: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: gcp-datacenter
+
+jobs:
+  roots:
+    name: raíces
+    if: vars.GCP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.roots.outputs.roots }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: roots
+        name: Listar raíces (sin 0-bootstrap)
+        run: |
+          # Misma definición de raíz que scripts/affected-roots.sh: directorio con versions.tf.
+          json="["
+          sep=""
+          while IFS= read -r r; do
+            stage="${r#stages/}"
+            stage="${stage%%/*}"
+            json="${json}${sep}{\"root\":\"${r}\",\"stage\":\"${stage}\"}"
+            sep=","
+          done < <(find stages -name versions.tf -type f -not -path '*/.terraform/*' |
+            sed 's#/versions\.tf$##' | LC_ALL=C sort | grep -v -E '^stages/0-bootstrap(/|$)')
+          json="${json}]"
+          echo "roots=${json}" | tee -a "${GITHUB_OUTPUT}"
+
+  plan:
+    name: drift ${{ matrix.root }}
+    if: vars.GCP_ENABLED == 'true' && needs.roots.outputs.roots != '[]'
+    needs: roots
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.roots.outputs.roots) }}
+    env:
+      ROOT: ${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Autenticar con Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[matrix.stage] }}
+
+      - name: Variables de la raíz
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: |
+          cd "${ROOT}"
+          if [ -f terraform.tfvars.example ]; then
+            cp terraform.tfvars.example terraform.tfvars
+          fi
+          printf '%s' "${TFVARS_JSON:-"{}"}" |
+            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          cd "${ROOT}"
+          terraform init -input=false -no-color -backend-config="bucket=${STATE_BUCKET}"
+
+      - name: terraform plan -detailed-exitcode
+        id: plan
+        run: |
+          cd "${ROOT}"
+          set +e
+          terraform plan -input=false -no-color -lock=false -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          case "${code}" in
+            0) echo "drift=false" >> "${GITHUB_OUTPUT}" ;;
+            2) echo "drift=true" >> "${GITHUB_OUTPUT}" ;;
+            *) exit "${code}" ;;
+          esac
+          summary="${RUNNER_TEMP}/drift-summary.md"
+          {
+            echo '```'
+            # Direcciones de recursos con cambios y la línea final del plan (máximo 200 líneas).
+            terraform show -no-color tfplan |
+              grep -E '^  # .* (will be|must be)|^Plan:|^Changes to Outputs' | head -n 200 || true
+            echo '```'
+          } > "${summary}"
+          echo "summary=${summary}" >> "${GITHUB_OUTPUT}"
+          cat "${summary}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Abrir o actualizar la incidencia de drift
+        if: steps.plan.outputs.drift == 'true'
+        uses: actions/github-script@v9
+        env:
+          SUMMARY_FILE: ${{ steps.plan.outputs.summary }}
+        with:
+          script: |
+            const fs = require('fs');
+            const root = process.env.ROOT;
+            const label = 'drift';
+            const title = `Drift: ${root}`;
+            const marker = `<!-- drift:${root} -->`;
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const summary = fs.readFileSync(process.env.SUMMARY_FILE, 'utf8');
+            const body = [
+              marker,
+              `La raíz \`${root}\` no coincide con su estado (plan con cambios).`,
+              '',
+              `Última detección: ${new Date().toISOString()} ([ejecución](${runUrl})).`,
+              '',
+              summary,
+              '',
+              'Ver el runbook de respuesta a drift en `gcp-datacenter/docs/runbooks/`.',
+            ].join('\n');
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: 'd93f0b',
+                description: 'La infraestructura no coincide con Terraform',
+              });
+            }
+
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: label, per_page: 100,
+            });
+            const existing = open.find(
+              (i) => !i.pull_request && ((i.body || '').startsWith(marker) || i.title === title),
+            );
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `El drift sigue presente (${runUrl}).`,
+              });
+              core.notice(`Incidencia #${existing.number} actualizada para ${root}.`);
+            } else {
+              const created = await github.rest.issues.create({ owner, repo, title, body, labels: [label] });
+              core.notice(`Incidencia #${created.data.number} abierta para ${root}.`);
+            }
