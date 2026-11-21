@@ -21,7 +21,7 @@ caracteres antes de llegar a la parte que la distingue.
   `stage_service_accounts` y las que usan §6.1 y el ADR 0007.
 - Cuentas de ejecución (etapa 4, en cada proyecto de servicio): `<prefix>-<env>-<app>-<uso>`,
   con `uso` en `gke_nodes`, `workload`, `mig` y `run` (los guiones bajos del uso se escriben con
-  guion en el ID, por verificar en la implementación de la etapa 4). Se omite el dominio porque
+  guion en el ID, como hace la etapa 4). Se omite el dominio porque
   el proyecto ya es el de la aplicación.
 - La etapa 4 valida la longitud del ID resultante, igual que `project-factory` valida los 30
   caracteres del ID de proyecto.

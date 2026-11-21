@@ -51,5 +51,5 @@ En ningún caso se concede `allUsers`.
   camino. La autenticación de usuarios, si se necesita, pasa a la aplicación.
 - Primer apply: que `invoker_iam_disabled = true` no choque con la política de organización y
   que `run.app` siga sin ser alcanzable desde internet (`VERIFICAR-EN-APPLY` en
-  `modules/cloud-run/main.tf`); sin entrada propia en §12, se propone agregarla a
+  `modules/cloud-run/main.tf`); está registrado en
   [`docs/pendientes-apply.md`](../pendientes-apply.md).
