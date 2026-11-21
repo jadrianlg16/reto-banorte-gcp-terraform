@@ -1,0 +1,25 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+org_id         = "000000000000"
+prefix         = "bnt"
+primary_region = "us-central1"
+dr_region      = "us-east4"
+environments   = ["dev", "qa", "prod"]
+state_bucket   = "bnt-bootstrap-ops-tfstate"
+
+# Solo nombres: los valores se cargan fuera de Terraform (ADR 0015).
+secret_names = {
+  dev  = ["app-api-token"]
+  qa   = ["app-api-token"]
+  prod = ["app-api-token"]
+}
+
+key_rotation_period = "7776000s"
+access_policy_id    = null
+vpc_sc_enforced     = false
+
+labels = {
+  app         = "landing-zone"
+  owner       = "seguridad"
+  cost_center = "ti-001"
+}

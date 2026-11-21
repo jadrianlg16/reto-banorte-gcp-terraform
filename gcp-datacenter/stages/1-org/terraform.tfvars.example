@@ -1,0 +1,30 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+org_id                = "000000000000"
+billing_account       = "000000-000000-000000"
+prefix                = "bnt"
+project_suffix        = ""
+primary_region        = "us-central1"
+dr_region             = "us-east4"
+directory_customer_id = "C00000000"
+state_bucket          = "bnt-bootstrap-ops-tfstate"
+
+groups = {
+  org_admins      = "gcp-org-admins@example.com"
+  billing_admins  = "gcp-billing-admins@example.com"
+  security_admins = "gcp-security-admins@example.com"
+  network_admins  = "gcp-network-admins@example.com"
+  platform_devops = "gcp-platform-devops@example.com"
+  developers      = "gcp-developers@example.com"
+  auditors        = "gcp-auditors@example.com"
+}
+
+log_retention_days   = 365
+log_retention_locked = false
+budget_amount        = 1000
+
+labels = {
+  app         = "landing-zone"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}
