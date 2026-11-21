@@ -15,7 +15,12 @@ Con este módulo se expresan las zonas del contrato:
   `forwarding_path = "private"` para que el tráfico vaya por la VPN);
 - peering desde cada spoke hacia el hub para el dominio on-premises (`type = "peering"`);
 - `googleapis.com.` privada con el registro A `restricted` → 199.36.153.4/30 y el CNAME `*` →
-  `restricted.googleapis.com.` (los registros solo se admiten en zonas `private`).
+  `restricted.googleapis.com.`, y `gcr.io.`, `pkg.dev.` y `run.app.` privadas con el ápice →
+  VIP y el CNAME `*` → dominio (los registros solo se admiten en zonas `private`; `name = ""`
+  es el ápice).
+
+Las salidas `zones` (VPC adjuntas, red de peering y servidores de reenvío) y `records` se leen
+de los recursos creados, para que las pruebas de las raíces comprueben lo que de verdad se crea.
 
 `inbound_forwarder_ips`: GCP asigna las direcciones de reenvío entrante al aplicar la política
 (una por región con subred) y el proveedor no las expone en `google_dns_policy`; el módulo las lee
@@ -69,6 +74,8 @@ No modules.
 | ---- | ----------- |
 | <a name="output_inbound_forwarder_ips"></a> [inbound\_forwarder\_ips](#output\_inbound\_forwarder\_ips) | IP de reenvío entrante que on-premises usa para resolver las zonas de Cloud DNS (lista vacía sin reenvío entrante). Se conocen hasta el apply. |
 | <a name="output_policy_name"></a> [policy\_name](#output\_policy\_name) | Nombre de la política de servidor DNS, o null si no se creó. |
+| <a name="output_records"></a> [records](#output\_records) | Registros creados, leídos de los recursos: <zona>/<registro> → { name, type, rrdatas }. |
 | <a name="output_zone_domains"></a> [zone\_domains](#output\_zone\_domains) | Mapa llave de zones → dominio DNS. |
 | <a name="output_zone_names"></a> [zone\_names](#output\_zone\_names) | Mapa llave de zones → nombre de la zona administrada. |
+| <a name="output_zones"></a> [zones](#output\_zones) | Zonas creadas, leídas de los recursos: llave de zones → { name, dns\_name, networks (VPC con visibilidad, ordenadas), peer\_network (null si no es de peering), forwarding\_targets (IP, vacío si no es de reenvío) }. |
 <!-- END_TF_DOCS -->

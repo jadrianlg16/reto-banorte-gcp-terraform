@@ -69,9 +69,11 @@ resource "google_compute_vpn_tunnel" "this" {
   vpn_gateway           = google_compute_ha_vpn_gateway.this.id
   vpn_gateway_interface = each.value.vpn_gateway_interface
   ike_version           = 2
-  shared_secret         = var.shared_secret
-  router                = local.router_id
-  labels                = var.labels
+  # shared_secret fuerza el reemplazo del túnel: un secreto por túnel permite rotarlos de uno
+  # en uno (shared_secret_overrides) sin tirar las dos sesiones a la vez.
+  shared_secret = lookup(var.shared_secret_overrides, each.key, var.shared_secret)
+  router        = local.router_id
+  labels        = var.labels
 
   peer_external_gateway           = local.is_external ? google_compute_external_vpn_gateway.this[0].id : null
   peer_external_gateway_interface = local.is_external ? each.value.peer_external_interface : null

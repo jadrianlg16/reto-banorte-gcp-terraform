@@ -8,6 +8,8 @@
 #   red de cada spoke solo hacia las VM con la etiqueta segura lb_backend o iap_ssh. Un allow
 #   aquí dejaría sin efecto esas etiquetas.
 # - El tráfico interno (hub y spokes) y el de on-premises también se delega con goto_next.
+# - Con simulate_onprem = true, el reenvío de Cloud DNS (35.199.192.0/19, TCP/UDP 53) hacia
+#   la VPC onprem-sim se delega solo a esa VPC, que tiene su propia política de red.
 # - Lo demás lo deniega la regla por defecto del módulo (prioridad 65000, con registro).
 
 locals {
@@ -49,6 +51,23 @@ locals {
       layer4_configs = [{ ip_protocol = "all", ports = [] }]
     }
   }
+
+  # Solo con simulate_onprem = true: las consultas del reenvío de Cloud DNS (salen de
+  # 35.199.192.0/19) hacia el servidor DNS de prueba en onprem-sim. Se delegan solo para esa
+  # VPC (target_resources) y las permite su propia política de red (firewall_onprem_sim). El
+  # IAP ya lo delega delegate-iap para todas las VPC.
+  onprem_sim_network_url = var.simulate_onprem ? "https://www.googleapis.com/compute/v1/projects/${local.hub_project_id}/global/networks/${module.onprem_sim[0].network_name}" : null
+
+  org_firewall_rules_sim = { for k, r in {
+    delegate-dns-onprem-sim = {
+      description      = "Reenvío de Cloud DNS hacia el DNS de prueba de onprem-sim: lo decide la política de red de onprem-sim."
+      priority         = 1020
+      action           = "goto_next"
+      src_ip_ranges    = [local.cloud_dns_forwarding_range]
+      target_resources = [local.onprem_sim_network_url]
+      layer4_configs   = [{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }]
+    }
+  } : k => r if var.simulate_onprem }
 }
 
 # VERIFICAR-EN-APPLY: que el tráfico delegado con goto_next llegue a la política de red del
@@ -61,5 +80,40 @@ module "firewall_org" {
   environment = local.environment
   policy_type = "hierarchical"
   parent      = "organizations/${var.org_id}"
-  rules       = local.org_firewall_rules
+  rules       = merge(local.org_firewall_rules, local.org_firewall_rules_sim)
+}
+
+# Política de red de la VPC onprem-sim (solo con simulate_onprem = true): permite exactamente
+# lo que la organización le delega para probar el reenvío DNS, es decir, las consultas de
+# Cloud DNS (TCP y UDP 53 desde 35.199.192.0/19) y el SSH por IAP para administrar la VM DNS
+# de prueba. Lo demás lo deniega la regla por defecto del módulo.
+# VERIFICAR-EN-APPLY: que una VM DNS en onprem_dns_servers responda a una consulta de un
+# spoke (zona de peering → zona de reenvío del hub → VPN → onprem-sim) y que la respuesta
+# vuelva a 35.199.192.0/19 por la ruta que el hub anuncia por BGP.
+module "firewall_onprem_sim" {
+  source = "../../modules/firewall"
+  count  = var.simulate_onprem ? 1 : 0
+
+  prefix      = var.prefix
+  environment = local.environment
+  name_suffix = "onprem-sim"
+  policy_type = "network"
+  parent      = "projects/${local.hub_project_id}/global/networks/${module.onprem_sim[0].network_name}"
+
+  rules = {
+    allow-dns-forwarding = {
+      description    = "Consultas del reenvío de Cloud DNS hacia el servidor DNS de prueba."
+      priority       = 1000
+      action         = "allow"
+      src_ip_ranges  = [local.cloud_dns_forwarding_range]
+      layer4_configs = [{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }]
+    }
+    allow-iap-ssh = {
+      description    = "SSH por Identity-Aware Proxy para administrar la VM DNS de prueba."
+      priority       = 1010
+      action         = "allow"
+      src_ip_ranges  = [local.iap_range]
+      layer4_configs = [{ ip_protocol = "tcp", ports = ["22"] }]
+    }
+  }
 }

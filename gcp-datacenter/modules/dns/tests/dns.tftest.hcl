@@ -78,6 +78,17 @@ run "zonas_del_spoke" {
     condition     = length(google_dns_policy.this) == 0 && length(output.inbound_forwarder_ips) == 0
     error_message = "Sin server_policy no se crea política ni hay IP de reenvío."
   }
+
+  assert {
+    condition = (
+      output.zones["onprem"].peer_network == "projects/example-net-hub/global/networks/bnt-common-net-hub" &&
+      output.zones["internal"].peer_network == null &&
+      jsonencode(output.zones["internal"].networks) == jsonencode(["projects/example-dev-net-spoke/global/networks/bnt-dev-net-spoke"]) &&
+      length(output.zones["internal"].forwarding_targets) == 0 &&
+      jsonencode(output.records["googleapis/wildcard"].rrdatas) == jsonencode(["restricted.googleapis.com."])
+    )
+    error_message = "Las salidas zones y records deben reflejar las zonas y registros creados."
+  }
 }
 
 run "hub_reenvio_y_politica" {
@@ -112,6 +123,11 @@ run "hub_reenvio_y_politica" {
   assert {
     condition     = length(data.google_compute_addresses.inbound_forwarders) == 1
     error_message = "Con reenvío entrante se leen las IP de reenvío."
+  }
+
+  assert {
+    condition     = jsonencode(output.zones["onprem"].forwarding_targets) == jsonencode(["192.168.0.10"]) && output.zones["onprem"].peer_network == null
+    error_message = "La salida zones debe mostrar los servidores de reenvío de la zona."
   }
 }
 

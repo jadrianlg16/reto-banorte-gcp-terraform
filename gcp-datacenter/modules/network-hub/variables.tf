@@ -80,6 +80,17 @@ variable "subnets" {
   }
 }
 
+variable "extra_router_regions" {
+  description = "Regiones donde se crea un Cloud Router aunque la VPC no tenga subred allí (por ejemplo, la región de DR de la VPC simulada de on-premises, que solo necesita el router para su HA VPN). Por defecto ninguna: un router por región con subred."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for r in var.extra_router_regions : contains(keys(var.region_short_names), r)])
+    error_message = "Cada región de extra_router_regions debe existir en region_short_names."
+  }
+}
+
 variable "router_asn" {
   description = "ASN privado de los Cloud Router del hub (hub_asn del plan de direccionamiento, por ejemplo 64514)."
   type        = number

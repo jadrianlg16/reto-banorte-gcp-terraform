@@ -12,15 +12,24 @@ La punta remota (`peer`) es un gateway externo (`type = "external"`, con 1 o 2 I
 HA VPN de otra VPC (`type = "gcp"`). Para el on-premises simulado (ADR 0006) la raíz llama dos
 veces al módulo, una por VPC, y cada instancia recibe el `gateway_self_link` de la otra; la
 punta simulada invierte las IP de cada /30 con `router_ip` y `peer_ip`. `connection_name` evita
-choques de nombres cuando las dos puntas viven en el mismo proyecto.
+choques de nombres cuando las dos puntas viven en el mismo proyecto. Los nombres de los
+recursos regionales llevan el código de la región; el gateway externo es global, así que dos
+conexiones al mismo on-premises en regiones distintas necesitan `connection_name` distintos.
 
 Secreto compartido: entra por `shared_secret`, variable `sensitive` sin valor por defecto y con
 longitud mínima de 32. Ninguna salida lo expone. Es la interfaz más simple que funciona con
 Terraform 1.9 (sin atributos de solo escritura): la raíz lo obtiene de
 `data "google_secret_manager_secret_version"` con on-premises real o de un `random_password`
 con on-premises simulado, y lo pasa a las dos puntas. En ambos casos el valor queda en el estado
-de Terraform, cifrado con la llave CMEK del bucket de estado (ADR 0006 y 0008); se usa un mismo
-secreto para los dos túneles.
+de Terraform, cifrado con la llave CMEK del bucket de estado (ADR 0006 y 0008). Por defecto
+los dos túneles usan el mismo secreto; `shared_secret_overrides` da a algunos túneles el suyo.
+En el proveedor `shared_secret` fuerza el reemplazo del túnel, así que esa variable permite
+rotar el secreto de un túnel a la vez sin tirar las dos sesiones.
+
+`peer.asn` admite ASN públicos de 2 y 4 bytes y privados (sin los reservados: 23456,
+64496-64511, 65535-131071); con `peer.type = "gcp"` el par es un Cloud Router y debe ser
+privado. La salida `bgp_peers` lee las sesiones creadas (rangos anunciados, IP, ASN y
+prioridad) de los recursos, para probarlas desde la raíz.
 
 Interconnect: en `DEDICATED` Google asigna las IP BGP del attachment y el módulo crea la
 interfaz y la sesión con ellas; en `PARTNER` la sesión la configura el proveedor y el módulo
@@ -77,12 +86,14 @@ No modules.
 | <a name="input_environment"></a> [environment](#input\_environment) | Entorno que se usa en los nombres. La conectividad híbrida vive en common (hub). | `string` | `"common"` | no |
 | <a name="input_interconnect_attachments"></a> [interconnect\_attachments](#input\_interconnect\_attachments) | VLAN attachments (solo con enable\_interconnect = true). type DEDICATED: interconnect (URL), y opcionales bandwidth, vlan\_tag y candidate\_subnets (/29 en 169.254.0.0/16); el módulo crea la interfaz y la sesión BGP. type PARTNER: edge\_availability\_domain; la sesión la configura el proveedor. | <pre>map(object({<br/>    type                     = optional(string, "DEDICATED")<br/>    interconnect             = optional(string)<br/>    edge_availability_domain = optional(string)<br/>    bandwidth                = optional(string)<br/>    vlan_tag                 = optional(number)<br/>    candidate_subnets        = optional(list(string), [])<br/>    mtu                      = optional(number, 1440)<br/>  }))</pre> | `{}` | no |
 | <a name="input_region_short_names"></a> [region\_short\_names](#input\_region\_short\_names) | Mapa región → código corto que se agrega a los nombres de recursos regionales. | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
+| <a name="input_shared_secret_overrides"></a> [shared\_secret\_overrides](#input\_shared\_secret\_overrides) | Secreto propio de algunos túneles: llave de bgp\_sessions → secreto. Los túneles sin entrada usan shared\_secret. Sirve para rotar el secreto de un túnel a la vez: cambiar el secreto reemplaza el túnel (shared\_secret fuerza el reemplazo en el proveedor), así que rotar los dos juntos tiraría la VPN completa. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_bgp_peer_names"></a> [bgp\_peer\_names](#output\_bgp\_peer\_names) | Mapa llave de bgp\_sessions → nombre de la sesión BGP del Cloud Router. |
+| <a name="output_bgp_peers"></a> [bgp\_peers](#output\_bgp\_peers) | Sesiones BGP creadas, leídas de los recursos: llave de bgp\_sessions → { name, router, ip\_address, peer\_ip\_address, peer\_asn, advertised\_route\_priority, advertise\_mode, advertised\_ip\_ranges }. |
 | <a name="output_external_gateway_self_link"></a> [external\_gateway\_self\_link](#output\_external\_gateway\_self\_link) | self\_link del gateway externo, o null con peer.type = gcp. |
 | <a name="output_gateway_ip_addresses"></a> [gateway\_ip\_addresses](#output\_gateway\_ip\_addresses) | IP externas de las interfaces del gateway HA VPN, en orden de interfaz (para configurar el equipo on-premises). Se conocen hasta el apply. |
 | <a name="output_gateway_self_link"></a> [gateway\_self\_link](#output\_gateway\_self\_link) | self\_link del gateway HA VPN (la otra punta lo usa como peer.gcp\_gateway\_self\_link en el modo simulado). |

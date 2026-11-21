@@ -168,12 +168,22 @@ variable "hub_asn" {
 }
 
 variable "onprem_asn" {
-  description = "ASN del router on-premises (plan: 65001). En modo simulado es el ASN del Cloud Router de la VPC onprem-sim."
+  description = "ASN del router on-premises (plan: 65001). Con on-premises real puede ser público (de 2 o 4 bytes) o privado. En modo simulado es el ASN del Cloud Router de la VPC onprem-sim y debe ser privado."
   type        = number
 
+  # Públicos de 2 bytes (1-64495 sin 23456, AS_TRANS), privados de 2 bytes (64512-65534),
+  # públicos de 4 bytes (131072-4199999999) y privados de 4 bytes (4200000000-4294967294).
   validation {
-    condition     = (var.onprem_asn >= 64512 && var.onprem_asn <= 65534) || (var.onprem_asn >= 4200000000 && var.onprem_asn <= 4294967294) || (var.onprem_asn >= 1 && var.onprem_asn <= 64495)
-    error_message = "onprem_asn debe ser un ASN válido (público 1-64495 o privado 64512-65534 / 4200000000-4294967294)."
+    condition = (
+      (var.onprem_asn >= 1 && var.onprem_asn <= 64495 && var.onprem_asn != 23456) ||
+      (var.onprem_asn >= 64512 && var.onprem_asn <= 65534) ||
+      (var.onprem_asn >= 131072 && var.onprem_asn <= 4294967294)
+    ) && floor(var.onprem_asn) == var.onprem_asn
+    error_message = "onprem_asn debe ser un ASN válido: público 1-64495 (sin 23456) o 131072-4199999999, o privado 64512-65534 o 4200000000-4294967294."
+  }
+  validation {
+    condition     = !var.simulate_onprem || (var.onprem_asn >= 64512 && var.onprem_asn <= 65534) || (var.onprem_asn >= 4200000000 && var.onprem_asn <= 4294967294)
+    error_message = "Con simulate_onprem = true, onprem_asn es el ASN del Cloud Router de onprem-sim y debe ser privado (64512-65534 o 4200000000-4294967294)."
   }
   validation {
     condition     = var.onprem_asn != var.hub_asn
@@ -190,6 +200,43 @@ variable "vpn_bgp_ranges" {
       for r in var.vpn_bgp_ranges : can(cidrhost(r, 0)) && try(tonumber(split("/", r)[1]) == 30, false) && try(cidrhost("${cidrhost(r, 0)}/16", 0) == "169.254.0.0", false)
     ])
     error_message = "vpn_bgp_ranges debe tener dos /30 distintos dentro de 169.254.0.0/16."
+  }
+}
+
+variable "enable_vpn_dr" {
+  description = "Crea la segunda HA VPN (dos túneles y BGP) en el Cloud Router del hub en dr_region, y con simulate_onprem = true su punta en onprem-sim. Sin ella, perder la región primaria deja a la región de DR sin camino a on-premises."
+  type        = bool
+  default     = true
+}
+
+variable "vpn_dr_bgp_ranges" {
+  description = "Dos /30 de 169.254.0.0/16 para las sesiones BGP de la VPN de DR, interfaz 0 y 1 (plan: 169.254.0.8/30 y 169.254.0.12/30). Distintos entre sí y de vpn_bgp_ranges."
+  type        = list(string)
+  default     = ["169.254.0.8/30", "169.254.0.12/30"]
+
+  validation {
+    condition = length(var.vpn_dr_bgp_ranges) == 2 && alltrue([
+      for r in var.vpn_dr_bgp_ranges : can(cidrhost(r, 0)) && try(tonumber(split("/", r)[1]) == 30, false) && try(cidrhost("${cidrhost(r, 0)}/16", 0) == "169.254.0.0", false)
+    ])
+    error_message = "vpn_dr_bgp_ranges debe tener dos /30 dentro de 169.254.0.0/16."
+  }
+  validation {
+    condition = try(
+      length(distinct([for r in concat(var.vpn_bgp_ranges, var.vpn_dr_bgp_ranges) : cidrhost(r, 0)])) == length(var.vpn_bgp_ranges) + length(var.vpn_dr_bgp_ranges),
+      true
+    )
+    error_message = "Los /30 de vpn_dr_bgp_ranges deben ser distintos entre sí y de los de vpn_bgp_ranges."
+  }
+}
+
+variable "vpn_dr_route_priority" {
+  description = "advertised_route_priority (MED) de las sesiones BGP de la VPN de DR. Mayor que el de la primaria (100) para que on-premises prefiera la primaria mientras exista."
+  type        = number
+  default     = 200
+
+  validation {
+    condition     = var.vpn_dr_route_priority > 100 && var.vpn_dr_route_priority <= 65535 && floor(var.vpn_dr_route_priority) == var.vpn_dr_route_priority
+    error_message = "vpn_dr_route_priority debe ser un entero mayor que 100 (la prioridad de la VPN primaria) y como máximo 65535."
   }
 }
 
@@ -251,13 +298,32 @@ variable "onprem_vpn_secret_id" {
 }
 
 variable "onprem_vpn_secret_version" {
-  description = "Versión del secreto onprem_vpn_secret_id que se usa (número o latest). Fijar un número evita que una rotación del secreto cambie los túneles sin un PR."
+  description = "Versión numérica del secreto onprem_vpn_secret_id que usan los túneles (obligatoria con simulate_onprem = false). No se admite latest: cambiar el secreto reemplaza los túneles, y una versión nueva en Secret Manager no debe cambiar la VPN sin un PR. Para rotar un túnel a la vez, ver onprem_vpn_secret_version_overrides."
   type        = string
-  default     = "latest"
+  default     = null
 
   validation {
-    condition     = can(regex("^([1-9][0-9]*|latest)$", var.onprem_vpn_secret_version))
-    error_message = "onprem_vpn_secret_version debe ser un número de versión o latest."
+    condition     = var.onprem_vpn_secret_version == null || can(regex("^[1-9][0-9]*$", var.onprem_vpn_secret_version))
+    error_message = "onprem_vpn_secret_version debe ser un número de versión (1, 2, …); latest no se admite."
+  }
+  validation {
+    condition     = var.simulate_onprem || var.onprem_vpn_secret_version != null
+    error_message = "Con simulate_onprem = false, onprem_vpn_secret_version es obligatoria."
+  }
+}
+
+variable "onprem_vpn_secret_version_overrides" {
+  description = "Versión del secreto propia de algunos túneles de la VPN real, para rotarlos de uno en uno: llave primary-if0, primary-if1, dr-if0 o dr-if1 → versión numérica. Los túneles sin entrada usan onprem_vpn_secret_version. Solo con simulate_onprem = false."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for k, v in var.onprem_vpn_secret_version_overrides : contains(["primary-if0", "primary-if1", "dr-if0", "dr-if1"], k) && can(regex("^[1-9][0-9]*$", v))])
+    error_message = "Las llaves de onprem_vpn_secret_version_overrides son primary-if0, primary-if1, dr-if0 o dr-if1, y cada valor es un número de versión."
+  }
+  validation {
+    condition     = !var.simulate_onprem || length(var.onprem_vpn_secret_version_overrides) == 0
+    error_message = "onprem_vpn_secret_version_overrides solo aplica con simulate_onprem = false."
   }
 }
 

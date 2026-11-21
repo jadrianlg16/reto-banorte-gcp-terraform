@@ -3,8 +3,9 @@ locals {
   name_base    = "${var.prefix}-${var.environment}-net"
   network_name = "${local.name_base}-${var.network_suffix}"
 
-  # Regiones distintas que usan las subredes: un Cloud Router por cada una.
-  regions = toset([for s in values(var.subnets) : s.region])
+  # Regiones distintas que usan las subredes, más las de extra_router_regions: un Cloud
+  # Router por cada una.
+  regions = toset(concat([for s in values(var.subnets) : s.region], var.extra_router_regions))
 
   # VIP de restricted.googleapis.com (Private Google Access con VPC Service Controls).
   restricted_vip = "199.36.153.4/30"

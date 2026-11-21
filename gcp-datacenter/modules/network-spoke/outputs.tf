@@ -61,3 +61,19 @@ output "nat_names" {
   description = "Mapa región → nombre del Cloud NAT."
   value       = { for k, n in google_compute_router_nat.this : local.active_regions[k] => n.name }
 }
+
+output "peerings" {
+  description = "Peerings con el hub, leídos de los recursos: spoke_to_hub y hub_to_spoke → { name, network, peer_network, import_custom_routes, export_custom_routes }. El spoke importa y no exporta; el hub exporta y no importa."
+  value = {
+    for k, p in {
+      spoke_to_hub = google_compute_network_peering.spoke_to_hub
+      hub_to_spoke = google_compute_network_peering.hub_to_spoke
+      } : k => {
+      name                 = p.name
+      network              = p.network
+      peer_network         = p.peer_network
+      import_custom_routes = p.import_custom_routes
+      export_custom_routes = p.export_custom_routes
+    }
+  }
+}

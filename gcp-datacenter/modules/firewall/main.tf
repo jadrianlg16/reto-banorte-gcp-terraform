@@ -2,8 +2,8 @@ locals {
   is_hierarchical = var.policy_type == "hierarchical"
   is_network      = var.policy_type == "network"
 
-  # <empresa>-<entorno>-net-fw (convención de nombres del contrato).
-  name = "${var.prefix}-${var.environment}-net-fw"
+  # <empresa>-<entorno>-net-fw[-<name_suffix>] (convención de nombres del contrato).
+  name = var.name_suffix == "" ? "${var.prefix}-${var.environment}-net-fw" : "${var.prefix}-${var.environment}-net-fw-${var.name_suffix}"
 
   # Proyecto y nombre de la VPC cuando la política es de red.
   network_parts = local.is_network ? regex("projects/([^/]+)/global/networks/([^/]+)$", var.parent) : ["", ""]

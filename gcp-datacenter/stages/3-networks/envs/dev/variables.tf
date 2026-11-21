@@ -205,6 +205,42 @@ variable "lb_backend_ports" {
   }
 }
 
+variable "enable_filestore_nfs_lock_callbacks" {
+  description = "Permite la entrada desde el rango de Private Service Access (donde viven las instancias de Filestore) hacia las cargas en los puertos de filestore_nfs_lock_ports. Filestore llama de vuelta a los clientes para el bloqueo de archivos NFS (statd y nlockmgr); sin esta regla la denegación por defecto del spoke corta esas llamadas."
+  type        = bool
+  default     = true
+}
+
+variable "filestore_nfs_lock_ports" {
+  description = "Puertos de los clientes NFS a los que llama Filestore para el bloqueo de archivos: tcp = 111 (portmapper), el de statd (STATDOPTS) y el TCP de nlockmgr (nlm_tcpport); udp = el UDP de nlockmgr (nlm_udpport, niveles Zonal, Regional y Enterprise). Por defecto 2046 y 4045, los que usa la guía de Google para fijar esos puertos; deben coincidir con lo que se fije en las VM y nodos clientes."
+  type = object({
+    tcp = list(string)
+    udp = list(string)
+  })
+  default = {
+    tcp = ["111", "2046", "4045"]
+    udp = ["4045"]
+  }
+
+  validation {
+    condition = length(var.filestore_nfs_lock_ports.tcp) > 0 && alltrue([
+      for p in concat(var.filestore_nfs_lock_ports.tcp, var.filestore_nfs_lock_ports.udp) : can(regex("^[0-9]{1,5}(-[0-9]{1,5})?$", p))
+    ])
+    error_message = "filestore_nfs_lock_ports.tcp debe tener al menos un puerto, y todos deben ser puertos o rangos (por ejemplo 111 o 4045)."
+  }
+}
+
+variable "google_apis_vip" {
+  description = "VIP de Private Google Access al que resuelven las zonas privadas googleapis.com., gcr.io., pkg.dev. y run.app.: restricted (199.36.153.4/30, solo servicios compatibles con VPC Service Controls) o private (199.36.153.8/30, todos). Por defecto restricted en los tres entornos: prod tiene perímetro y dev/qa usan el mismo VIP para que una dependencia de una API sin soporte de VPC-SC falle antes de llegar a prod."
+  type        = string
+  default     = "restricted"
+
+  validation {
+    condition     = contains(["restricted", "private"], var.google_apis_vip)
+    error_message = "google_apis_vip debe ser restricted o private."
+  }
+}
+
 variable "project_deletion_policy" {
   description = "deletion_policy del proyecto net-spoke: PREVENT (por defecto), ABANDON o DELETE. El módulo project-factory solo admite PREVENT en prod; DELETE sirve para desmontar dev en la prueba de extremo a extremo."
   type        = string

@@ -18,6 +18,22 @@ output "bgp_peer_names" {
   value       = { for k, p in google_compute_router_peer.vpn : k => p.name }
 }
 
+output "bgp_peers" {
+  description = "Sesiones BGP creadas, leídas de los recursos: llave de bgp_sessions → { name, router, ip_address, peer_ip_address, peer_asn, advertised_route_priority, advertise_mode, advertised_ip_ranges }."
+  value = {
+    for k, p in google_compute_router_peer.vpn : k => {
+      name                      = p.name
+      router                    = p.router
+      ip_address                = p.ip_address
+      peer_ip_address           = p.peer_ip_address
+      peer_asn                  = p.peer_asn
+      advertised_route_priority = p.advertised_route_priority
+      advertise_mode            = p.advertise_mode
+      advertised_ip_ranges      = sort([for r in p.advertised_ip_ranges : r.range])
+    }
+  }
+}
+
 output "external_gateway_self_link" {
   description = "self_link del gateway externo, o null con peer.type = gcp."
   value       = local.is_external ? google_compute_external_vpn_gateway.this[0].self_link : null

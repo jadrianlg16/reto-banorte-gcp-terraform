@@ -18,6 +18,17 @@ variable "environment" {
   }
 }
 
+variable "name_suffix" {
+  description = "Sufijo opcional del nombre de la política y de las llaves de etiqueta: <prefix>-<environment>-net-fw-<name_suffix>. Vacío (por defecto): <prefix>-<environment>-net-fw. Sirve cuando un mismo proyecto tiene políticas de red de varias VPC (por ejemplo onprem-sim en net-hub)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.name_suffix == "" || can(regex("^[a-z][a-z0-9-]{0,18}[a-z0-9]$", var.name_suffix))
+    error_message = "name_suffix debe estar vacío o tener de 2 a 20 caracteres: minúsculas, dígitos y guiones."
+  }
+}
+
 variable "policy_type" {
   description = "Tipo de política: hierarchical (parent = organizations/<id> o folders/<id>) o network (política de firewall de red global; parent = la VPC). Se pide aparte de parent porque la VPC suele crearse en el mismo plan y su self_link no se conoce hasta el apply."
   type        = string

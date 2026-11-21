@@ -52,6 +52,30 @@ override_data {
   }
 }
 
+# Valores que el proveedor simulado no conoce en el plan y que las aserciones necesitan: los
+# ID de los valores de etiqueta (para comprobar a qué etiqueta apunta cada regla) y el ID de la
+# VPC spoke (para comprobar a qué VPC se adjuntan las zonas DNS).
+override_resource {
+  target          = module.firewall.google_tags_tag_value.this["lb_backend"]
+  override_during = plan
+  values          = { id = "tagValues/1000000000001" }
+}
+
+override_resource {
+  target          = module.firewall.google_tags_tag_value.this["iap_ssh"]
+  override_during = plan
+  values          = { id = "tagValues/1000000000002" }
+}
+
+override_resource {
+  target          = module.spoke.google_compute_network.this
+  override_during = plan
+  values = {
+    id        = "projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke"
+    self_link = "https://www.googleapis.com/compute/v1/projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke"
+  }
+}
+
 # Valores de terraform.tfvars.example de dev (X = 10).
 variables {
   billing_account = "000000-000000-000000"
@@ -172,6 +196,101 @@ run "spoke_dev_sin_dr" {
     condition     = module.project.shared_vpc_host_project == null && contains(module.project.enabled_apis, "servicenetworking.googleapis.com")
     error_message = "El proyecto debe ser host (no servicio) de Shared VPC y tener Service Networking."
   }
+
+  # Reglas leídas de los recursos de la política de red (salida rules del módulo firewall).
+  assert {
+    condition = (
+      jsonencode(output.firewall_policy_rules["allow-lb-health-checks"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["80", "443", "8080"] }]) &&
+      jsonencode(output.firewall_policy_rules["allow-proxy-to-backends"].target_secure_tags) == jsonencode(["lb_backend"]) &&
+      jsonencode(output.firewall_policy_rules["allow-iap-ssh"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["22"] }]) &&
+      length(output.firewall_policy_rules["allow-workload-internal"].target_secure_tags) == 0 &&
+      alltrue([for r in values(output.firewall_policy_rules) : r.action == "allow"])
+    )
+    error_message = "Las reglas creadas deben abrir solo lb_backend_ports hacia lb_backend y el 22 hacia iap_ssh."
+  }
+
+  # Filestore (rango psa) hacia los clientes NFS: portmapper, statd y nlockmgr.
+  assert {
+    condition = (
+      toset(output.firewall_policy_rules["allow-filestore-nfs-callbacks"].src_ip_ranges) == toset(["10.10.176.0/20"]) &&
+      jsonencode(output.firewall_policy_rules["allow-filestore-nfs-callbacks"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["111", "2046", "4045"] }, { ip_protocol = "udp", ports = ["4045"] }]) &&
+      length(output.firewall_policy_rules["allow-filestore-nfs-callbacks"].target_secure_tags) == 0 &&
+      output.firewall_policy_rules["allow-filestore-nfs-callbacks"].priority == 1050
+    )
+    error_message = "Debe existir la regla de llamadas de Filestore desde psa a los clientes NFS (TCP 111, 2046 y 4045; UDP 4045)."
+  }
+
+  assert {
+    condition     = jsonencode(output.lb_backend_ports) == jsonencode(["80", "443", "8080"])
+    error_message = "La salida lb_backend_ports debe publicar los puertos abiertos hacia lb_backend."
+  }
+
+  # Zonas leídas de los recursos de Cloud DNS.
+  assert {
+    condition = (
+      toset(module.dns.zones["env"].networks) == toset(["projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke", "https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-hub"]) &&
+      module.dns.zones["onprem"].peer_network == "https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-hub" &&
+      jsonencode(module.dns.zones["onprem"].networks) == jsonencode(["projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke"]) &&
+      module.dns.zones["googleapis"].peer_network == null
+    )
+    error_message = "La zona del entorno debe estar adjunta al spoke y al hub, y la de on-premises debe hacer peering con la VPC hub."
+  }
+
+  assert {
+    condition = (
+      module.dns.records["googleapis/vip"].name == "restricted.googleapis.com." &&
+      jsonencode(module.dns.records["googleapis/vip"].rrdatas) == jsonencode(["199.36.153.4", "199.36.153.5", "199.36.153.6", "199.36.153.7"]) &&
+      jsonencode(module.dns.records["googleapis/wildcard"].rrdatas) == jsonencode(["restricted.googleapis.com."])
+    )
+    error_message = "googleapis.com. debe resolver al VIP restringido por defecto."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, d in { gcr = "gcr.io.", pkg = "pkg.dev.", run = "run.app." } :
+      module.dns.zones[k].dns_name == d &&
+      module.dns.records["${k}/apex"].name == d && module.dns.records["${k}/apex"].type == "A" &&
+      jsonencode(module.dns.records["${k}/apex"].rrdatas) == jsonencode(["199.36.153.4", "199.36.153.5", "199.36.153.6", "199.36.153.7"]) &&
+      module.dns.records["${k}/wildcard"].name == "*.${d}" && module.dns.records["${k}/wildcard"].type == "CNAME" &&
+      jsonencode(module.dns.records["${k}/wildcard"].rrdatas) == jsonencode([d])
+    ])
+    error_message = "gcr.io., pkg.dev. y run.app. deben resolver al VIP (A en el ápice y comodín CNAME al dominio)."
+  }
+
+  # Peering leído de los recursos: el spoke importa y no exporta; el hub exporta y no importa.
+  assert {
+    condition = (
+      module.spoke.peerings["spoke_to_hub"].import_custom_routes == true &&
+      module.spoke.peerings["spoke_to_hub"].export_custom_routes == false &&
+      module.spoke.peerings["hub_to_spoke"].export_custom_routes == true &&
+      module.spoke.peerings["hub_to_spoke"].import_custom_routes == false &&
+      module.spoke.peerings["hub_to_spoke"].network == "projects/bnt-common-net-hub/global/networks/bnt-common-net-hub"
+    )
+    error_message = "El peering debe importar en el spoke y exportar en el hub, nunca al revés."
+  }
+}
+
+run "spoke_sin_filestore_y_vip_privado" {
+  command = plan
+
+  variables {
+    enable_filestore_nfs_lock_callbacks = false
+    google_apis_vip                     = "private"
+  }
+
+  assert {
+    condition     = !contains(keys(output.firewall_policy_rules), "allow-filestore-nfs-callbacks")
+    error_message = "Con enable_filestore_nfs_lock_callbacks = false no se crea la regla de Filestore."
+  }
+
+  assert {
+    condition = (
+      module.dns.records["googleapis/vip"].name == "private.googleapis.com." &&
+      jsonencode(module.dns.records["googleapis/wildcard"].rrdatas) == jsonencode(["private.googleapis.com."]) &&
+      jsonencode(module.dns.records["pkg/apex"].rrdatas) == jsonencode(["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"])
+    )
+    error_message = "Con google_apis_vip = private las zonas deben resolver a private.googleapis.com (199.36.153.8/30)."
+  }
 }
 
 run "spoke_con_dr" {
@@ -263,6 +382,16 @@ run "spoke_prod" {
     condition     = output.host_project_id == "bnt-prod-net-spoke" && output.private_dns_domain == "prod.empresa.internal." && length(output.subnets) == 6 && length(output.nat_names) == 2
     error_message = "prod debe crear bnt-prod-net-spoke, la zona prod.empresa.internal. y las subredes y NAT de las dos regiones."
   }
+}
+
+run "rechaza_vip_desconocido" {
+  command = plan
+
+  variables {
+    google_apis_vip = "public"
+  }
+
+  expect_failures = [var.google_apis_vip]
 }
 
 run "rechaza_subred_fuera_del_slash16" {

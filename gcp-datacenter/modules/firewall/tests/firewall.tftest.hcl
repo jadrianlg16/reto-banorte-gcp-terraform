@@ -100,6 +100,74 @@ run "politica_de_red" {
   }
 }
 
+# La salida rules se arma con los recursos de regla. Los ID de los valores de etiqueta se
+# fijan en el plan para poder comprobar que cada regla apunta al valor correcto.
+run "salida_rules_desde_recursos" {
+  command = plan
+
+  override_resource {
+    target          = google_tags_tag_value.this["lb_backend"]
+    override_during = plan
+    values          = { id = "tagValues/1000000000001" }
+  }
+
+  override_resource {
+    target          = google_tags_tag_value.this["iap_ssh"]
+    override_during = plan
+    values          = { id = "tagValues/1000000000002" }
+  }
+
+  assert {
+    condition = (
+      google_compute_network_firewall_policy_rule.this["allow-lb-to-backends"].target_secure_tags[0].name == "tagValues/1000000000001" &&
+      google_compute_network_firewall_policy_rule.this["allow-iap-ssh"].target_secure_tags[0].name == "tagValues/1000000000002"
+    )
+    error_message = "Cada regla debe apuntar al valor de su propia etiqueta segura."
+  }
+
+  assert {
+    condition = (
+      jsonencode(output.rules["allow-lb-to-backends"].target_secure_tags) == jsonencode(["lb_backend"]) &&
+      jsonencode(output.rules["allow-iap-ssh"].target_secure_tags) == jsonencode(["iap_ssh"]) &&
+      jsonencode(output.rules["allow-iap-ssh"].src_ip_ranges) == jsonencode(["35.235.240.0/20"]) &&
+      jsonencode(output.rules["allow-iap-ssh"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["22"] }]) &&
+      output.rules["allow-lb-to-backends"].action == "allow" &&
+      output.rules["allow-lb-to-backends"].priority == 1000 &&
+      length(output.rules) == 2
+    )
+    error_message = "La salida rules debe reflejar las reglas creadas (etiquetas, orígenes y puertos)."
+  }
+}
+
+run "nombre_con_sufijo" {
+  command = plan
+
+  variables {
+    environment = "common"
+    name_suffix = "onprem-sim"
+    parent      = "projects/example-net-hub/global/networks/bnt-common-net-onprem-sim"
+    secure_tags = {}
+    rules = {
+      allow-dns = {
+        priority       = 1000
+        action         = "allow"
+        src_ip_ranges  = ["35.199.192.0/19"]
+        layer4_configs = [{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }]
+      }
+    }
+  }
+
+  assert {
+    condition     = google_compute_network_firewall_policy.this[0].name == "bnt-common-net-fw-onprem-sim" && google_compute_network_firewall_policy_association.this[0].name == "bnt-common-net-fw-onprem-sim-assoc"
+    error_message = "Con name_suffix la política debe llamarse <prefijo>-<entorno>-net-fw-<sufijo>."
+  }
+
+  assert {
+    condition     = jsonencode(output.rules["allow-dns"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }])
+    error_message = "La regla debe permitir DNS por TCP y UDP."
+  }
+}
+
 run "politica_jerarquica" {
   command = plan
 
@@ -152,6 +220,11 @@ run "politica_jerarquica" {
   assert {
     condition     = google_compute_firewall_policy_rule.this["delegate-internal"].enable_logging == false
     error_message = "Las reglas goto_next no registran."
+  }
+
+  assert {
+    condition     = output.rules["delegate-internal"].action == "goto_next" && jsonencode(output.rules["delegate-internal"].src_ip_ranges) == jsonencode(["10.0.0.0/8"]) && length(output.rules["delegate-internal"].target_resources) == 0
+    error_message = "La salida rules debe leer las reglas jerárquicas creadas."
   }
 
   assert {

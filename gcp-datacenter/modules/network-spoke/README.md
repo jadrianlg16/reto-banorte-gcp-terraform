@@ -30,7 +30,8 @@ Decisiones del módulo:
 - Peering: el lado del spoke importa rutas personalizadas y el lado del hub (creado sobre la red
   del hub, a partir de `hub_network_self_link`) las exporta. Se encadenan con `depends_on`
   detrás de la conexión de servicenetworking porque GCP no admite dos operaciones de peering a la
-  vez sobre una red.
+  vez sobre una red. La salida `peerings` lee los dos recursos (rutas importadas y
+  exportadas) para que las pruebas de la raíz comprueben los sentidos.
 - Las reglas de firewall y las etiquetas seguras viven en el módulo `firewall`.
 
 <!-- BEGIN_TF_DOCS -->
@@ -90,6 +91,7 @@ No modules.
 | <a name="output_network_id"></a> [network\_id](#output\_network\_id) | ID de la VPC spoke (projects/<proyecto>/global/networks/<nombre>). |
 | <a name="output_network_name"></a> [network\_name](#output\_network\_name) | Nombre de la VPC spoke. |
 | <a name="output_network_self_link"></a> [network\_self\_link](#output\_network\_self\_link) | self\_link de la VPC spoke. |
+| <a name="output_peerings"></a> [peerings](#output\_peerings) | Peerings con el hub, leídos de los recursos: spoke\_to\_hub y hub\_to\_spoke → { name, network, peer\_network, import\_custom\_routes, export\_custom\_routes }. El spoke importa y no exporta; el hub exporta y no importa. |
 | <a name="output_psa_connection_id"></a> [psa\_connection\_id](#output\_psa\_connection\_id) | ID de la conexión de servicenetworking (para depends\_on de Cloud SQL, Memorystore y Filestore). |
 | <a name="output_psa_range_name"></a> [psa\_range\_name](#output\_psa\_range\_name) | Nombre del rango reservado de Private Service Access. |
 | <a name="output_reserved_cidrs"></a> [reserved\_cidrs](#output\_reserved\_cidrs) | Rangos reservados sin subred: gke\_master (y gke\_master\_dr con enable\_dr) para el plano de control de GKE. |

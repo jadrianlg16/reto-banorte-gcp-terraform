@@ -68,15 +68,21 @@ output "firewall_policy_id" {
 }
 
 output "firewall_policy_rules" {
-  description = "Reglas de la política de red creadas por la raíz (nombre → prioridad, acción, orígenes y etiquetas destino). Además, el módulo crea la denegación por defecto de la entrada (prioridad 65000)."
+  description = "Reglas de la política de red creadas por la raíz, leídas de los recursos (nombre → prioridad, acción, orígenes, etiquetas destino y protocolos/puertos). Además, el módulo crea la denegación por defecto de la entrada (prioridad 65000)."
   value = {
-    for k, r in local.spoke_firewall_rules : k => {
+    for k, r in module.firewall.rules : k => {
       priority           = r.priority
       action             = r.action
       src_ip_ranges      = r.src_ip_ranges
       target_secure_tags = r.target_secure_tags
+      layer4_configs     = r.layer4_configs
     }
   }
+}
+
+output "lb_backend_ports" {
+  description = "Puertos TCP que la política del spoke abre hacia los backends con lb_backend (verificaciones de salud y proxies). La etapa 5 comprueba que los puertos de sus backends estén aquí."
+  value       = var.lb_backend_ports
 }
 
 output "private_dns_domain" {
@@ -85,6 +91,6 @@ output "private_dns_domain" {
 }
 
 output "dns_zone_names" {
-  description = "Mapa env, onprem, googleapis → nombre de la zona de Cloud DNS."
+  description = "Mapa env, onprem, googleapis, gcr, pkg, run → nombre de la zona de Cloud DNS."
   value       = module.dns.zone_names
 }

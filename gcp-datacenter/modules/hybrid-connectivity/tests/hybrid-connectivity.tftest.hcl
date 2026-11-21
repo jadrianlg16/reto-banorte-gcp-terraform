@@ -69,6 +69,106 @@ run "vpn_a_gateway_externo" {
     condition     = length(google_compute_interconnect_attachment.this) == 0
     error_message = "Interconnect debe estar apagado por defecto."
   }
+
+  assert {
+    condition = (
+      output.bgp_peers["if0"].advertised_ip_ranges == sort(["10.0.0.0/16", "10.10.0.0/16", "35.199.192.0/19"]) &&
+      output.bgp_peers["if1"].ip_address == "169.254.0.5" &&
+      output.bgp_peers["if1"].peer_ip_address == "169.254.0.6" &&
+      output.bgp_peers["if0"].advertised_route_priority == 100 &&
+      output.bgp_peers["if0"].router == "bnt-common-net-hub-router-usc1"
+    )
+    error_message = "La salida bgp_peers debe reflejar las sesiones creadas (rangos anunciados, IP y prioridad)."
+  }
+}
+
+run "par_con_asn_publico_de_4_bytes" {
+  command = plan
+
+  variables {
+    peer = {
+      type                 = "external"
+      asn                  = 4200000000 - 1
+      external_gateway_ips = ["203.0.113.10"]
+    }
+  }
+
+  assert {
+    condition     = alltrue([for p in google_compute_router_peer.vpn : p.peer_asn == 4199999999])
+    error_message = "Un ASN público de 4 bytes debe aceptarse para on-premises."
+  }
+
+  assert {
+    condition     = google_compute_external_vpn_gateway.this[0].redundancy_type == "SINGLE_IP_INTERNALLY_REDUNDANT" && google_compute_vpn_tunnel.this["if1"].peer_external_gateway_interface == 0
+    error_message = "Con una IP el gateway externo tiene redundancia interna y los dos túneles van a la interfaz 0."
+  }
+}
+
+run "secreto_por_tunel_y_prioridad" {
+  command = plan
+
+  variables {
+    shared_secret_overrides = {
+      if1 = "example-only-rotated-secret-111111111111"
+    }
+    bgp_sessions = {
+      if0 = { vpn_gateway_interface = 0, ip_range = "169.254.0.8/30", advertised_route_priority = 200 }
+      if1 = { vpn_gateway_interface = 1, ip_range = "169.254.0.12/30", advertised_route_priority = 200 }
+    }
+  }
+
+  assert {
+    condition = (
+      nonsensitive(google_compute_vpn_tunnel.this["if0"].shared_secret) == "example-only-not-a-real-secret-0000000000" &&
+      nonsensitive(google_compute_vpn_tunnel.this["if1"].shared_secret) == "example-only-rotated-secret-111111111111"
+    )
+    error_message = "shared_secret_overrides cambia solo el secreto de su túnel."
+  }
+
+  assert {
+    condition     = alltrue([for p in google_compute_router_peer.vpn : p.advertised_route_priority == 200])
+    error_message = "advertised_route_priority debe llegar a las sesiones BGP."
+  }
+}
+
+run "rechaza_secreto_de_tunel_desconocido" {
+  command = plan
+
+  variables {
+    shared_secret_overrides = {
+      if9 = "example-only-rotated-secret-111111111111"
+    }
+  }
+
+  expect_failures = [var.shared_secret_overrides]
+}
+
+run "rechaza_asn_reservado" {
+  command = plan
+
+  variables {
+    peer = {
+      type                 = "external"
+      asn                  = 23456
+      external_gateway_ips = ["203.0.113.10"]
+    }
+  }
+
+  expect_failures = [var.peer]
+}
+
+run "rechaza_asn_publico_en_par_gcp" {
+  command = plan
+
+  variables {
+    peer = {
+      type                  = "gcp"
+      asn                   = 131072
+      gcp_gateway_self_link = "projects/example-net-hub/regions/us-central1/vpnGateways/bnt-common-net-vpn-onprem-usc1"
+    }
+  }
+
+  expect_failures = [var.peer]
 }
 
 run "vpn_entre_vpc_simulada" {

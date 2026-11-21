@@ -102,6 +102,20 @@ run "spoke_sin_dr" {
   }
 
   assert {
+    condition     = google_compute_network_peering.spoke_to_hub.export_custom_routes == false && google_compute_network_peering.hub_to_spoke.import_custom_routes == false
+    error_message = "El spoke no exporta rutas personalizadas (su 0.0.0.0/0 queda local) y el hub no importa las del spoke."
+  }
+
+  assert {
+    condition = (
+      output.peerings["spoke_to_hub"].import_custom_routes == true && output.peerings["spoke_to_hub"].export_custom_routes == false &&
+      output.peerings["hub_to_spoke"].export_custom_routes == true && output.peerings["hub_to_spoke"].import_custom_routes == false &&
+      output.peerings["hub_to_spoke"].network == "projects/example-net-hub/global/networks/bnt-common-net-hub"
+    )
+    error_message = "La salida peerings debe reflejar los recursos de peering."
+  }
+
+  assert {
     condition     = toset(keys(google_compute_router_nat.this)) == toset(["primary"]) && google_compute_router_nat.this["primary"].name == "bnt-dev-net-nat-usc1"
     error_message = "Debe haber un Cloud NAT en la región primaria."
   }

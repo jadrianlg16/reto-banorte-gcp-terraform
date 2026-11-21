@@ -30,6 +30,7 @@ por variables (`environment`, `spoke_supernet`, `subnet_cidrs`, `enable_dr`).
   | `allow-proxy-to-backends` | 1020 | `proxy` (y `proxy_dr`) | etiqueta `lb_backend` | TCP `lb_backend_ports` |
   | `allow-gke-control-plane` | 1030 | `gke_master` (y `gke_master_dr`) | todas | TCP 443 y 10250 |
   | `allow-workload-internal` | 1040 | `app`, `pods`, `run` (y sus `*_dr`) | todas | todos |
+  | `allow-filestore-nfs-callbacks` | 1050 | `psa` (Filestore) | todas | TCP 111, 2046, 4045; UDP 4045 (`filestore_nfs_lock_ports`) |
   | denegación por defecto (módulo) | 65000 | 0.0.0.0/0 | todas | todos, con registro |
 
   On-premises no tiene regla de entrada propia: llega a las cargas por el balanceador interno
@@ -37,12 +38,27 @@ por variables (`environment`, `spoke_supernet`, `subnet_cidrs`, `enable_dr`).
   `goto_next` las verificaciones de salud, el IAP, el tráfico interno y el de on-premises, así
   que `allow-lb-health-checks` y `allow-iap-ssh` son las reglas que de verdad los permiten, y
   solo hacia las VM con la etiqueta correspondiente (ver la nota del README del hub).
+
+  `allow-filestore-nfs-callbacks` (con `enable_filestore_nfs_lock_callbacks = true`, por
+  defecto) deja pasar las llamadas de Filestore a los clientes NFS para el bloqueo de archivos
+  (portmapper, statd y nlockmgr; guía de firewall de Filestore de Google). Los puertos de statd
+  y nlockmgr no tienen valor fijo en Linux: hay que fijarlos en las VM y nodos clientes a los
+  de `filestore_nfs_lock_ports` (2046 y 4045 por defecto, los del ejemplo de Google). La salida
+  `lb_backend_ports` publica los puertos abiertos hacia `lb_backend` para que la etapa 5
+  compruebe los de sus backends.
 - DNS (módulo `dns`): zona privada `<env>.<dns_domain_base>` (por defecto
   `<env>.empresa.internal.`) adjunta a la VPC spoke y a la VPC hub (on-premises la resuelve por
   el reenvío entrante del hub; los otros entornos no la ven); zona de peering de
   `onprem_dns_domain` hacia la VPC hub; zona privada `googleapis.com.` con
-  `restricted.googleapis.com.` → 199.36.153.4/30 (registro A) y `*` → CNAME
-  `restricted.googleapis.com.`; política de servidor con registro de consultas.
+  `<vip>.googleapis.com.` → VIP (registro A) y `*` → CNAME `<vip>.googleapis.com.`; zonas
+  privadas `gcr.io.`, `pkg.dev.` y `run.app.` con el ápice → VIP (registro A) y `*` → CNAME al
+  dominio (imágenes de Container y Artifact Registry y llamadas a Cloud Run por el VIP, no por
+  IP públicas); política de servidor con registro de consultas. `<vip>` es `google_apis_vip`:
+  `restricted` (199.36.153.4/30, por defecto en los tres entornos) o `private`
+  (199.36.153.8/30). Google recomienda `private` cuando no se usa VPC Service Controls; aquí
+  prod tiene perímetro y dev y qa usan el mismo VIP para que una dependencia de una API sin
+  soporte de VPC-SC falle antes de llegar a prod. La ruta al VIP restringido la crea
+  `network-spoke`; el VIP privado lo cubre la ruta `0.0.0.0/0` del spoke.
 
 Validaciones del plan de direccionamiento (contrato §5): `spoke_supernet` es un /16, no se
 traslapa con `onprem_cidrs` y coincide con `spoke_supernets[env]` del hub (lo que el hub
@@ -140,7 +156,10 @@ necesita.
 | <a name="input_subnet_cidrs"></a> [subnet\_cidrs](#input\_subnet\_cidrs) | Rangos del plan de direccionamiento (contrato §5). Llaves: app, proxy, run, gke\_master, pods, services, psa y sus *\_dr (app\_dr, proxy\_dr, run\_dr, gke\_master\_dr, pods\_dr, services\_dr), obligatorias solo con enable\_dr = true. | `map(string)` | n/a | yes |
 | <a name="input_dns_domain_base"></a> [dns\_domain\_base](#input\_dns\_domain\_base) | Dominio base de las zonas privadas por entorno: la zona del spoke es <environment>.<dns\_domain\_base>. Termina en punto. | `string` | `"empresa.internal."` | no |
 | <a name="input_enable_dr"></a> [enable\_dr](#input\_enable\_dr) | Crea las subredes, el router y el NAT de la región de DR. En dev y qa las llaves *\_dr se reservan pero no se crean (false). | `bool` | `false` | no |
+| <a name="input_enable_filestore_nfs_lock_callbacks"></a> [enable\_filestore\_nfs\_lock\_callbacks](#input\_enable\_filestore\_nfs\_lock\_callbacks) | Permite la entrada desde el rango de Private Service Access (donde viven las instancias de Filestore) hacia las cargas en los puertos de filestore\_nfs\_lock\_ports. Filestore llama de vuelta a los clientes para el bloqueo de archivos NFS (statd y nlockmgr); sin esta regla la denegación por defecto del spoke corta esas llamadas. | `bool` | `true` | no |
+| <a name="input_filestore_nfs_lock_ports"></a> [filestore\_nfs\_lock\_ports](#input\_filestore\_nfs\_lock\_ports) | Puertos de los clientes NFS a los que llama Filestore para el bloqueo de archivos: tcp = 111 (portmapper), el de statd (STATDOPTS) y el TCP de nlockmgr (nlm\_tcpport); udp = el UDP de nlockmgr (nlm\_udpport, niveles Zonal, Regional y Enterprise). Por defecto 2046 y 4045, los que usa la guía de Google para fijar esos puertos; deben coincidir con lo que se fije en las VM y nodos clientes. | <pre>object({<br/>    tcp = list(string)<br/>    udp = list(string)<br/>  })</pre> | <pre>{<br/>  "tcp": [<br/>    "111",<br/>    "2046",<br/>    "4045"<br/>  ],<br/>  "udp": [<br/>    "4045"<br/>  ]<br/>}</pre> | no |
 | <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs de las subredes. La especificación pide 0.5; solo se permite subirla. | `number` | `0.5` | no |
+| <a name="input_google_apis_vip"></a> [google\_apis\_vip](#input\_google\_apis\_vip) | VIP de Private Google Access al que resuelven las zonas privadas googleapis.com., gcr.io., pkg.dev. y run.app.: restricted (199.36.153.4/30, solo servicios compatibles con VPC Service Controls) o private (199.36.153.8/30, todos). Por defecto restricted en los tres entornos: prod tiene perímetro y dev/qa usan el mismo VIP para que una dependencia de una API sin soporte de VPC-SC falle antes de llegar a prod. | `string` | `"restricted"` | no |
 | <a name="input_lb_backend_ports"></a> [lb\_backend\_ports](#input\_lb\_backend\_ports) | Puertos TCP en los que los backends con la etiqueta lb\_backend reciben tráfico y verificaciones de salud de los balanceadores. | `list(string)` | <pre>[<br/>  "80",<br/>  "443",<br/>  "8080"<br/>]</pre> | no |
 | <a name="input_project_deletion_policy"></a> [project\_deletion\_policy](#input\_project\_deletion\_policy) | deletion\_policy del proyecto net-spoke: PREVENT (por defecto), ABANDON o DELETE. El módulo project-factory solo admite PREVENT en prod; DELETE sirve para desmontar dev en la prueba de extremo a extremo. | `string` | `"PREVENT"` | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional para que el ID del proyecto net-spoke sea único a nivel mundial. Vacío: sin sufijo. | `string` | `""` | no |
@@ -150,11 +169,12 @@ necesita.
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_dns_zone_names"></a> [dns\_zone\_names](#output\_dns\_zone\_names) | Mapa env, onprem, googleapis → nombre de la zona de Cloud DNS. |
+| <a name="output_dns_zone_names"></a> [dns\_zone\_names](#output\_dns\_zone\_names) | Mapa env, onprem, googleapis, gcr, pkg, run → nombre de la zona de Cloud DNS. |
 | <a name="output_firewall_policy_id"></a> [firewall\_policy\_id](#output\_firewall\_policy\_id) | ID de la política de firewall de red del spoke. |
-| <a name="output_firewall_policy_rules"></a> [firewall\_policy\_rules](#output\_firewall\_policy\_rules) | Reglas de la política de red creadas por la raíz (nombre → prioridad, acción, orígenes y etiquetas destino). Además, el módulo crea la denegación por defecto de la entrada (prioridad 65000). |
+| <a name="output_firewall_policy_rules"></a> [firewall\_policy\_rules](#output\_firewall\_policy\_rules) | Reglas de la política de red creadas por la raíz, leídas de los recursos (nombre → prioridad, acción, orígenes, etiquetas destino y protocolos/puertos). Además, el módulo crea la denegación por defecto de la entrada (prioridad 65000). |
 | <a name="output_host_project_id"></a> [host\_project\_id](#output\_host\_project\_id) | ID del proyecto net-spoke (host de Shared VPC) del entorno. |
 | <a name="output_host_project_number"></a> [host\_project\_number](#output\_host\_project\_number) | Número del proyecto net-spoke (para identificar sus agentes de servicio). |
+| <a name="output_lb_backend_ports"></a> [lb\_backend\_ports](#output\_lb\_backend\_ports) | Puertos TCP que la política del spoke abre hacia los backends con lb\_backend (verificaciones de salud y proxies). La etapa 5 comprueba que los puertos de sus backends estén aquí. |
 | <a name="output_nat_names"></a> [nat\_names](#output\_nat\_names) | Mapa región → nombre del Cloud NAT. |
 | <a name="output_network_id"></a> [network\_id](#output\_network\_id) | ID de la VPC spoke (projects/<proyecto>/global/networks/<nombre>). |
 | <a name="output_network_name"></a> [network\_name](#output\_network\_name) | Nombre de la VPC spoke. |

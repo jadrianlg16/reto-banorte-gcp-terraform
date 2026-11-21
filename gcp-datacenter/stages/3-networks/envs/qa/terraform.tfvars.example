@@ -36,6 +36,13 @@ onprem_dns_domain = "corp.example.com."
 dns_domain_base   = "empresa.internal."
 flow_log_sampling = 0.5
 
+# VIP de las zonas googleapis.com., gcr.io., pkg.dev. y run.app. (restricted o private).
+google_apis_vip = "restricted"
+
+# Llamadas de Filestore a los clientes NFS (bloqueo de archivos). Los puertos de statd y
+# nlockmgr deben fijarse igual en las VM y nodos clientes.
+enable_filestore_nfs_lock_callbacks = true
+
 labels = {
   app         = "network"
   owner       = "example-team"

@@ -167,16 +167,223 @@ run "hub_con_onprem_simulado" {
     condition     = toset(keys(google_project_service.hub)) == toset(["compute.googleapis.com", "dns.googleapis.com"])
     error_message = "La raíz debe habilitar Compute y DNS en net-hub."
   }
+
+  # Sesiones BGP leídas de los recursos google_compute_router_peer (salida bgp_peers).
+  assert {
+    condition = alltrue([
+      for k in ["if0", "if1"] :
+      toset(module.vpn_hub.bgp_peers[k].advertised_ip_ranges) == toset(["10.0.0.0/16", "10.10.0.0/16", "10.20.0.0/16", "10.30.0.0/16", "35.199.192.0/19"]) &&
+      module.vpn_hub.bgp_peers[k].advertise_mode == "CUSTOM" &&
+      module.vpn_hub.bgp_peers[k].peer_asn == 65001 &&
+      module.vpn_hub.bgp_peers[k].advertised_route_priority == 100 &&
+      module.vpn_hub.bgp_peers[k].router == "bnt-common-net-hub-router-usc1"
+    ])
+    error_message = "Las sesiones BGP primarias deben anunciar hub, spokes y 35.199.192.0/19 con prioridad 100 desde el router primario."
+  }
+
+  # Segunda HA VPN en la región de DR (decisión 9).
+  assert {
+    condition = (
+      jsonencode(output.vpn_dr_tunnel_names) == jsonencode({ if0 = "bnt-common-net-vpn-onprem-dr-use4-if0", if1 = "bnt-common-net-vpn-onprem-dr-use4-if1" }) &&
+      alltrue([
+        for k in ["if0", "if1"] :
+        module.vpn_hub_dr[0].bgp_peers[k].router == "bnt-common-net-hub-router-use4" &&
+        module.vpn_hub_dr[0].bgp_peers[k].advertised_route_priority == 200 &&
+        module.vpn_hub_dr[0].bgp_peers[k].peer_asn == 65001 &&
+        toset(module.vpn_hub_dr[0].bgp_peers[k].advertised_ip_ranges) == toset(module.vpn_hub.bgp_peers[k].advertised_ip_ranges)
+      ])
+    )
+    error_message = "La VPN de DR debe usar el router del hub en us-east4, anunciar lo mismo que la primaria y con prioridad 200 (menos preferida)."
+  }
+
+  assert {
+    condition = (
+      module.vpn_hub_dr[0].bgp_peers["if0"].ip_address == "169.254.0.9" && module.vpn_hub_dr[0].bgp_peers["if0"].peer_ip_address == "169.254.0.10" &&
+      module.vpn_hub_dr[0].bgp_peers["if1"].ip_address == "169.254.0.13" && module.vpn_hub_dr[0].bgp_peers["if1"].peer_ip_address == "169.254.0.14"
+    )
+    error_message = "La VPN de DR debe usar los /30 169.254.0.8/30 y 169.254.0.12/30."
+  }
+
+  assert {
+    condition = (
+      module.onprem_sim[0].routers["us-east4"] == "bnt-common-net-onprem-sim-router-use4" &&
+      length(module.onprem_sim[0].subnets) == 1 &&
+      module.vpn_onprem_sim_dr[0].bgp_peers["if0"].router == "bnt-common-net-onprem-sim-router-use4" &&
+      module.vpn_onprem_sim_dr[0].bgp_peers["if0"].ip_address == "169.254.0.10" &&
+      module.vpn_onprem_sim_dr[0].bgp_peers["if0"].peer_ip_address == "169.254.0.9" &&
+      module.vpn_onprem_sim_dr[0].bgp_peers["if1"].advertised_route_priority == 200 &&
+      module.vpn_onprem_sim_dr[0].bgp_peers["if1"].peer_asn == 64514 &&
+      jsonencode(module.vpn_onprem_sim_dr[0].bgp_peers["if1"].advertised_ip_ranges) == jsonencode(["192.168.0.0/24"])
+    )
+    error_message = "La punta simulada de DR necesita su router en us-east4 (sin subred), las IP invertidas y la prioridad de DR."
+  }
+
+  # Reenvío DNS en modo simulado: delegación solo hacia onprem-sim y política de red propia.
+  assert {
+    condition = (
+      output.firewall_policy_rules["delegate-dns-onprem-sim"].action == "goto_next" &&
+      jsonencode(output.firewall_policy_rules["delegate-dns-onprem-sim"].src_ip_ranges) == jsonencode(["35.199.192.0/19"]) &&
+      jsonencode(output.firewall_policy_rules["delegate-dns-onprem-sim"].target_resources) == jsonencode(["https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-onprem-sim"]) &&
+      jsonencode(output.firewall_policy_rules["delegate-dns-onprem-sim"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }])
+    )
+    error_message = "Con simulate_onprem = true, la organización debe delegar 35.199.192.0/19 (TCP/UDP 53) solo hacia la VPC onprem-sim."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in output.firewall_policy_rules : length(r.target_resources) == 0 if k != "delegate-dns-onprem-sim"
+    ])
+    error_message = "Las demás delegaciones aplican a todas las VPC (sin target_resources)."
+  }
+
+  assert {
+    condition = (
+      length(module.firewall_onprem_sim) == 1 &&
+      toset(keys(module.firewall_onprem_sim[0].rules)) == toset(["allow-dns-forwarding", "allow-iap-ssh"]) &&
+      module.firewall_onprem_sim[0].rules["allow-dns-forwarding"].action == "allow" &&
+      jsonencode(module.firewall_onprem_sim[0].rules["allow-dns-forwarding"].src_ip_ranges) == jsonencode(["35.199.192.0/19"]) &&
+      jsonencode(module.firewall_onprem_sim[0].rules["allow-dns-forwarding"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }]) &&
+      jsonencode(module.firewall_onprem_sim[0].rules["allow-iap-ssh"].src_ip_ranges) == jsonencode(["35.235.240.0/20"]) &&
+      jsonencode(module.firewall_onprem_sim[0].rules["allow-iap-ssh"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["22"] }])
+    )
+    error_message = "onprem-sim debe tener una política de red que permita solo DNS desde 35.199.192.0/19 e SSH por IAP."
+  }
+
+  # Zona de reenvío leída del recurso: servidores on-premises y visible desde la VPC hub.
+  assert {
+    condition = (
+      jsonencode(module.dns.zones["onprem"].forwarding_targets) == jsonencode(["192.168.0.10"]) &&
+      length(module.dns.zones["onprem"].networks) == 1 &&
+      module.dns.zones["onprem"].peer_network == null
+    )
+    error_message = "La zona de reenvío debe apuntar a onprem_dns_servers y estar adjunta a la VPC hub."
+  }
+}
+
+run "hub_sin_vpn_dr" {
+  command = plan
+
+  variables {
+    enable_vpn_dr = false
+  }
+
+  assert {
+    condition     = length(module.vpn_hub_dr) == 0 && length(module.vpn_onprem_sim_dr) == 0 && length(output.vpn_dr_tunnel_names) == 0 && length(module.onprem_sim[0].routers) == 1
+    error_message = "Con enable_vpn_dr = false no se crea la VPN de DR ni el router de DR de onprem-sim."
+  }
+}
+
+run "hub_real_rotacion_por_tunel" {
+  command = plan
+
+  variables {
+    simulate_onprem           = false
+    onprem_asn                = 4199999999
+    onprem_vpn_gateway_ips    = ["203.0.113.10", "203.0.113.11"]
+    onprem_vpn_secret_id      = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_version = "3"
+    onprem_vpn_secret_version_overrides = {
+      primary-if1 = "4"
+    }
+    onprem_dns_servers = ["192.168.10.10"]
+  }
+
+  override_data {
+    target = data.google_secret_manager_secret_version.vpn_shared_secret["4"]
+    values = {
+      secret_data = "example-rotated-secret-44444444444444444444444"
+    }
+  }
+
+  assert {
+    condition     = toset(keys(data.google_secret_manager_secret_version.vpn_shared_secret)) == toset(["3", "4"])
+    error_message = "Se lee una vez cada versión en uso (la común y la del túnel que rota)."
+  }
+
+  assert {
+    condition = (
+      jsonencode(keys(local.vpn_secret_overrides["primary"])) == jsonencode(["if1"]) &&
+      nonsensitive(local.vpn_secret_overrides["primary"]["if1"]) == "example-rotated-secret-44444444444444444444444" &&
+      length(local.vpn_secret_overrides["dr"]) == 0
+    )
+    error_message = "Solo el túnel primary-if1 debe recibir el secreto de la versión 4."
+  }
+
+  assert {
+    condition     = module.vpn_hub.bgp_peers["if0"].peer_asn == 4199999999 && module.vpn_hub_dr[0].bgp_peers["if0"].peer_asn == 4199999999
+    error_message = "Con on-premises real se admite un ASN público de 4 bytes."
+  }
+
+  assert {
+    condition     = length(module.vpn_hub_dr[0].tunnel_names) == 2 && length(module.onprem_sim) == 0 && length(module.vpn_onprem_sim_dr) == 0
+    error_message = "Con on-premises real la VPN de DR tiene dos túneles hacia el gateway externo y no hay punta simulada."
+  }
+}
+
+run "rechaza_version_latest" {
+  command = plan
+
+  variables {
+    simulate_onprem           = false
+    onprem_vpn_gateway_ips    = ["203.0.113.10"]
+    onprem_vpn_secret_id      = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_version = "latest"
+  }
+
+  expect_failures = [var.onprem_vpn_secret_version]
+}
+
+run "rechaza_onprem_real_sin_version" {
+  command = plan
+
+  variables {
+    simulate_onprem        = false
+    onprem_vpn_gateway_ips = ["203.0.113.10"]
+    onprem_vpn_secret_id   = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+  }
+
+  expect_failures = [var.onprem_vpn_secret_version]
+}
+
+run "rechaza_rangos_bgp_dr_repetidos" {
+  command = plan
+
+  variables {
+    vpn_dr_bgp_ranges = ["169.254.0.4/30", "169.254.0.12/30"]
+  }
+
+  expect_failures = [var.vpn_dr_bgp_ranges]
+}
+
+run "rechaza_prioridad_dr_no_mayor" {
+  command = plan
+
+  variables {
+    vpn_dr_route_priority = 100
+  }
+
+  expect_failures = [var.vpn_dr_route_priority]
+}
+
+run "rechaza_asn_publico_en_modo_simulado" {
+  command = plan
+
+  variables {
+    onprem_asn = 131072
+  }
+
+  expect_failures = [var.onprem_asn]
 }
 
 run "hub_con_onprem_real" {
   command = plan
 
   variables {
-    simulate_onprem        = false
-    onprem_vpn_gateway_ips = ["203.0.113.10", "203.0.113.11"]
-    onprem_vpn_secret_id   = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
-    onprem_dns_servers     = ["192.168.10.10", "192.168.10.11"]
+    simulate_onprem           = false
+    onprem_vpn_gateway_ips    = ["203.0.113.10", "203.0.113.11"]
+    onprem_vpn_secret_id      = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_version = "3"
+    onprem_dns_servers        = ["192.168.10.10", "192.168.10.11"]
   }
 
   assert {
@@ -191,9 +398,9 @@ run "hub_con_onprem_real" {
 
   assert {
     condition = (
-      data.google_secret_manager_secret_version.vpn_shared_secret[0].project == "bnt-common-security" &&
-      data.google_secret_manager_secret_version.vpn_shared_secret[0].secret == "bnt-common-vpn-psk" &&
-      data.google_secret_manager_secret_version.vpn_shared_secret[0].version == "latest"
+      data.google_secret_manager_secret_version.vpn_shared_secret["3"].project == "bnt-common-security" &&
+      data.google_secret_manager_secret_version.vpn_shared_secret["3"].secret == "bnt-common-vpn-psk" &&
+      data.google_secret_manager_secret_version.vpn_shared_secret["3"].version == "3"
     )
     error_message = "El secreto debe leerse del proyecto y nombre de onprem_vpn_secret_id."
   }
@@ -295,8 +502,9 @@ run "rechaza_onprem_real_sin_secreto" {
   command = plan
 
   variables {
-    simulate_onprem        = false
-    onprem_vpn_gateway_ips = ["203.0.113.10"]
+    simulate_onprem           = false
+    onprem_vpn_gateway_ips    = ["203.0.113.10"]
+    onprem_vpn_secret_version = "1"
   }
 
   expect_failures = [var.onprem_vpn_secret_id]

@@ -5,9 +5,12 @@
 #   Cloud DNS visibles desde el hub (incluidas las privadas de cada entorno, que los spokes
 #   adjuntan también a la VPC hub), y registro de consultas.
 # Los spokes resuelven el dominio on-premises con una zona de peering hacia la VPC hub.
-# VERIFICAR-EN-APPLY: con simulate_onprem = true no existe servidor DNS en onprem_dns_servers
-# (la VPC onprem-sim no tiene VM); el reenvío solo se puede probar con un servidor real o una
-# VM DNS creada a mano en onprem-sim.
+# Con simulate_onprem = true no existe servidor DNS en onprem_dns_servers (la VPC onprem-sim
+# no tiene VM): para probar el reenvío se crea a mano una VM DNS en onprem-sim con esa IP. El
+# firewall ya lo admite: la organización delega 35.199.192.0/19 (TCP/UDP 53) solo hacia
+# onprem-sim y la política de red de onprem-sim lo permite, junto con SSH por IAP
+# (firewall.tf).
+# VERIFICAR-EN-APPLY: resolución de onprem_dns_domain desde un spoke con esa VM DNS.
 module "dns" {
   source = "../../modules/dns"
 

@@ -87,9 +87,21 @@ variable "peer" {
     condition     = contains(["external", "gcp"], var.peer.type)
     error_message = "peer.type debe ser external o gcp."
   }
+  # ASN válidos para un par BGP: públicos de 2 bytes (1-64495 sin 23456, AS_TRANS), privados
+  # de 2 bytes (64512-65534), públicos de 4 bytes (131072-4199999999) y privados de 4 bytes
+  # (4200000000-4294967294). Quedan fuera los reservados: 0, 23456, 64496-64511 (documentación),
+  # 65535-131071 y 4294967295.
   validation {
-    condition     = (var.peer.asn >= 64512 && var.peer.asn <= 65534) || (var.peer.asn >= 4200000000 && var.peer.asn <= 4294967294) || (var.peer.asn >= 1 && var.peer.asn <= 64495)
-    error_message = "peer.asn debe ser un ASN válido (público 1-64495 o privado 64512-65534 / 4200000000-4294967294)."
+    condition = (
+      (var.peer.asn >= 1 && var.peer.asn <= 64495 && var.peer.asn != 23456) ||
+      (var.peer.asn >= 64512 && var.peer.asn <= 65534) ||
+      (var.peer.asn >= 131072 && var.peer.asn <= 4294967294)
+    ) && floor(var.peer.asn) == var.peer.asn
+    error_message = "peer.asn debe ser un ASN válido: público 1-64495 (sin 23456) o 131072-4199999999, o privado 64512-65534 o 4200000000-4294967294."
+  }
+  validation {
+    condition     = var.peer.type != "gcp" || (var.peer.asn >= 64512 && var.peer.asn <= 65534) || (var.peer.asn >= 4200000000 && var.peer.asn <= 4294967294)
+    error_message = "Con peer.type = gcp el par es un Cloud Router, que solo admite ASN privados (64512-65534 o 4200000000-4294967294)."
   }
   validation {
     condition     = var.peer.type != "external" || (contains([1, 2], length(var.peer.external_gateway_ips)) && alltrue([for ip in var.peer.external_gateway_ips : can(cidrhost("${ip}/32", 0))]))
@@ -109,6 +121,18 @@ variable "shared_secret" {
   validation {
     condition     = length(var.shared_secret) >= 32
     error_message = "shared_secret debe tener al menos 32 caracteres."
+  }
+}
+
+variable "shared_secret_overrides" {
+  description = "Secreto propio de algunos túneles: llave de bgp_sessions → secreto. Los túneles sin entrada usan shared_secret. Sirve para rotar el secreto de un túnel a la vez: cambiar el secreto reemplaza el túnel (shared_secret fuerza el reemplazo en el proveedor), así que rotar los dos juntos tiraría la VPN completa."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+
+  validation {
+    condition     = alltrue([for k, v in var.shared_secret_overrides : contains(keys(var.bgp_sessions), k) && length(v) >= 32])
+    error_message = "Cada llave de shared_secret_overrides debe ser una llave de bgp_sessions y cada secreto debe tener al menos 32 caracteres."
   }
 }
 

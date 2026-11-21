@@ -79,6 +79,44 @@ run "vpc_onprem_simulada" {
     condition     = google_compute_network.this.name == "bnt-common-net-onprem-sim" && google_compute_router.this["us-central1"].name == "bnt-common-net-onprem-sim-router-usc1"
     error_message = "network_suffix debe cambiar el nombre de la VPC y de los routers."
   }
+
+  assert {
+    condition     = length(google_compute_router.this) == 1
+    error_message = "Sin extra_router_regions solo hay router en las regiones con subred."
+  }
+}
+
+run "router_extra_sin_subred" {
+  command = plan
+
+  variables {
+    network_suffix       = "onprem-sim"
+    router_asn           = 65001
+    extra_router_regions = ["us-east4"]
+    subnets = {
+      onprem = { region = "us-central1", cidr = "192.168.0.0/24" }
+    }
+  }
+
+  assert {
+    condition     = length(google_compute_router.this) == 2 && google_compute_router.this["us-east4"].name == "bnt-common-net-onprem-sim-router-use4" && google_compute_router.this["us-east4"].bgp[0].asn == 65001
+    error_message = "extra_router_regions debe crear un router en la región aunque no tenga subred."
+  }
+
+  assert {
+    condition     = length(google_compute_subnetwork.this) == 1
+    error_message = "extra_router_regions no crea subredes."
+  }
+}
+
+run "rechaza_region_extra_desconocida" {
+  command = plan
+
+  variables {
+    extra_router_regions = ["europe-west1"]
+  }
+
+  expect_failures = [var.extra_router_regions]
 }
 
 run "rechaza_muestreo_bajo" {

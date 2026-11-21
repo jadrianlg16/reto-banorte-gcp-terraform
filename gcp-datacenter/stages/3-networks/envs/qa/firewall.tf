@@ -2,8 +2,9 @@
 # política jerárquica de la organización delega con goto_next: verificaciones de salud, IAP,
 # tráfico interno y de on-premises (la organización no tiene reglas allow, contrato §7.3).
 # Estas reglas son las que de verdad permiten las verificaciones de salud (solo hacia
-# lb_backend) y el SSH por IAP (solo hacia iap_ssh). Lo demás lo deniega la regla por
-# defecto del módulo (prioridad 65000, con registro).
+# lb_backend) y el SSH por IAP (solo hacia iap_ssh). Con enable_filestore_nfs_lock_callbacks
+# también entran las llamadas de Filestore (rango psa) a los clientes NFS. Lo demás lo
+# deniega la regla por defecto del módulo (prioridad 65000, con registro).
 #
 # Etiquetas seguras: lb_backend e iap_ssh, cada una con su propia llave y un solo valor, para
 # que una VM pueda llevar las dos. La etapa 4 otorga roles/resourcemanager.tagUser sobre los
@@ -62,6 +63,25 @@ locals {
       layer4_configs     = [{ ip_protocol = "all", ports = [] }]
     }
   }
+
+  # Llamadas de Filestore a los clientes NFS para el bloqueo de archivos (statd y
+  # nlockmgr): Filestore toma su IP del rango de Private Service Access.
+  # https://cloud.google.com/filestore/docs/configure-firewall
+  spoke_firewall_rules_filestore = {
+    for k, r in {
+      allow-filestore-nfs-callbacks = {
+        description        = "Filestore (rango de Private Service Access) hacia los clientes NFS: portmapper, statd y nlockmgr."
+        priority           = 1050
+        action             = "allow"
+        src_ip_ranges      = [local.active_cidrs["psa"]]
+        target_secure_tags = []
+        layer4_configs = concat(
+          [{ ip_protocol = "tcp", ports = var.filestore_nfs_lock_ports.tcp }],
+          length(var.filestore_nfs_lock_ports.udp) > 0 ? [{ ip_protocol = "udp", ports = var.filestore_nfs_lock_ports.udp }] : [],
+        )
+      }
+    } : k => r if var.enable_filestore_nfs_lock_callbacks
+  }
 }
 
 module "firewall" {
@@ -79,5 +99,5 @@ module "firewall" {
     iap_ssh    = { description = "VM que admiten SSH por Identity-Aware Proxy." }
   }
 
-  rules = local.spoke_firewall_rules
+  rules = merge(local.spoke_firewall_rules, local.spoke_firewall_rules_filestore)
 }
