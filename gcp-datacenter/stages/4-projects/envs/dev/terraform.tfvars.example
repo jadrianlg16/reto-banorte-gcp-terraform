@@ -1,0 +1,28 @@
+# Valores de ejemplo (marcadores, nunca IDs reales). Copiar a terraform.tfvars y ajustar.
+
+org_id          = "000000000000"
+billing_account = "000000-000000-000000"
+prefix          = "bnt"
+project_suffix  = ""
+environment     = "dev"
+primary_region  = "us-central1"
+dr_region       = "us-east4"
+state_bucket    = "bnt-bootstrap-tfstate"
+
+# Correo de stage_service_accounts["5-workloads"] (salida de 0-bootstrap).
+workloads_service_account = "bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
+
+# dev admite destruir los proyectos en la prueba de extremo a extremo.
+deletion_policy = "DELETE"
+
+applications = {
+  app = {
+    apis    = []
+    secrets = []
+  }
+}
+
+labels = {
+  owner       = "example-team"
+  cost_center = "example-000"
+}
