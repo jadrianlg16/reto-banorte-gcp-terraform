@@ -380,7 +380,10 @@ ya tiene política), `vpc_sc_enforced`, `vpc_sc_restricted_services`, `labels`, 
 Crea, en `net-hub`: VPC hub y sus dos subredes; Cloud Router por región; HA VPN con dos
 túneles y BGP hacia on-premises (SLA 99.99 %); anuncios BGP personalizados con el /16 del
 hub, los /16 de los spokes y 35.199.192.0/19 (reenvío de Cloud DNS); política de firewall
-jerárquica en la organización (denegar por defecto; permitir verificaciones de salud e IAP);
+jerárquica en la organización (denegar por defecto; delegar con `goto_next` a la política de
+cada red el tráfico interno, el de on-premises, las verificaciones de salud y IAP, para que
+decidan las reglas por etiqueta segura del spoke: un `allow` en la organización sería final y
+dejaría sin efecto la etiqueta `iap_ssh`);
 DNS: zona de reenvío hacia on-premises y política de servidor entrante; con
 `simulate_onprem = true`, la VPC `onprem-sim` con su gateway y router (ADR 0006);
 Interconnect solo si `enable_interconnect = true`.
@@ -410,7 +413,7 @@ peering DNS hacia el hub para el dominio on-premises; zona privada de `googleapi
 el VIP restringido (199.36.153.4/30) y su ruta; reglas de firewall de la VPC con etiquetas
 seguras (solo rangos del balanceador 35.191.0.0/16 y 130.211.0.0/22, e IAP 35.235.240.0/20).
 
-Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `environment`,
+Entradas: `billing_account`, `prefix`, `project_suffix`, `environment`,
 `primary_region`, `dr_region`, `enable_dr`, `subnet_cidrs`, `onprem_cidrs`,
 `onprem_dns_domain`, `flow_log_sampling` (por defecto 0.5), `labels`, `state_bucket`.
 

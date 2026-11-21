@@ -48,10 +48,10 @@ estén probadas.
   un recurso al otro (mientras tanto la etapa 4 muestra el cambio pendiente).
 - Negativas: en dry-run el perímetro no protege nada; solo registra. Debe haber una fecha y un
   responsable para forzarlo.
-- Hueco detectado: la documentación de VPC-SC (consultada el 2026-11-21) pide que, con Shared
-  VPC, el proyecto host esté en el mismo perímetro que los proyectos de la Shared VPC. El
-  contrato (§7.5) solo da de alta los proyectos de servicio; falta `<prefix>-prod-net-spoke`.
-  Se debe agregar antes de forzar el perímetro.
+- La documentación de VPC-SC (consultada el 2026-11-21) pide que, con Shared VPC, el proyecto
+  host esté en el mismo perímetro que los proyectos de la Shared VPC. Por eso la etapa 4 de
+  prod da de alta, además de cada proyecto de servicio, el proyecto host
+  `<prefix>-prod-net-spoke` (contrato §7.5).
 - Las llaves y secretos de dev y qa viven en el proyecto `security`, dentro del perímetro de
   prod; por eso KMS y Secret Manager no se restringen por defecto (ADR 0019).
 - Primer apply: que la API acepte el perímetro en dry-run sin bloque `status`
