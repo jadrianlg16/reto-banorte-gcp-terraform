@@ -47,7 +47,7 @@ su diagrama y deben decirlo.
 | 0002 | Regiones `us-central1` (primaria) y `us-east4` (DR), ambas como variables | Propuesta de la especificación; `northamerica-south1` si hubiera residencia de datos | Conforme |
 | 0003 | Una VPC por entorno (spoke, host de Shared VPC) unida al hub por VPC Network Peering; sin peering entre spokes | La especificación se contradice: su diagrama dibuja una sola Shared VPC en el hub y su jerarquía pide un proyecto de red spoke por entorno. Se sigue la jerarquía: el aislamiento entre entornos lo da la red y no solo el firewall | Desviación del diagrama |
 | 0004 | Cloud NAT en cada spoke y región, no en el hub | Un Cloud NAT no da salida a redes unidas por peering | Desviación del diagrama |
-| 0005 | Balanceador HTTPS global y Cloud Armor en el proyecto de servicio de cada entorno | Con peering, los backends viven en el spoke; el balanceador global es un servicio de borde de Google, no un recurso de la VPC hub. El tráfico on-premises sí entra solo por el hub | Desviación del diagrama |
+| 0005 | Balanceador HTTPS global y Cloud Armor en el proyecto de servicio de cada entorno | El balanceador global podría referenciar backends de otro proyecto, pero ponerlo en el hub crearía una dependencia inversa (la etapa 3 leería la 5), separaría al dueño de la aplicación de su política de Cloud Armor (que se asocia al servicio de backend) y mezclaría entornos en un proyecto común. El tráfico on-premises sí entra solo por el hub | Desviación del diagrama |
 | 0006 | On-premises simulado con una VPC `onprem-sim` y HA VPN entre VPC, activable con `simulate_onprem` | No hay sitio on-premises real para el equipo. Con `simulate_onprem = false` el mismo módulo apunta a un gateway externo | Supuesto |
 | 0007 | CI/CD con GitHub Actions | El equipo ya usa GitHub; la especificación lo deja a elección | Conforme |
 | 0008 | La etapa 0 crea su propia llave KMS para cifrar el bucket de estado | La especificación pide CMEK en el bucket de estado (etapa 0) pero ubica KMS en la etapa 2. Sin llave propia habría una ventana sin CMEK | Aclaración |
@@ -282,8 +282,12 @@ ese paso manual está permitido porque pertenece a la etapa 0 y se documenta en 
 
 Por cada cuenta de servicio: `roles/storage.objectAdmin` condicionado a los objetos de su
 prefijo, y `roles/storage.objectViewer` condicionado a los prefijos de la columna "Lee además".
-`# VERIFICAR-EN-APPLY`: que el listado de objetos que hace el backend funcione con la
-condición; alternativa documentada: carpetas administradas de Cloud Storage con IAM propio.
+`storage.objects.list` se evalúa sobre el bucket, así que una condición solo por nombre de
+objeto impediría listar: cada condición agrega
+`resource.type == "storage.googleapis.com/Bucket" ||` para permitir el listado. Consecuencia
+aceptada: toda cuenta de etapa ve los nombres de los objetos del bucket, no su contenido.
+`# VERIFICAR-EN-APPLY`: que el backend funcione con la condición; alternativa documentada:
+carpetas administradas de Cloud Storage con IAM propio.
 
 ### 6.3 Workload Identity Federation
 
@@ -417,15 +421,21 @@ Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `environment`
 | `network_self_link` | string | |
 | `subnets` | map(object) | llave de §5 → `{ self_link, name, region, cidr, secondary_ranges }` (`secondary_ranges`: map nombre → CIDR, llaves `pods` y `services`) |
 | `psa_range_name` | string | |
-| `secure_tags` | map(string) | llaves `lb_backend`, `iap_ssh` → ID del valor de etiqueta |
+| `secure_tags` | map(string) | llaves `lb_backend`, `iap_ssh` → ID del valor de etiqueta (`tagValues/…`) |
+| `secure_tag_keys` | map(string) | mismas llaves → ID de la llave de etiqueta (`tagKeys/…`) |
+
+Cada etiqueta segura es una llave propia con un solo valor: un recurso solo admite un valor por
+llave, y una VM puede necesitar `lb_backend` e `iap_ssh` a la vez. La etapa 4 otorga
+`roles/resourcemanager.tagUser` sobre esos valores a quien crea las instancias.
 
 ### 7.5 `4-projects/envs/<env>`
 
 Crea: un proyecto de servicio por aplicación (`applications`, por defecto una llamada `app`)
 unido al host; permisos de uso de subred para los agentes de servicio; cuentas de servicio de
 ejecución; permisos de las llaves KMS a los agentes de servicio; permisos de lectura de
-secretos; en prod, alta del proyecto en el perímetro (recurso normal o de dry-run según
-`vpc_sc_enforced` de la etapa 2).
+secretos; en prod, alta en el perímetro de cada proyecto de servicio **y del proyecto host de
+la Shared VPC** (VPC-SC exige que el host esté en el mismo perímetro que sus proyectos de
+servicio), con el recurso normal o el de dry-run según `vpc_sc_enforced` de la etapa 2.
 
 Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `environment`,
 `primary_region`, `dr_region`, `applications` (map nombre → `{ apis, secrets }`), `labels`,
