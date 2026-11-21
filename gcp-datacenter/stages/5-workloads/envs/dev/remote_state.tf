@@ -34,7 +34,7 @@ data "terraform_remote_state" "network" {
     postcondition {
       condition = try(self.outputs.lb_backend_ports, null) == null || alltrue([
         for port in local.backend_ports : anytrue([
-          for entry in try(self.outputs.lb_backend_ports, []) : (
+          for entry in(try(self.outputs.lb_backend_ports, null) == null ? [] : self.outputs.lb_backend_ports) : (
             length(split("-", entry)) == 1
             ? tonumber(entry) == port
             : tonumber(split("-", entry)[0]) <= port && port <= tonumber(split("-", entry)[1])

@@ -15,17 +15,17 @@ run "defaults_cumplen_lo_exigido" {
   }
 
   assert {
-    condition     = anytrue([for r in google_compute_security_policy.this.rule : length(r.match[0].expr) > 0 && strcontains(r.match[0].expr[0].expression, "evaluatePreconfiguredWaf('sqli-")])
+    condition     = anytrue([for r in google_compute_security_policy.this.rule : try(strcontains(r.match[0].expr[0].expression, "evaluatePreconfiguredWaf('sqli-"), false)])
     error_message = "Falta la regla OWASP de inyección SQL."
   }
 
   assert {
-    condition     = anytrue([for r in google_compute_security_policy.this.rule : length(r.match[0].expr) > 0 && strcontains(r.match[0].expr[0].expression, "evaluatePreconfiguredWaf('xss-")])
+    condition     = anytrue([for r in google_compute_security_policy.this.rule : try(strcontains(r.match[0].expr[0].expression, "evaluatePreconfiguredWaf('xss-"), false)])
     error_message = "Falta la regla OWASP de XSS."
   }
 
   assert {
-    condition     = anytrue([for r in google_compute_security_policy.this.rule : length(r.match[0].expr) > 0 && r.match[0].expr[0].expression == "evaluatePreconfiguredWaf('cve-canary')" && r.action == "deny(403)"])
+    condition     = anytrue([for r in google_compute_security_policy.this.rule : try(r.match[0].expr[0].expression == "evaluatePreconfiguredWaf('cve-canary')" && r.action == "deny(403)", false)])
     error_message = "Falta la regla fija cve-canary (Log4Shell)."
   }
 
@@ -79,7 +79,7 @@ run "exclusiones_de_firmas" {
   }
 
   assert {
-    condition     = anytrue([for r in google_compute_security_policy.this.rule : length(r.match[0].expr) > 0 && r.match[0].expr[0].expression == "evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 2, 'opt_out_rule_ids': ['owasp-crs-v030301-id942350-sqli']})"])
+    condition     = anytrue([for r in google_compute_security_policy.this.rule : try(r.match[0].expr[0].expression == "evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 2, 'opt_out_rule_ids': ['owasp-crs-v030301-id942350-sqli']})", false)])
     error_message = "La expresión con exclusiones no se armó bien."
   }
 }

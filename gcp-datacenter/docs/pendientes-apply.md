@@ -481,7 +481,9 @@ Si falla: ajustar los roles de la cuenta; si la prueba falla, qa no se aplica.
 **51. Primera corrida de `pr.yml` (ADR 0021 y 0025).**
 Qué: que la pata `estático (terraform 1.9.8)` pase con `--skip test` y que `plan-gate` dé verde
 sin GCP y rojo cuando falle un `plan <raíz>`. Esta documentación no tiene evidencia de una
-corrida de los flujos corregidos en GitHub (no comprobado).
+corrida de los flujos corregidos en GitHub (no comprobado). En local, el 2026-11-21 y con el
+binario 1.9.8, `bash scripts/check.sh --skip test,checkov` dio PASS en los 61 objetivos (detalle
+en el ADR 0021); checkov no depende de la versión de Terraform.
 Dónde: `.github/workflows/pr.yml`; [`pipeline.md`](pipeline.md) §1.1.
 Si falla: corregir el flujo antes de marcar las comprobaciones como obligatorias (punto 12).
 

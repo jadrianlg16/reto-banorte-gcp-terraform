@@ -53,7 +53,22 @@ y 5.
 - Negativas: quien corra `terraform test` en su máquina necesita 1.11 o mayor; con 1.9 solo puede
   correr `bash scripts/check.sh --skip test`. El repositorio **no** es compatible con Terraform
   1.9 para correr las pruebas.
-- Sin comprobar: la pata 1.9.8 nunca corrió (no hay binario 1.9.8 en la máquina de construcción);
-  que `init -test-directory` y `validate -no-tests` existan en 1.9.8 se confirmó en su código
-  fuente, no ejecutándolo. La primera ejecución de `pr.yml` en GitHub lo demuestra o lo tumba.
+- Comprobado en local el 2026-11-21 con el binario oficial de Terraform 1.9.8 (windows_amd64,
+  suma SHA-256 verificada): `bash scripts/check.sh --skip test,checkov` da PASS en los 61
+  objetivos (fmt, validate y tflint). La primera corrida encontró un defecto real y se corrigió:
+  1.9 evalúa los dos lados de `||` y `&&`, así que una validación de la forma
+  `x == null || contains([...], x)` falla con `x` nulo (`modules/load-balancer`, `modules/vpc-sc`
+  y la poscondición de `lb_backend_ports` de la etapa 5 usaban esa forma). Regla que queda: en el
+  código `*.tf` no se apoya nada en que `||` o `&&` dejen de evaluar su lado derecho; se usa
+  `coalesce`, `try` o el operador condicional.
+- Evidencia adicional de la misma fecha: `terraform test` con 1.9.8 pasa en 22 de los 24 módulos
+  y en `stages/2-security` y `stages/3-networks` (lo que ejercita sus validaciones con nulos en
+  1.9). No pasa en `modules/firewall`, `stages/0-bootstrap` ni las raíces `envs` de las etapas
+  3, 4 y 5 (usan `override_during`), ni en `modules/cloud-armor` y `stages/1-org`, cuyas
+  aserciones dependen del comportamiento de versiones nuevas. En esas raíces el código solo está
+  comprobado en 1.9.8 con `validate`, que no evalúa validaciones de variables sin valor.
+- Sin comprobar: la versión mínima real de las pruebas. Solo se corrieron con 1.16.5 (todas
+  pasan) y con 1.9.8; "1.11 o mayor" sale de `override_during`, y algunas aserciones además
+  dependen de que `&&` no evalúe su lado derecho, que es de una versión posterior. Tampoco hay
+  evidencia de `pr.yml` en GitHub: su primera ejecución lo demuestra o lo tumba.
 - Primer apply: nada específico.
