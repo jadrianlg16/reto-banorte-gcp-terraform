@@ -2,7 +2,9 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: lo que la conmutación no puede depender de la
+región primaria (estado, VPN de DR, balanceador interno por región) está en el ADR
+[0022](0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md).
 
 Tipo: Conforme.
 
@@ -20,8 +22,16 @@ and DR (`backup-dr`) y las subredes `*_dr` del plan de direccionamiento (§5).
 `primary_region = "us-central1"` y `dr_region = "us-east4"`, ambas como variables de todas las
 raíces que las usan. Los nombres de recursos regionales agregan el código corto que sale de un
 mapa (`usc1`, `use4`, y `nas1` para `northamerica-south1`), nunca escrito a mano. La etapa 2
-crea además llaveros en la multirregión `us` para los buckets de doble región, porque la llave
-de un bucket debe estar en la misma ubicación que el bucket.
+crea además llaveros en la multirregión `us` para los buckets de doble región y los
+repositorios de Artifact Registry, porque la llave de un bucket o de un repositorio debe estar
+en la misma ubicación que él.
+
+Nada que la conmutación necesite vive solo en la región primaria (ADR 0022): el bucket de
+estado y su llave están en la multirregión `us` (etapa 0, `state_bucket_location`); el hub tiene
+una segunda HA VPN en el router de `dr_region` (`enable_vpn_dr`, prioridad de anuncio mayor que
+la primaria); el balanceador interno es uno por región con acceso global y `dr_active` agrega el
+de DR sin tocar el primario; y las imágenes de contenedor están en un repositorio multirregional
+(ADR 0024).
 
 ## Alternativas consideradas
 
@@ -44,7 +54,11 @@ de un bucket debe estar en la misma ubicación que el bucket.
   al mapa de códigos cortos; ningún módulo tiene regiones fijas.
 - Negativas: `gcp.resourceLocations` (módulo `org`) debe admitir ambas regiones y además la
   multirregión `us` (para llaveros y buckets de doble región) por
-  `additional_allowed_locations`; si falta `us`, la etapa 2 y el bucket de DR fallan.
+  `additional_allowed_locations`; si falta `us`, la etapa 2, el bucket de DR y los repositorios
+  de imágenes fallan. (La etapa 0 corre antes de que exista `gcp.resourceLocations`, así que el
+  bucket de estado en `US` no depende de esa política.)
+- La VPN de DR duplica los túneles del hub (cuatro en lugar de dos) y on-premises real debe
+  configurar las dos VPN (ADR 0022).
 - Si el cliente exige residencia en México, tiene que confirmar qué estrategia de DR acepta
   (zonal en `northamerica-south1` o región de DR fuera del país); este ADR se reabriría.
 - Primer apply: verificar que `gcp.resourceLocations` acepta la doble región y los recursos

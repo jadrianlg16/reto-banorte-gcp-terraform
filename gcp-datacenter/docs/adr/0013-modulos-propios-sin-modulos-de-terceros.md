@@ -2,7 +2,8 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: las etiquetas Git de módulo solo disparan las
+pruebas de integración de ese módulo; no hay versiones publicadas ni fijadas.
 
 Tipo: Conforme.
 
@@ -21,7 +22,10 @@ Los 24 módulos de `modules/` se escriben con recursos de `hashicorp/google` y
 fija como valor o como validación lo que la especificación exige (por ejemplo,
 `prevent_destroy` en `kms`, `ipv4_enabled = false` en `cloud-sql`, la denegación por defecto en
 `firewall`), entrega `README.md` con terraform-docs, un ejemplo en `examples/basic/` y pruebas
-en `tests/`. Las versiones se publican con etiquetas Git `modules/<modulo>/vX.Y.Z`.
+en `tests/`. Las raíces consumen los módulos por ruta relativa (`../../modules/<módulo>`), no
+por versión. Una etiqueta Git `modules/<módulo>/vX.Y.Z` solo dispara en `terratest.yml` las
+pruebas de integración de ese módulo; a la fecha no hay etiquetas creadas ni versiones
+publicadas, y ninguna raíz fija una versión.
 
 ## Alternativas consideradas
 

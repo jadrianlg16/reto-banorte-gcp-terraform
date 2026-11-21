@@ -2,7 +2,8 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: balanceador interno uno por región con acceso
+global (ADR [0022](0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md)).
 
 Tipo: Desviación del diagrama de red de la especificación.
 
@@ -25,8 +26,11 @@ El módulo `load-balancer` con `type = "external"` (`EXTERNAL_MANAGED`) y el mó
 `cloud-armor` se instancian en la etapa 5, en el proyecto de servicio del entorno
 (`<prefix>-<env>-app`). `security_policy` es obligatoria por validación en el externo. El
 balanceador interno (`type = "internal"`, `INTERNAL_MANAGED`) también vive en el proyecto de
-servicio y usa la subred proxy-only del spoke (`proxy`, `proxy_dr`). El tráfico desde
-on-premises sí entra solo por el hub (HA VPN y peering, ADR 0003 y 0006).
+servicio y usa la subred proxy-only del spoke de su región (`proxy`, `proxy_dr`). Es uno por
+región con cómputo (`module.internal_lb["primary"]` y, con `dr_active`,
+`module.internal_lb["dr"]`), y sus reglas de reenvío tienen `allow_global_access = true`:
+on-premises llega a cualquiera de los dos por la VPN de cualquier región (ADR 0022). El tráfico
+desde on-premises sí entra solo por el hub (HA VPN y peering, ADR 0003 y 0006).
 
 ## Alternativas consideradas
 
@@ -43,7 +47,11 @@ on-premises sí entra solo por el hub (HA VPN y peering, ADR 0003 y 0006).
 
 - Positivas: cada entorno tiene su IP, su certificado, su política de Cloud Armor y su registro
   de solicitudes; el despliegue de una aplicación no toca el hub. La conmutación a DR
-  (`dr_active`) cambia backends dentro del mismo estado de la etapa 5.
+  (`dr_active`) cambia los backends del externo y agrega el interno de DR dentro del mismo
+  estado de la etapa 5, sin destruir nada en la región primaria.
+- El balanceador interno de DR tiene otra IP (`internal_lb_ip_addresses`) y su propio
+  certificado: al conmutar hay que crear sus registros de autorización
+  (`internal_lb_dns_authorization_records_by_region`) y mover el registro DNS interno.
 - Negativas: no hay un único punto de entrada para reglas comunes de Cloud Armor; las reglas
   base (OWASP y límite de tasa) se repiten por entorno desde el módulo, no se heredan.
 - El certificado administrado solo se activa cuando los registros DNS A de `domain_names`

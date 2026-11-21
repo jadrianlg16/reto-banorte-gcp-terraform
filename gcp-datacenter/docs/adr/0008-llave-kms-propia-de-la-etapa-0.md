@@ -2,7 +2,9 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: el llavero y el bucket ya no están en
+`primary_region`, sino en la multirregión `us` / `US` o en una doble región (ADR
+[0022](0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md)).
 
 Tipo: Aclaración.
 
@@ -18,11 +20,15 @@ administrado por Google hasta reescribirse.
 ## Decisión
 
 La etapa 0 usa el módulo `kms` con `environment = "bootstrap"` para crear, en el proyecto
-semilla (`<prefix>-bootstrap-seed`), un llavero en `primary_region` y una llave `state`
+semilla (`<prefix>-bootstrap-seed`), un llavero en `lower(state_bucket_location)` (por
+defecto la multirregión `us`: `<prefix>-bootstrap-sec-keyring-us`) y una llave `state`
 (`ENCRYPT_DECRYPT`, rotación `7776000s`, `prevent_destroy`). Antes de crear el bucket da
 `roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave al agente de servicio de Cloud
-Storage del proyecto semilla. El bucket de estado nace con esa llave como predeterminada,
-versionado, acceso uniforme y sin acceso público. La salida `state_kms_key_id` la publica para
+Storage del proyecto semilla. El bucket de estado nace en `state_bucket_location` (`US` por
+defecto) o en la doble región de `state_bucket_dual_regions`, con esa llave como
+predeterminada, versionado, acceso uniforme y sin acceso público. La llave va en la ubicación
+de KMS que corresponde a la del bucket porque la CMEK de Cloud Storage lo exige (ADR 0022); una
+llave en `primary_region` no sirve para un bucket multirregional. La salida `state_kms_key_id` la publica para
 las demás etapas. La etapa 0 arranca con estado local y lo migra al bucket con
 `terraform init -migrate-state` (paso manual permitido y documentado en su runbook).
 
@@ -44,6 +50,8 @@ las demás etapas. La etapa 0 arranca con estado local y lo migra al bucket con
 - Negativas: hay un llavero fuera del proyecto `security`, que el equipo de seguridad debe
   vigilar aparte. Los llaveros no se pueden borrar y la llave tiene `prevent_destroy`, así que
   la etapa 0 no se puede destruir por completo.
+- La ubicación del bucket y del llavero no se cambia después de crearlos: se elige antes del
+  primer apply (runbook 01). Sin la región primaria, el estado y su llave siguen disponibles.
 - Perder la llave o deshabilitar sus versiones deja ilegible todo el estado; las versiones
   antiguas siguen siendo necesarias para leer estados escritos antes de cada rotación.
 - Quien lee el estado no necesita permisos de KMS: el cifrado y descifrado los hace el agente de
@@ -53,4 +61,5 @@ las demás etapas. La etapa 0 arranca con estado local y lo migra al bucket con
   antes de crear el bucket; no tiene entrada propia en §12 y se propone
   agregarla a [`docs/pendientes-apply.md`](../pendientes-apply.md) junto al runbook de la
   etapa 0 (quedó como punto 13). El agente se consulta con el número del proyecto semilla para
-  que la lectura ocurra en el apply y no en el plan (punto 27).
+  que la lectura ocurra en el apply y no en el plan (punto 27). Si se usa una doble región, que
+la combinación de regiones y `ASYNC_TURBO` sea válida con la llave en `us` (punto 31).

@@ -13,7 +13,9 @@ Contenido:
 1. [Lista inicial del contrato (§12)](#1-lista-inicial-del-contrato-12), puntos 1 a 12.
 2. [Agregados por los ADR](#2-agregados-por-los-adr), puntos 13 a 18.
 3. [Otros pendientes detectados al documentar](#3-otros-pendientes-detectados-al-documentar),
-   puntos 19 a 30.
+   puntos 19 a 30; y
+   [3.5 Agregados por la ronda de correcciones del 21 nov 2026](#35-agregados-por-la-ronda-de-correcciones-del-21-nov-2026),
+   puntos 31 a 51.
 4. [Marcadores `VERIFICAR-EN-APPLY` del código](#4-marcadores-verificar-en-apply-del-código),
    por etapa y módulo.
 5. [Alcance no cubierto y limitaciones conocidas](#5-alcance-no-cubierto-y-limitaciones-conocidas).
@@ -32,7 +34,7 @@ nuevo.
 Qué: que `terraform init`, `plan` y `apply` de cada raíz funcionen con `objectAdmin` sobre su
 prefijo y `objectViewer` sobre los prefijos que lee, con la cláusula
 `resource.type == "storage.googleapis.com/Bucket"` que permite listar.
-Dónde: `stages/0-bootstrap/service_accounts.tf` (`local.stages` y las condiciones, línea 89);
+Dónde: `stages/0-bootstrap/service_accounts.tf` (`local.stages` y las condiciones, línea 91);
 ADR 0010; contrato §6.2.
 Si falla: pasar a carpetas administradas de Cloud Storage con IAM propio por prefijo; plan B, un
 bucket por etapa (ADR 0010).
@@ -41,7 +43,8 @@ bucket por etapa (ADR 0010).
 Qué: el proveedor 6.x no tiene recurso para activar SCC; se activa en la consola. Verificar que,
 activado, la etapa 1 cree la notificación `<prefix>-common-ops-scc-findings` y que la cuenta de
 SCC pueda publicar en el tema.
-Dónde: `stages/1-org/main.tf` (líneas 139 y 173); runbook
+Dónde: `stages/1-org/main.tf` (líneas 139 y 182; el tema con `enforce_in_transit` es el
+punto 34); runbook
 [01](runbooks/01-arranque-etapa-0.md), paso de SCC.
 Si falla: la activación queda como paso manual del runbook 01 (ya es así). Si la notificación
 falla con SCC activo, revisar el IAM del tema `scc_findings` (propuesta).
@@ -73,7 +76,8 @@ leer las violaciones registradas y ajustar la regla.
 Qué: que las rutas aprendidas por BGP en el hub lleguen a los spokes por el peering (el hub
 exporta rutas personalizadas, el spoke las importa) y que on-premises reciba y alcance los /16
 de los spokes.
-Dónde: `modules/network-spoke/main.tf:181`; anuncios en `stages/3-networks/vpn.tf`; ADR 0003.
+Dónde: `modules/network-spoke/main.tf:181`; anuncios en `stages/3-networks/vpn.tf` (las dos
+VPN: punto 37); ADR 0003.
 Si falla: revisar `bgp_advertised_ranges` (salida del hub) y la exportación del peering
 `hub_to_spoke` (propuesta).
 
@@ -81,9 +85,12 @@ Si falla: revisar `bgp_advertised_ranges` (salida del hub) y la exportación del
 Qué: que on-premises reciba el anuncio de `35.199.192.0/19` y responda a las consultas que el
 hub le reenvía para `onprem_dns_domain`; y que on-premises resuelva las zonas de GCP por las IP
 de `dns_inbound_forwarder_ips`.
-Dónde: `stages/3-networks/dns.tf:8`, `modules/dns/main.tf:92`.
-Si falla: en modo simulado es esperado (no hay servidor DNS, ver §5); con on-premises real,
-revisar el anuncio y el firewall del lado on-premises (propuesta).
+Dónde: `stages/3-networks/dns.tf:13`, `modules/dns/main.tf:92`.
+Si falla: en modo simulado ya hay camino: la política jerárquica delega `35.199.192.0/19` a
+`onprem-sim` (`delegate-dns-onprem-sim`) y su política de red lo permite
+(`module.firewall_onprem_sim`); falta crear a mano la VM DNS con la IP de `onprem_dns_servers`
+(punto 36). Con on-premises real, revisar el anuncio y el firewall del lado on-premises
+(propuesta).
 
 **8. Rango del plano de control de GKE.**
 Qué: si el clúster se crea con Private Service Connect, `gke_master` (`10.X.38.0/28`) queda
@@ -112,11 +119,15 @@ Dónde: todas las raíces; marcadores de `modules/gke/main.tf:143`, `modules/bac
 Si falla: cada diferencia perpetua se corrige en el módulo (no con `ignore_changes` a ciegas);
 para el destroy, `deletion_policy = "DELETE"` y `deletion_protection = false` en dev.
 
-**12. Protección de rama y revisores del entorno `prod`.**
-Qué: que el plan de GitHub del equipo permita exigir las comprobaciones de `pr.yml` en `main` y
-dos revisores en el entorno `prod`.
-Dónde: [`pipeline.md`](pipeline.md) §4.
-Si falla: sin revisores obligatorios, prod se aplicaría sin aprobación; no encender
+**12. Protección de rama, comprobaciones obligatorias y revisores de `common` y `prod`.**
+Qué: que el plan de GitHub del equipo permita proteger `main` con las seis comprobaciones
+obligatorias de `pr.yml` (incluida `plan-gate`) y revisores obligatorios en los entornos
+`common` y `prod`; y que la configuración se haga de verdad. Nada de esto está en el
+repositorio: hasta que una persona lo configure, ni `plan-gate` ni los entornos bloquean nada.
+Dónde: lista completa de lo que se configura en GitHub en [`pipeline.md`](pipeline.md) §2
+(variables y entornos) y §4 (protección de rama, nombres exactos de las comprobaciones, revisores
+y plan de GitHub); ADR 0025.
+Si falla: sin revisores obligatorios, `common` y `prod` se aplicarían sin aprobación; no encender
 `GCP_ENABLED` hasta resolverlo (propuesta).
 
 ---
@@ -129,7 +140,7 @@ Los ADR proponen estas entradas porque no tenían una propia en §12.
 Qué: que `terraform init -migrate-state` copie el estado local al bucket y que el agente de Cloud
 Storage del proyecto semilla tenga `cryptoKeyEncrypterDecrypter` sobre la llave `state` antes de
 crear el bucket.
-Dónde: `stages/0-bootstrap/main.tf:166`; runbook [01](runbooks/01-arranque-etapa-0.md).
+Dónde: `stages/0-bootstrap/main.tf:194`; runbook [01](runbooks/01-arranque-etapa-0.md).
 La consulta del agente por número de proyecto es el punto 27.
 Si falla: el permiso puede tardar en propagarse: repetir el apply (lo dice el código). La
 migración se repite mientras exista el `terraform.tfstate` local.
@@ -138,8 +149,10 @@ migración se repite mientras exista el `terraform.tfstate` local.
 Qué: que la API acepte `cloudsql.iam_authentication`, `pgaudit.log` con varias clases y los
 roles `cloudsql.client`/`cloudsql.instanceUser` condicionados a la instancia, y que se entre con
 un token de IAM.
-Dónde: `modules/cloud-sql/main.tf:10` y `:356`. La cuenta de la etapa 5 asigna esos roles con
-una concesión delegada de la etapa 1 (punto 28).
+Dónde: `modules/cloud-sql/main.tf:10` y `:366`. La cuenta de la etapa 5 asigna esos roles a
+`workload`, `run` y `mig` (según el cómputo encendido) con el `projectIamAdmin` condicionado que
+le da la etapa 4 sobre el proyecto de servicio (`stages/4-projects/envs/*/iam.tf`,
+`workloads_iam_admin_condition`; ya no es una concesión de la etapa 1 en la carpeta).
 Si falla: separar las clases de `pgaudit.log` o quitar la condición de los roles (propuesta).
 
 **15. CMEK y bloqueo del bucket de logs (ADR 0018).**
@@ -180,17 +193,20 @@ valores de etiqueta del spoke, `projectIamAdmin` en el host para
 `container.hostServiceAgentUser`, `roles/browser` en el host).
 Ahora: la etapa 1 le da en las carpetas de entorno `roles/resourcemanager.tagAdmin` y
 `roles/resourcemanager.projectIamAdmin` con condición (solo puede asignar
+`roles/compute.networkUser`, `roles/compute.networkViewer` y
 `roles/container.hostServiceAgentUser`), además de `compute.xpnAdmin` y `projectCreator`
 (`stages/1-org/iam.tf`, `stage_grants` y `stage_delegated_project_iam`). `roles/browser` ya no
 se pide: el README de la etapa 4 supone que `xpnAdmin` basta para leer la carpeta y el host.
-Lo que queda por verificar en GCP: puntos 28 y 29.
+Lo que queda por verificar en GCP: puntos 28, 29 y 43.
 
 **20. `roles/certificatemanager.editor` para `<prefix>-tf-5-workloads`. Resuelto en el código
 (21 nov 2026).**
 Era: el balanceador interno (`enable_internal_lb`) crea un certificado de Certificate Manager y
 la etapa 1 no asignaba ese rol.
-Ahora: está en `env_folder_roles` de `5-workloads` en `stages/1-org/iam.tf` y en el README de la
-etapa 1 y de la etapa 5.
+Ahora (corregido otra vez el mismo día): la etapa 1 ya no da a `5-workloads` ningún rol de
+carpeta (las carpetas también contienen el host `net-spoke`). El rol está en
+`workloads_project_roles` de `stages/4-projects/envs/*/iam.tf`, que la etapa 4 asigna sobre cada
+proyecto de servicio que crea.
 
 **21. Comando de migración del README de la etapa 0. Resuelto en el código (21 nov 2026).**
 Era: el README de `stages/0-bootstrap` borraba `backend_override.tf` y después llamaba a
@@ -226,12 +242,13 @@ Si falla: seguir el runbook [04](runbooks/04-conmutacion-a-dr.md) (apply con `-t
 cómputo y balanceadores durante el incidente) y diseñar la reconciliación en el primer
 simulacro.
 
-**25. Imagen de Cloud Run en un registro regional.**
-Qué: el ejemplo de prod usa `us-central1-docker.pkg.dev/...`; con la región primaria caída, el
+**25. Imagen de Cloud Run en un registro regional. Resuelto en el código (21 nov 2026).**
+Era: el ejemplo de prod usaba `us-central1-docker.pkg.dev/...`; con la región primaria caída, el
 servicio de DR no podría descargarla.
-Dónde: `stages/5-workloads/envs/prod/terraform.tfvars.example` (`cloud_run_image`).
-Si falla: usar un repositorio multirregional de Artifact Registry (`us-docker.pkg.dev`) o
-replicar la imagen en `dr_region` (propuesta).
+Ahora: la etapa 4 crea un repositorio multirregional por aplicación
+(`<prefix>-<env>-app-<app>-images-us`, ADR 0024) y el ejemplo de prod usa
+`us-docker.pkg.dev/...-images-us/...` (`cloud_run_image`). Lo que queda por verificar en GCP:
+puntos 41 y 42.
 
 **26. Llave de aplicación con guion. Resuelto en el código (21 nov 2026).**
 Era: la etapa 4 admitía llaves de `applications` con guiones (`^[a-z][a-z0-9-]*[a-z0-9]$`) y
@@ -252,26 +269,29 @@ la lectura correría en el plan del primer apply contra un proyecto que todavía
 número solo se conoce al crearlo, así que la lectura se pospone al apply. Verificar que la API
 de Cloud Storage acepte el número en `projects/<proyecto>/serviceAccount` y devuelva el mismo
 agente.
-Dónde: `stages/0-bootstrap/main.tf:106` (proyecto semilla); `modules/log-export/main.tf:29`
+Dónde: `stages/0-bootstrap/main.tf:116` (proyecto semilla); `modules/log-export/main.tf:29`
 (variable opcional `project_number`, que la etapa 1 pasa para el proyecto `logging`);
-`stages/4-projects/envs/*/service_agents.tf:55`.
+`stages/4-projects/envs/*/service_agents.tf:59`.
 Si falla: sin indicación en el código. Propuesta: volver a consultar con el ID y crear el
 proyecto en un apply previo con `-target` del módulo del proyecto.
 
-**28. Concesiones delegadas de `projectIamAdmin` en las carpetas de entorno (HYPOTHESIS).**
-Qué: la etapa 1 da a `<prefix>-tf-4-projects` y a `<prefix>-tf-5-workloads`
-`roles/resourcemanager.projectIamAdmin` en las carpetas `dev`, `qa` y `prod` con la condición
-`api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`: la de la
-etapa 4 solo puede asignar `roles/container.hostServiceAgentUser` (agente de GKE en el host del
-spoke) y la de la etapa 5 solo `roles/cloudsql.client` y `roles/cloudsql.instanceUser` (módulo
-`cloud-sql`). Verificar que una condición de ese tipo se acepte en una carpeta, que se evalúe al
-cambiar el IAM de los proyectos de abajo, y que las asignaciones de proyecto que esas etapas
-hacen sobre proyectos que no crean (el host del spoke en la 4; el proyecto de servicio en la 5,
-`modules/cloud-sql/main.tf`, recurso `login`) se limiten a esos roles.
-Dónde: `stages/1-org/iam.tf:125` (`stage_delegated_project_iam`); README de la etapa 1.
-Si falla: sin indicación en el código. Propuesta: asignar el rol en el proyecto (la etapa 3 en
-el host; la etapa 4 en el proyecto de servicio) en lugar de la carpeta, con PR revisado por
-seguridad.
+**28. Concesiones delegadas de `projectIamAdmin` (HYPOTHESIS).**
+Qué: dos concesiones con la condición
+`api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`:
+- la etapa 1 da a `<prefix>-tf-4-projects` `roles/resourcemanager.projectIamAdmin` en las
+  carpetas `dev`, `qa` y `prod`, limitado a `roles/compute.networkUser`,
+  `roles/compute.networkViewer` y `roles/container.hostServiceAgentUser` (lo que la etapa 4
+  asigna en el host `net-spoke`, que no crea);
+- la etapa 4 da a `<prefix>-tf-5-workloads` el mismo rol sobre cada proyecto de servicio (no en
+  la carpeta), limitado a `roles/cloudsql.client` y `roles/cloudsql.instanceUser` (módulo
+  `cloud-sql`, recurso `login`).
+Verificar que la condición se acepte en una carpeta y en un proyecto, que la de carpeta se
+evalúe al cambiar el IAM de los proyectos de abajo, y que esas cuentas no puedan asignar otros
+roles.
+Dónde: `stages/1-org/iam.tf:115` (`stage_delegated_project_iam`);
+`stages/4-projects/envs/*/iam.tf` (`workloads_iam_admin_condition`); README de las etapas 1 y 4.
+Si falla: sin indicación en el código. Propuesta: para la etapa 4, asignar los roles en el host
+desde la etapa 3 (dueña del proyecto), con PR revisado por seguridad.
 
 **29. Permisos heredados de la cuenta `<prefix>-tf-4-projects` (HYPOTHESIS).**
 Qué: que `roles/resourcemanager.tagAdmin` en la carpeta del entorno se herede a las llaves de
@@ -294,39 +314,221 @@ spoke o en las carpetas desde la etapa 1.
 
 ---
 
+## 3.5 Agregados por la ronda de correcciones del 21 nov 2026
+
+Lo que dejaron por comprobar en GCP las correcciones de la revisión independiente (ADR 0021 a
+0026).
+
+**31. Bucket de estado en doble región (ADR 0022).**
+Qué: si se usa `state_bucket_dual_regions`, que las dos regiones formen una doble región
+configurable válida dentro de `state_bucket_location`, con `rpo = "ASYNC_TURBO"` y la llave del
+llavero `us`. Con el valor por defecto (`US`, multirregión) no aplica.
+Dónde: `stages/0-bootstrap/main.tf:191`.
+Si falla: la API lo valida al crear; dejar `state_bucket_dual_regions = []` (multirregión). La
+ubicación no se cambia después de crear el bucket.
+
+**32. Política de denegación de la carpeta `bootstrap` (ADR 0023).**
+Qué: que `google_iam_deny_policy.bootstrap_folder` niegue a la cuenta de `1-org` también
+`folders.setIamPolicy` sobre la propia carpeta (la documentación solo dice que se hereda hacia
+abajo); que la API de políticas de denegación (IAM v2) acepte las credenciales de usuario de
+quien corre la etapa 0 sin proyecto de cuota explícito; y que esa persona tenga
+`roles/iam.denyAdmin` en la organización (runbook 01).
+Dónde: `stages/0-bootstrap/deny_policy.tf:22`.
+Si falla: sin indicación en el código. Para la cuota, ver punto 22.
+
+**33. Permisos de los roles personalizados de la etapa 0 (ADR 0015 y 0023).**
+Qué: que todos los permisos de `<prefix>TfKmsSecretIamGranter` (`kms_secret_iam_granter`) y de
+`<prefix>TfSecretContainerAdmin` (`secret_container_admin`) se admitan en roles personalizados
+de organización, y que basten a las etapas 4 y 2.
+Dónde: `stages/0-bootstrap/service_accounts.tf:211` y `:237`.
+Si falla: sin indicación en el código; quitar el permiso rechazado y revisar si la etapa lo
+necesita (propuesta).
+
+**34. Tema de hallazgos de SCC con `enforce_in_transit` (ADR 0018).**
+Qué: que SCC siga publicando en `<prefix>-common-ops-scc-findings` con
+`allowed_persistence_regions = [primary_region]` y `enforce_in_transit = true` (publica por el
+extremo global de Pub/Sub).
+Dónde: `stages/1-org/main.tf:172`.
+Si falla: sin indicación en el código. Propuesta: quitar `enforce_in_transit` y documentar que
+un mensaje podría procesarse fuera de la región de su llave.
+
+**35. Rol personalizado de organización asignado en un proyecto (HYPOTHESIS).**
+Qué: que la etapa 1 pueda asignar en el proyecto `security` los roles personalizados de
+organización de la etapa 0 (`kms_secret_iam_role_id` a `4-projects`, `secret_container_admin`
+a `2-security`), referidos como `organizations/<org>/roles/<id>`.
+Dónde: `stages/1-org/iam.tf` (`stage_grants`, línea 93 y 69); sin marcador en el código.
+Si falla: sin indicación.
+
+**36. Reenvío DNS en modo simulado con una VM DNS (ADR 0006).**
+Qué: con una VM DNS creada a mano en `onprem-sim` en la IP de `onprem_dns_servers`, que una
+consulta de un spoke para `onprem_dns_domain` siga zona de peering → zona de reenvío del hub →
+VPN → `onprem-sim` y que la respuesta vuelva a `35.199.192.0/19` por la ruta anunciada por BGP;
+y que la regla `delegate-dns-onprem-sim` y `module.firewall_onprem_sim` lo dejen pasar.
+Dónde: `stages/3-networks/firewall.tf:90`, `stages/3-networks/dns.tf:13`; punto 7.
+Si falla: revisar la delegación de la política jerárquica (punto 39) y los anuncios de BGP.
+
+**37. Dos VPN y su preferencia (ADR 0022).**
+Qué: que on-premises reciba los anuncios de las dos VPN y prefiera la primaria (prioridad 100
+frente a `vpn_dr_route_priority`, 200), que al caer la primaria el tráfico pase a la de DR, y
+que las cuatro sesiones BGP del hub queden activas (con on-premises simulado, también las del
+router de `onprem-sim` en `dr_region`).
+Dónde: `stages/3-networks/vpn.tf:127`.
+Si falla: sin indicación en el código; revisar `vpn_dr_bgp_ranges` y la prioridad anunciada.
+
+**38. Regreso asimétrico entre las dos VPN.**
+Qué: con enrutamiento global, un flujo hacia la región de DR puede entrar por la VPN primaria y
+volver por la de DR; un firewall con estado en on-premises debe admitirlo.
+Dónde: `stages/3-networks/README.md`, "Enrutamiento con dos VPN" (el marcador está en el
+README, no en un `.tf`).
+Si falla: ajustar el firewall de on-premises (fuera del repositorio).
+
+**39. URL de `target_resources` sin diferencia perpetua (HYPOTHESIS).**
+Qué: la regla `delegate-dns-onprem-sim` usa como `target_resources` la URL
+`https://www.googleapis.com/compute/v1/projects/<hub>/global/networks/<onprem-sim>`; que la API
+la devuelva igual y el segundo plan no muestre cambios.
+Dónde: `stages/3-networks/firewall.tf` (`onprem_sim_network_url`); sin marcador en el código.
+Si falla: usar la forma que devuelva la API (propuesta); queda cubierto por el punto 11.
+
+**40. Zonas `gcr.io`, `pkg.dev` y `run.app` por el VIP (ADR 0026).**
+Qué: que un nodo de GKE descargue imágenes de `pkg.dev` y que una llamada a un servicio
+`*.run.app` desde el spoke llegue por el VIP de `google_apis_vip` (en prod, dentro del
+perímetro de VPC-SC).
+Dónde: `stages/3-networks/envs/*/dns.tf:27`.
+Si falla: sin indicación en el código; en dev y qa se puede probar `google_apis_vip = "private"`.
+
+**41. CMEK del repositorio de Artifact Registry (ADR 0024).**
+Qué: que el agente de Artifact Registry tenga `cryptoKeyEncrypterDecrypter` sobre la llave
+`artifacts` antes de crear el repositorio y que una llave de la multirregión `us` se acepte para
+un repositorio de esa multirregión.
+Dónde: `stages/4-projects/envs/*/artifacts.tf:32`.
+Si falla: repetir el apply si es propagación de IAM (propuesta).
+
+**42. Binary Authorization con la imagen de la aplicación (ADR 0024).**
+Qué: que un despliegue de Cloud Run y un pod de GKE con una imagen del repositorio de la
+aplicación pasen, y que una imagen de otro registro se rechace con
+`ENFORCED_BLOCK_AND_AUDIT_LOG`. En prod, además, que Binary Authorization funcione con el
+perímetro forzado (`binaryauthorization.googleapis.com` no está en
+`vpc_sc_restricted_services`). La prueba de extremo a extremo y los ayudantes de Terratest usan
+por defecto la imagen pública `us-docker.pkg.dev/cloudrun/container/hello`, que esta política
+rechaza (§5).
+Dónde: `stages/4-projects/envs/*/artifacts.tf:68`.
+Si falla: revisar `binary_authorization_allowlist_patterns`; para las pruebas, copiar la imagen
+al repositorio de la aplicación (propuesta).
+
+**43. `networkViewer` en el host basta a la etapa 5 (ADR 0023).**
+Qué: que `compute.networkViewer` en el host más `networkUser` por subred basten para crear Cloud
+SQL, Memorystore y Filestore con IP privada (PSA) desde el proyecto de servicio.
+Dónde: `stages/4-projects/envs/*/iam.tf:213`.
+Si falla: la alternativa documentada en el código es `networkUser` en el host (todas las
+subredes), que se decide en revisión.
+
+**44. On-premises llega al balanceador interno de DR (ADR 0005 y 0022).**
+Qué: con `allow_global_access = true`, que on-premises alcance la IP del balanceador interno de
+`dr_region` por la VPN de la región primaria y por la de DR.
+Dónde: `modules/load-balancer/main.tf:463`.
+Si falla: sin indicación en el código.
+
+**45. Backup and DR frente a la configuración de respaldos de Cloud SQL.**
+Qué: con `backup_plan_managed = true` (etapa 5 con `enable_backup`), que después de asociar el
+plan un segundo plan no muestre cambios en `settings.backup_configuration`; y que la API acepte
+`log_retention_days` (`sql_log_retention_days`, 7 por defecto) y la recuperación a un punto en el
+tiempo cubra esos días.
+Dónde: `modules/cloud-sql/main.tf:98`, `modules/backup-dr/main.tf:51`.
+Si falla: el código indica agregar `ignore_changes` sobre ese bloque.
+
+**46. Enlace de Workload Identity (ADR 0012).**
+Qué: que `google_service_account_iam_member.workload_identity` se cree con el pool
+`<proyecto>.svc.id.goog` del primer clúster y que un pod con la cuenta de Kubernetes
+`<gke_workload_namespace>/<gke_workload_ksa_name>` (anotada con
+`iam.gke.io/gcp-service-account`) obtenga la identidad de la cuenta `workload` y entre a Cloud
+SQL por IAM. HYPOTHESIS: durante la conmutación con la región primaria caída, leer
+`module.gke["primary"]` en el plan podría fallar.
+Dónde: `stages/5-workloads/envs/*/compute.tf` (recurso `workload_identity`); sin marcador en el
+código.
+Si falla: sin indicación; en la conmutación, `-refresh=false` o `-target` (propuesta, runbook 04).
+
+**47. Permisos de la etapa 4 para el repositorio y la política.**
+Qué: que la cuenta de la etapa 4, como creadora del proyecto de servicio, pueda crear el
+repositorio, su IAM y la política de Binary Authorization; y si el agente de GKE necesita
+`roles/compute.securityAdmin` en el host para sus reglas de firewall.
+Dónde: `stages/4-projects/envs/*/README.md`, sección `VERIFICAR-EN-APPLY` (el marcador está en el
+README, no en un `.tf`).
+Si falla: el README indica `roles/artifactregistry.admin` y
+`roles/binaryauthorization.policyEditor` en el proyecto; para GKE, crear en la etapa 3 las reglas
+que GKE reporte.
+
+**48. Estabilidad de la huella del plan (ADR 0025).**
+Qué: que un segundo plan sin cambios reales en el medio dé la misma huella
+(`scripts/plan-fingerprint.py`) en cada raíz; un valor que el proveedor recalcule en cada plan
+haría fallar el apply (nunca aplicar algo no revisado).
+Dónde: [`pipeline.md`](pipeline.md) §1.2.
+Si falla: excluir de la huella el atributo inestable, con revisión de seguridad (propuesta).
+
+**49. Recursos no administrados: formatos de Cloud Asset y lista de permitidos.**
+Qué: el formato de `name` que devuelve Cloud Asset para cada tipo y que
+`scripts/unmanaged-allowlist.txt` cubra lo que crean GKE, los MIG y los servicios
+administrados. El trabajo está construido y probado con datos de ejemplo, pero no se ha corrido
+contra una carpeta real.
+Dónde: [`pipeline.md`](pipeline.md) §1.3; `scripts/unmanaged-resources.py`.
+Si falla: agregar reglas con su motivo, nunca un tipo completo sin razón.
+
+**50. Cuenta de auditoría y prueba de humo de dev.**
+Qué: que la cuenta `GCP_AUDIT_SERVICE_ACCOUNT` (creada a mano) tenga los roles de solo lectura
+de [`pipeline.md`](pipeline.md) §3 y que `TestDevSmoke` pase después del apply de dev.
+Dónde: [`pipeline.md`](pipeline.md) §1.2 y §3; `tests/e2e/smoke_test.go`.
+Si falla: ajustar los roles de la cuenta; si la prueba falla, qa no se aplica.
+
+**51. Primera corrida de `pr.yml` (ADR 0021 y 0025).**
+Qué: que la pata `estático (terraform 1.9.8)` pase con `--skip test` y que `plan-gate` dé verde
+sin GCP y rojo cuando falle un `plan <raíz>`. Esta documentación no tiene evidencia de una
+corrida de los flujos corregidos en GitHub (no comprobado).
+Dónde: `.github/workflows/pr.yml`; [`pipeline.md`](pipeline.md) §1.1.
+Si falla: corregir el flujo antes de marcar las comprobaciones como obligatorias (punto 12).
+
+---
+
 ## 4. Marcadores `VERIFICAR-EN-APPLY` del código
 
-Conteo al 21 nov 2026:
+Conteo al 21 nov 2026, desde `gcp-datacenter/`:
 
 ```bash
-grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l    # 84
-grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l   # 46 archivos
+grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 105
+grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                      # 51 archivos
+grep -rn "VERIFICAR-EN-APPLY" modules --include=*.tf | wc -l                              # 44
+grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep -v /envs/ | wc -l              # 19
+grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep /envs/ | wc -l                 # 42 (14 por entorno)
 ```
 
-Fuera de los `.tf`, solo los README mencionan `VERIFICAR-EN-APPLY`; esta lista cuenta los
-`.tf`, salvo dos marcadores que solo están en README (al final de esta sección). Las raíces de
-`envs/{dev,qa,prod}` son idénticas, así que sus marcadores se listan una vez con `envs/*` y
-"(x3)": las 84 líneas son 64 marcadores distintos (41 en módulos y 23 en etapas). "Si falla"
-cita el código cuando lo dice; si no, la entrada dice "sin indicación".
+Las raíces de `envs/{dev,qa,prod}` tienen sus marcadores en las mismas líneas (comprobado el
+21 nov 2026 comparando archivo y línea de los tres entornos: 14 líneas, cada una presente en los
+tres), así que se listan una vez con `envs/*` y "(x3)": las 105 líneas son 77 marcadores
+distintos (44 en módulos y 33 en etapas). Fuera de los `.tf`, los README de algunas raíces
+tienen marcadores propios (al final de esta sección); `tests/` tiene otros cuatro en sus `.tf`,
+fuera de este conteo. "Si falla" cita el código cuando lo dice; si no, la entrada dice "sin
+indicación".
 
 ### Etapa 0 (`stages/0-bootstrap`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `main.tf:106` | Que la API de Cloud Storage acepte el número del proyecto semilla al consultar su agente (punto 27) | Ver punto 27 |
-| `main.tf:166` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply (propagación de IAM) |
-| `service_accounts.tf:89` | `init`/`plan`/`apply` del backend con las condiciones de §6.2 (punto 1) | Carpetas administradas con IAM propio por prefijo |
-| `service_accounts.tf:208` | Que los permisos del rol personalizado `<prefix>TfKmsSecretIamGranter` se admitan en roles personalizados | Sin indicación; quitar el permiso rechazado y revisar si la etapa 4 lo necesita |
-| `wif.tf:32` | Que el mapeo de `attribute.environment` no falle en trabajos sin entorno de GitHub | Sin indicación |
+| `deny_policy.tf:22` | Política de denegación de la carpeta `bootstrap`: también niega `folders.setIamPolicy` sobre la propia carpeta, y la API de IAM v2 acepta las credenciales de usuario sin proyecto de cuota (punto 32) | Ver punto 32 |
+| `main.tf:116` | Que la API de Cloud Storage acepte el número del proyecto semilla al consultar su agente (punto 27) | Ver punto 27 |
+| `main.tf:191` | Doble región válida en `state_bucket_dual_regions` (punto 31) | Ver punto 31 |
+| `main.tf:194` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket (punto 13) | Repetir el apply (propagación de IAM) |
+| `service_accounts.tf:91` | `init`/`plan`/`apply` del backend con las condiciones de §6.2 (punto 1) | Carpetas administradas con IAM propio por prefijo |
+| `service_accounts.tf:211` | Permisos del rol personalizado `<prefix>TfKmsSecretIamGranter` admitidos en roles personalizados (punto 33) | Ver punto 33 |
+| `service_accounts.tf:237` | Permisos del rol personalizado `<prefix>TfSecretContainerAdmin` admitidos en roles personalizados (punto 33) | Ver punto 33 |
+| `wif.tf:36` | Que el mapeo de `attribute.environment` no falle en trabajos sin entorno de GitHub | Sin indicación |
 
 ### Etapa 1 (`stages/1-org`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `iam.tf:125` | Condición con `iam.googleapis.com/modifiedGrantsByRole` aceptada en una carpeta y evaluada al cambiar el IAM de los proyectos de abajo (punto 28) | Ver punto 28 |
+| `iam.tf:115` | Condición con `iam.googleapis.com/modifiedGrantsByRole` aceptada en una carpeta y evaluada al cambiar el IAM de los proyectos de abajo (punto 28) | Ver punto 28 |
 | `main.tf:118` | Que `iam.allowedPolicyMemberDomains` no rechace los `principalSet://` de WIF en cambios futuros | Sin indicación |
 | `main.tf:139` | Activación de SCC (punto 2) | Paso manual del runbook 01 |
-| `main.tf:173` | Que la cuenta de SCC pueda publicar en el tema de hallazgos | Sin indicación |
+| `main.tf:172` | SCC publica en el tema con `enforce_in_transit = true` (punto 34) | Ver punto 34 |
+| `main.tf:182` | Que la cuenta de SCC pueda publicar en el tema de hallazgos | Sin indicación |
 | `providers.tf:4` | Que todas las APIs acepten el proyecto semilla como proyecto de cuota | Sin indicación |
 
 ### Etapa 2 (`stages/2-security`)
@@ -339,33 +541,39 @@ cita el código cuando lo dice; si no, la entrada dice "sin indicación".
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `dns.tf:8` | Con `simulate_onprem = true` no hay servidor DNS en `onprem_dns_servers` | Probar con un servidor real o una VM DNS creada a mano en `onprem-sim` |
-| `firewall.tf:54` | Que el tráfico delegado con `goto_next` (la política de la organización no tiene reglas allow) llegue a la política del spoke, que las verificaciones de salud lleguen a los backends con `lb_backend` y que IAP solo entre a las VM con `iap_ssh` | Sin indicación |
+| `dns.tf:13` | Resolución de `onprem_dns_domain` desde un spoke con la VM DNS de `onprem-sim` (puntos 7 y 36) | Ver punto 36 |
+| `firewall.tf:73` | Que el tráfico delegado con `goto_next` llegue a la política del spoke, que las verificaciones de salud lleguen a los backends con `lb_backend` y que IAP solo entre a las VM con `iap_ssh` | Sin indicación |
+| `firewall.tf:90` | Que la VM DNS de `onprem-sim` responda a una consulta de un spoke y la respuesta vuelva por la ruta anunciada (punto 36) | Ver punto 36 |
+| `vpn.tf:127` | Anuncios de las dos VPN, preferencia por la primaria y paso a la de DR (punto 37) | Ver punto 37 |
 
 ### Etapa 3, spokes (`stages/3-networks/envs/*`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `dns.tf:30` (x3) | Que la cuenta de la etapa pueda adjuntar la zona del entorno a la VPC hub (`dns.networks.bindPrivateDNSZone` en net-hub) y que on-premises la resuelva por el reenvío entrante | Sin indicación |
+| `dns.tf:27` (x3) | Imágenes de `pkg.dev` y llamadas a `*.run.app` por el VIP elegido (punto 40) | Ver punto 40 |
+| `dns.tf:63` (x3) | Que la cuenta de la etapa pueda adjuntar la zona del entorno a la VPC hub (`dns.networks.bindPrivateDNSZone` en net-hub) y que on-premises la resuelva por el reenvío entrante | Sin indicación |
 
 ### Etapa 4 (`stages/4-projects/envs/*`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `iam.tf:169` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
+| `artifacts.tf:32` (x3) | CMEK del repositorio de Artifact Registry (punto 41) | Ver punto 41 |
+| `artifacts.tf:68` (x3) | Binary Authorization: la imagen del repositorio pasa y otra se rechaza (punto 42) | Ver punto 42 |
+| `iam.tf:213` (x3) | `networkViewer` en el host más `networkUser` por subred bastan a la etapa 5 para PSA (punto 43) | `networkUser` en el host, decidido en revisión |
+| `iam.tf:274` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
 | `service_agents.tf:10` (x3) | Que `generateServiceIdentity` acepte `sqladmin`, `file`, `redis` y `gkebackup` | Quitar el servicio de la lista (su agente existe al habilitar la API) |
 | `service_agents.tf:12` (x3) | Que los agentes de `container`, `compute` y `run` existan justo después de habilitar sus APIs | Agregar esos servicios a la lista |
-| `service_agents.tf:55` (x3) | Que la API de Cloud Storage acepte el número del proyecto de servicio al consultar su agente (punto 27) | Ver punto 27 |
+| `service_agents.tf:59` (x3) | Que la API de Cloud Storage acepte el número del proyecto de servicio al consultar su agente (punto 27) | Ver punto 27 |
 | `vpc_sc.tf:10` (x3) | CMEK de `security` con el perímetro forzado (punto 4) | Ver punto 4 |
 
 ### Etapa 5 (`stages/5-workloads/envs/*`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `load_balancing.tf:78` (x3) | Que el mismo grupo de instancias y el mismo NEG sin servidor sirvan a la vez al balanceador externo y al interno | Sin indicación |
-| `load_balancing.tf:148` (x3) | El certificado administrado se activa cuando los registros A de `domain_names` apuntan a `lb_ip_address` | Crear los registros en la zona pública (fuera del repositorio) |
-| `load_balancing.tf:176` (x3) | Registros de `dns_authorization_records` para emitir el certificado interno | Crearlos en la zona DNS pública del dominio |
-| `operations.tf:51` (x3) | Formato del recurso de Cloud SQL en la asociación de Backup and DR y roles de la cuenta de la bóveda | Sin indicación |
+| `load_balancing.tf:98` (x3) | Que el mismo grupo de instancias y el mismo NEG sin servidor sirvan a la vez al balanceador externo y al interno | Sin indicación |
+| `load_balancing.tf:172` (x3) | El certificado administrado se activa cuando los registros A de `domain_names` apuntan a `lb_ip_address` | Crear los registros en la zona pública (fuera del repositorio) |
+| `load_balancing.tf:201` (x3) | Registros de `dns_authorization_records` para emitir el certificado interno, uno por región (`internal_lb_dns_authorization_records_by_region`) | Crearlos en la zona DNS pública del dominio |
+| `operations.tf:54` (x3) | Formato del recurso de Cloud SQL en la asociación de Backup and DR y roles de la cuenta de la bóveda | Sin indicación |
 
 ### Módulos
 
@@ -374,16 +582,18 @@ cita el código cuando lo dice; si no, la entrada dice "sin indicación".
 | `backup-dr/main.tf:19` | API `backupdr` habilitada y bóveda en otra región que acepte respaldos de VM y Cloud SQL | Sin indicación |
 | `backup-dr/main.tf:21` | El destroy de dev falla mientras la bóveda tenga respaldos dentro de la retención forzada | El procedimiento de destroy debe contemplarlo (esperar la retención o `enable_backup = false` en dev, propuesta) |
 | `backup-dr/main.tf:35` | Plan de Cloud SQL (`sqladmin.googleapis.com/Instance`) en el proveedor 6.x y roles de la cuenta de la bóveda (salida `vault_service_account`) | Otorgar los roles en la etapa 4 o 5 |
-| `backup-dr/main.tf:79` | Backup for GKE en otra región, complemento activo y permiso del agente de `gkebackup` sobre la llave | Sin indicación |
+| `backup-dr/main.tf:51` | `log_retention_days` aceptado y recuperación a un punto en el tiempo de esos días (punto 45) | Ver punto 45 |
+| `backup-dr/main.tf:85` | Backup for GKE en otra región, complemento activo y permiso del agente de `gkebackup` sobre la llave | Sin indicación |
 | `cloud-run/main.tf:9` | Salida directa a la VPC con red y subred del host como `projects/<host>/...` | Sin indicación |
 | `cloud-run/main.tf:32` | `invoker_iam_disabled` frente a la política de organización (punto 16) | Ver punto 16 |
 | `cloud-sql/main.tf:10` | `pgaudit.log` con varias clases; la réplica acepta las mismas banderas | Ver punto 14 |
-| `cloud-sql/main.tf:190` | Agente de Cloud SQL con permiso sobre `kms_key` (lo da la etapa 4) | Sin indicación |
-| `cloud-sql/main.tf:192` | Conexión de PSA de la red existente antes del create | Sin indicación |
-| `cloud-sql/main.tf:320` | Réplica REGIONAL entre regiones con CMEK; retraso de replicación por debajo de 15 min | Si el retraso supera 15 min, el objetivo de RPO no se cumple (README del módulo) |
-| `cloud-sql/main.tf:356` | Roles condicionados por `resource.name` y entrada con token IAM (punto 14) | Ver punto 14 |
-| `compute-mig/main.tf:70` | Etiquetas seguras de la plantilla en las instancias y reglas `lb_backend` aplicadas | Sin indicación |
-| `compute-mig/main.tf:162` | `max_surge_fixed` igual al número de zonas del MIG regional | Sin indicación |
+| `cloud-sql/main.tf:98` | Segundo plan sin cambios en `backup_configuration` con el plan de Backup and DR asociado (punto 45) | `ignore_changes` sobre ese bloque (lo dice el código) |
+| `cloud-sql/main.tf:201` | Agente de Cloud SQL con permiso sobre `kms_key` (lo da la etapa 4) | Sin indicación |
+| `cloud-sql/main.tf:203` | Conexión de PSA de la red existente antes del create | Sin indicación |
+| `cloud-sql/main.tf:330` | Réplica REGIONAL entre regiones con CMEK; retraso de replicación por debajo de 15 min | Si el retraso supera 15 min, el objetivo de RPO no se cumple (README del módulo) |
+| `cloud-sql/main.tf:366` | Roles condicionados por `resource.name` y entrada con token IAM (punto 14) | Ver punto 14 |
+| `compute-mig/main.tf:72` | Etiquetas seguras de la plantilla en las instancias y reglas `lb_backend` aplicadas | Sin indicación |
+| `compute-mig/main.tf:164` | `max_surge_fixed` igual al número de zonas del MIG regional | Sin indicación |
 | `dns/main.tf:92` | El filtro devuelve las IP de reenvío entrante (y solo esas) al terminar el apply | Sin indicación |
 | `filestore/main.tf:48` | Permiso del agente sobre la llave, PSA desde el proyecto de servicio sobre la red del host, `deletion_protection_enabled` en el tier | Sin indicación |
 | `firewall/main.tf:21` | Formato de `purpose_data` y etiquetas de organización en la política jerárquica | Sin indicación |
@@ -391,10 +601,11 @@ cita el código cuando lo dice; si no, la entrada dice "sin indicación".
 | `gke/main.tf:46` | Plano de control con Private Service Connect (punto 8) | Ver punto 8 |
 | `gke/main.tf:58` | Endpoint privado alcanzable desde la Shared VPC y los rangos autorizados | Bastión en el spoke o endpoint por DNS (no construido, README del módulo) |
 | `gke/main.tf:143` | `node_config` del pool por defecto eliminado sin diferencias en el segundo plan | Ya se ignora en `lifecycle` |
-| `gke/main.tf:230` | Nodos con etiquetas seguras del proyecto host | Ver `iam.tf:169` de la etapa 4 |
-| `hybrid-connectivity/main.tf:141` | Interfaces y sesiones BGP de los attachments DEDICATED y PARTNER | Sin indicación |
+| `gke/main.tf:230` | Nodos con etiquetas seguras del proyecto host | Ver `iam.tf:274` de la etapa 4 |
+| `hybrid-connectivity/main.tf:143` | Interfaces y sesiones BGP de los attachments DEDICATED y PARTNER | Sin indicación |
 | `load-balancer/main.tf:187` | Certificado administrado ACTIVE cuando los registros A apuntan a la IP; puede tardar hasta 60 min | Crear los registros A |
 | `load-balancer/main.tf:357` | Certificado interno tras los registros de `dns_authorization_records`; una CA pública no emite para `*.internal` | Usar `certificate_manager_certificates` |
+| `load-balancer/main.tf:463` | On-premises llega al balanceador interno de DR por las dos VPN (punto 44) | Ver punto 44 |
 | `log-export/main.tf:29` | Que la API de Cloud Storage acepte el número de proyecto (`project_number`) al consultar el agente (punto 27) | Ver punto 27 |
 | `log-export/main.tf:65` | Bloqueo sobre un bucket ya creado (punto 15) | Ver punto 15 |
 | `log-export/main.tf:97` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply |
@@ -419,8 +630,10 @@ No entran en el conteo de los `.tf` de arriba.
 
 | Archivo | Qué verificar | Si falla |
 |---|---|---|
+| `stages/3-networks/README.md`, "Enrutamiento con dos VPN" | Regreso asimétrico entre las dos VPN (punto 38) | Ver punto 38 |
 | `stages/3-networks/envs/*/README.md` (x3), "Roles de la cuenta de servicio" | Que la cuenta que crea `net-spoke` quede como dueña del proyecto (punto 30) | Ver punto 30 |
 | `stages/4-projects/envs/*/README.md` (x3), "Roles de la cuenta de servicio de la etapa" | Que `compute.xpnAdmin` incluya `folders.get` y `projects.get` y que `tagAdmin` en la carpeta se herede a las llaves de etiqueta de `net-spoke` (punto 29) | Ver punto 29 |
+| `stages/4-projects/envs/*/README.md` (x3), sección `VERIFICAR-EN-APPLY` | Permisos de la etapa 4 para el repositorio y la política de Binary Authorization; `compute.securityAdmin` del agente de GKE en el host (punto 47). Las demás viñetas de esa sección repiten marcadores de los `.tf` de arriba | Ver punto 47 |
 
 ---
 
@@ -443,14 +656,20 @@ necesita: proxy o bastión en el spoke, endpoint de GKE por DNS, o exportar las 
 de servicios (por verificar).
 
 **On-premises simulado sin servidor DNS.** La VPC `onprem-sim` no tiene VM: la zona de reenvío
-existe pero nadie responde, y el criterio "resuelve DNS de on-premises" no se puede probar en ese
-modo (`stages/3-networks/dns.tf:8`). Para probarlo: una VM DNS creada a mano en `onprem-sim`, con
-su IP en `onprem_dns_servers`.
+existe pero nadie responde hasta que se cree a mano una VM DNS en `onprem-sim` con la IP de
+`onprem_dns_servers` (`stages/3-networks/dns.tf:13`). El camino de red ya está construido
+(delegación `delegate-dns-onprem-sim` y `module.firewall_onprem_sim`); la prueba es el punto 36.
 
-**WIF filtra solo por repositorio.** Cualquier rama o flujo del repositorio puede tomar la
-identidad de las cuentas de etapa (`stages/0-bootstrap/wif.tf`; [`pipeline.md`](pipeline.md) §5).
-Mitigación no construida: condicionar por `attribute.ref` o `attribute.environment` y separar
-cuentas de solo lectura para los `plan` de los PR.
+**WIF filtra solo por repositorio.** El proveedor confía en el ID numérico del repositorio y del
+dueño (ya no en el nombre, ADR 0023), pero cualquier rama o flujo de ese repositorio puede tomar
+la identidad de las cuentas de etapa (`stages/0-bootstrap/wif.tf`; [`pipeline.md`](pipeline.md)
+§5). Mitigación no construida: condicionar por `attribute.ref` o `attribute.environment` y
+separar cuentas de solo lectura para los `plan` de los PR.
+
+**Riesgos residuales de la identidad del pipeline (ADR 0023).** La cuenta de `4-projects` tiene
+`secretmanager.secrets.setIamPolicy` en `security` y podría darse `secretAccessor`; la de
+`1-org` conserva roles de organización amplios fuera de la carpeta `bootstrap`. Los frena la
+revisión del plan antes del apply (ADR 0025), no un control técnico.
 
 **Una sola región en México.** Si se exigiera residencia de datos, `northamerica-south1` no
 tiene región de DR en el país (ADR 0002): habría que aceptar DR entre zonas o una región de DR
@@ -462,16 +681,34 @@ perímetro en prod. Si se exige autenticación por cliente: Memorystore for Redi
 
 **El secreto compartido de la VPN vive en el estado cifrado.** En los dos modos el valor queda en
 el estado de `3-networks/hub` (CMEK de la etapa 0, legible por la cuenta de `3-networks`;
-ADR 0006). Rotarlo implica recrear los túneles.
+ADR 0006). Rotarlo recrea el túnel (`shared_secret` fuerza el reemplazo); con on-premises real se
+rota de a un túnel con `onprem_vpn_secret_version_overrides` mientras los otros tres mantienen
+la conectividad (README de `stages/3-networks`).
 
 **Nombres de objetos del bucket de estado visibles para todas las cuentas de etapa.** La
 cláusula `resource.type == "storage.googleapis.com/Bucket"` que permite listar deja ver los
 nombres (no el contenido) de todos los prefijos (contrato §6.2, ADR 0010). Si importa: carpetas
 administradas.
 
-**Planes de ejemplo de Conftest escritos a mano.** Los 14 archivos de `policies/fixtures/` no
-salen de un `terraform show -json` real: demuestran las reglas, no que las reglas lean bien un
-plan real del proveedor 6.x. Al tener GCP, regenerar al menos uno por regla desde un plan real.
+**Planes de ejemplo de Conftest, parte escritos a mano.** `policies/fixtures/` tiene 25 planes;
+11 son recortes de un `terraform show -json` real de un ejemplo sin GCP (`ls policies/fixtures
+| grep -c _real_` → 11, 21 nov 2026) y los demás están escritos a mano. Ninguno sale de un plan
+contra GCP: con GCP, regenerar al menos uno por regla desde un plan real.
+
+**Recursos no administrados sin correr.** El trabajo de `drift.yml` que compara Cloud Asset
+Inventory con los estados está construido y probado con datos de ejemplo
+(`scripts/testdata/unmanaged/`), pero no se ha corrido contra una carpeta real (punto 49).
+
+**Terratest nocturno en rojo hasta configurar sus compuertas.** Sin `TEST_ALLOW_EXPENSIVE`,
+`TEST_ALLOW_ORG` y sus datos, las pruebas se omiten y `terratest.yml` falla porque el máximo de
+omitidas es 0 (`TERRATEST_MAX_SKIPS`; [`pipeline.md`](pipeline.md) §1.4).
+
+**Imagen de las pruebas rechazada por Binary Authorization.** `tests/e2e/config.example.json` y
+`tests/helpers/env.go` usan por defecto `us-docker.pkg.dev/cloudrun/container/hello`, que la
+política de la etapa 4 rechaza (solo admite el repositorio de la aplicación). Antes de correr la
+prueba de extremo a extremo, copiar la imagen al repositorio y apuntar la configuración a él
+(punto 42). La configuración de ejemplo de la prueba también deja `enable_vpn_dr` en su valor
+por defecto: crea ocho túneles.
 
 **Sin acceso de emergencia.** Las personas solo tienen lectura (§7.1) y nadie tiene
 `iam.serviceAccountTokenCreator` sobre las cuentas de etapa. Las operaciones manuales de los

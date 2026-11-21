@@ -90,37 +90,82 @@ Rutas relativas a `gcp-datacenter/`.
 
    El plan debe agregar, solo para `<app>`: el proyecto `<prefix>-<env>-<app>`, sus APIs, el
    alta como servicio de la Shared VPC, cuatro cuentas `<prefix>-<env>-<app>-{gke-nodes,workload,mig,run}`,
-   los agentes de servicio, los permisos de subred, de llaves KMS, de secretos y de etiquetas
-   seguras y, en prod, una alta en el perímetro de VPC-SC (`service/<app>`; el host ya estaba
-   dado de alta). No debe cambiar nada de las aplicaciones existentes. Si falla una postcondición de
-   `remote_state.tf` ("Algún secreto de applications[*].secrets no existe…"), falta el paso 1.
+   los agentes de servicio (incluido el de Artifact Registry), los permisos de subred, de llaves
+   KMS, de secretos y de etiquetas seguras; el repositorio Docker
+   `<prefix>-<env>-app-<app>-images-us` (`google_artifact_registry_repository.this["<app>"]`) con
+   lectura para `gke-nodes`, `mig` y el agente de Cloud Run, y la política de Binary
+   Authorization del proyecto (`google_binary_authorization_policy.this["<app>"]`); los permisos
+   de la cuenta de la etapa 5 sobre el proyecto (`workloads_project_roles`, `projectIamAdmin`
+   condicionado a los dos roles de Cloud SQL y `serviceAccountAdmin` sobre la cuenta `workload`)
+   y `compute.networkViewer` en el host; y, en prod, una alta en el perímetro de VPC-SC
+   (`service/<app>`; el host ya estaba dado de alta). No debe cambiar nada de las aplicaciones
+   existentes. Si falla una postcondición de `remote_state.tf` ("Algún secreto de
+   applications[*].secrets no existe…"), falta el paso 1.
 
    ```bash
    terraform -chdir="$R" apply tfplan
    terraform -chdir="$R" output -json service_project_ids
    terraform -chdir="$R" output -json service_accounts
+   terraform -chdir="$R" output -json artifact_registry_repositories
    ```
+
+3. **Imagen de la aplicación en su repositorio.** Binary Authorization solo admite imágenes del
+   repositorio de la aplicación (y los patrones de `binary_authorization_allowlist_patterns`;
+   ADR 0024): una imagen de otro registro, incluida la pública de ejemplo
+   `us-docker.pkg.dev/cloudrun/container/hello`, se rechaza. Antes de encender GKE o Cloud Run,
+   el equipo de la aplicación sube la imagen con su propia identidad (la etapa 4 no le da permiso
+   de escritura a nadie; definir quién publica es una propuesta pendiente):
+
+   ```bash
+   REPO="$(terraform -chdir="$R" output -json artifact_registry_repositories | jq -r '.["<app>"]')"
+   gcloud auth configure-docker us-docker.pkg.dev
+   docker tag <imagen-local> "${REPO}/<imagen>:<versión>"
+   docker push "${REPO}/<imagen>:<versión>"
+   gcloud artifacts docker images list "${REPO}"
+   ```
+
+   `cloud_run_image` (y las imágenes de los despliegues de GKE) apuntan a `${REPO}/<imagen>:<versión>`.
 
    En el pipeline: actualizar la variable y lanzar `gh workflow run apply.yml --ref main` (corre
    todas las raíces en orden; las que no cambian no aplican nada).
 
-3. **Cargas (etapa 5).** La raíz `stages/5-workloads/envs/<env>` crea las cargas de **una**
+4. **Cargas (etapa 5).** La raíz `stages/5-workloads/envs/<env>` crea las cargas de **una**
    aplicación (variable `application`, por defecto `app`) con un solo estado
    (`5-workloads/<env>`).
 
    - Para la aplicación `app`: encender los interruptores en la llave
      `stages/5-workloads/envs/<env>` de `GCP_TFVARS_JSON` (`enable_gke`, `enable_mig`,
      `enable_cloud_run`, `enable_memorystore`, `enable_filestore`, `enable_internal_lb`) con
-     sus entradas obligatorias (`gke_node_pools`, `gke_authenticator_security_group` y
-     `subnet_cidrs["gke_master"]` con GKE; `mig_image` con MIG; `cloud_run_image` con Cloud Run;
-     `internal_domain_names` con el balanceador interno) y aplicar:
+     sus entradas obligatorias (`gke_node_pools` y `gke_authenticator_security_group` con GKE;
+     `mig_image` con MIG; `cloud_run_image` del paso 3 con Cloud Run; `internal_domain_names`
+     con el balanceador interno) y aplicar. El rango del plano de control de GKE no se escribe
+     aquí: sale de `reserved_cidrs["gke_master"]` del estado de `3-networks/<env>` (una
+     postcondición de `remote_state.tf` lo exige como /28). Con GKE, la cuenta de Kubernetes
+     de la carga es `gke_workload_namespace`/`gke_workload_ksa_name` (por defecto `app`/`app`):
 
      ```bash
      R=stages/5-workloads/envs/<env>
      terraform -chdir="$R" init -backend-config="bucket=<state_bucket>"
      terraform -chdir="$R" plan -out=tfplan
      terraform -chdir="$R" apply tfplan
+     terraform -chdir="$R" output -raw gke_workload_identity_member   # con GKE
      ```
+
+     **Workload Identity (con GKE).** El apply enlaza la cuenta de Kubernetes a la cuenta
+     `workload` (`google_service_account_iam_member.workload_identity`). Falta, fuera de
+     Terraform, crear en el clúster el namespace y la cuenta de Kubernetes con la anotación que
+     apunta a la cuenta `workload` (correo en `service_accounts` de la etapa 4), y usarla en los
+     pods:
+
+     ```bash
+     kubectl create namespace app
+     kubectl create serviceaccount app --namespace app
+     kubectl annotate serviceaccount app --namespace app \
+       iam.gke.io/gcp-service-account=<prefix>-<env>-<app>-workload@<proyecto>.iam.gserviceaccount.com
+     ```
+
+     La cuenta `workload` (y `run` con Cloud Run, `mig` con el MIG) es usuario IAM de Cloud SQL
+     (ADR 0015): la aplicación entra con el conector de Cloud SQL o el proxy con token de IAM.
 
    - Para una aplicación adicional: no hay raíz ni pipeline para ella (limitación en
      [pendientes](../pendientes-apply.md), §5). Opción diseñada y **no probada**: un espacio de
@@ -138,9 +183,9 @@ Rutas relativas a `gcp-datacenter/`.
      `apply.yml` y `drift.yml` solo recorren el espacio `default`: este estado queda fuera del
      despliegue automático y de la detección de drift hasta que se extiendan los flujos.
 
-4. **Pasos fuera de Terraform** (si hay balanceador): registros DNS A de `domain_names` hacia
-   `lb_ip_address`; registros de `internal_lb_dns_authorization_records`; en Cloud SQL,
-   `CREATE EXTENSION pgaudit;` en cada base.
+5. **Pasos fuera de Terraform** (si hay balanceador): registros DNS A de `domain_names` hacia
+   `lb_ip_address`; registros de `internal_lb_dns_authorization_records_by_region` (uno por
+   región con balanceador interno); en Cloud SQL, `CREATE EXTENSION pgaudit;` en cada base.
 
 ## Verificación
 
@@ -148,13 +193,17 @@ Rutas relativas a `gcp-datacenter/`.
 gcloud projects describe <prefix>-<env>-<app> --format="value(lifecycleState,parent)"
 gcloud compute shared-vpc associated-projects list <host_project_id>
 gcloud iam service-accounts list --project=<prefix>-<env>-<app> --format="value(email)"
+gcloud artifacts repositories list --project=<prefix>-<env>-<app> --location=us
+gcloud container binauthz policy export --project=<prefix>-<env>-<app>
 # Solo prod (dry-run por defecto; con el perímetro forzado, sin "dry-run"):
 gcloud access-context-manager perimeters dry-run describe <prefix>_prod_sec_perimeter --policy=<access_policy_id>
 terraform -chdir=stages/4-projects/envs/<env> plan -detailed-exitcode   # 0: sin cambios
 ```
 
 El proyecto aparece `ACTIVE` en la carpeta del entorno, asociado al host; las cuatro cuentas
-existen; en prod, el número del proyecto figura entre los recursos del perímetro.
+existen; el repositorio `<prefix>-<env>-app-<app>-images-us` existe con CMEK; la política de
+Binary Authorization admite solo ese repositorio; en prod, el número del proyecto figura entre
+los recursos del perímetro.
 
 ## Reversión
 

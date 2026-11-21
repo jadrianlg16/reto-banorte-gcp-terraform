@@ -15,9 +15,11 @@ flowchart LR
     subgraph COMP["4 · Cómputo sin IP pública (etapa 5)"]
       run["Cloud Run<br/>entrada interna y del balanceador<br/>sin allUsers (ADR 0020)"]
       mig["MIG regional<br/>Shielded VM · OS Login · imagen endurecida<br/>etiquetas lb_backend e iap_ssh"]
-      gke["GKE regional, nodos privados<br/>Workload Identity · Binary Authorization<br/>endpoint privado"]
+      gke["GKE regional, nodos privados<br/>Workload Identity: KSA app/app → cuenta workload<br/>Binary Authorization · endpoint privado"]
     end
-    ilb["Balanceador interno regional<br/>subred proxy-only"]
+    ilb["Balanceador interno, uno por región<br/>subred proxy-only · acceso global"]
+    ar[("Artifact Registry bnt-prod-app-app-images-us<br/>multirregión us · CMEK artifacts<br/>lectura: gke-nodes, mig y agente de Cloud Run")]
+    binauthz{{"Binary Authorization del proyecto<br/>solo imágenes de ese repositorio (ADR 0024)"}}
     subgraph DATA["7 · Datos solo por IP privada"]
       sql[("Cloud SQL PostgreSQL · PSA<br/>HA regional · PITR · TLS obligatorio<br/>autenticación IAM, sin contraseñas")]
       redis[("Memorystore · PSA<br/>TLS en el puerto 6378 · AUTH apagado")]
@@ -31,6 +33,10 @@ flowchart LR
   onprem(["On-premises, por el hub"]) --> ilb
   ilb --> run
   ilb --> mig
+  ar -- "imágenes" --> run
+  ar -- "imágenes" --> gke
+  binauthz -. "admite o rechaza la imagen" .-> run
+  binauthz -. "admite o rechaza la imagen" .-> gke
 
   support(["Soporte"]) --> iap["5 · IAP 35.235.240.0/20<br/>TCP 22 a VM con iap_ssh"] --> mig
 
@@ -40,9 +46,9 @@ flowchart LR
   end
 
   sm -. "secretAccessor: cuentas workload y run" .-> COMP
-  kms -. "CMEK de discos, secretos de GKE, Cloud Run y datos" .-> APP
+  kms -. "CMEK de discos, secretos de GKE, Cloud Run, imágenes y datos" .-> APP
 
-  perim{{"9 · Perímetro VPC-SC (dry-run por defecto)<br/>security · prod-app · prod-net-spoke<br/>restringe storage, sqladmin, compute, container, run, redis…<br/>KMS y Secret Manager no restringidos (ADR 0019)"}}
+  perim{{"9 · Perímetro VPC-SC (dry-run por defecto)<br/>security · prod-app · prod-net-spoke<br/>restringe storage, sqladmin, compute, container, run, redis, artifactregistry…<br/>KMS y Secret Manager no restringidos (ADR 0019)"}}
   perim -.- APP
   perim -.- SEC
 ```
@@ -58,9 +64,15 @@ flowchart LR
 - El cómputo (4) no tiene IP pública. Cloud Run solo acepta tráfico interno y del balanceador;
   con `public_via_load_balancer = true` desactiva la verificación de invocador en lugar de dar
   `allUsers`.
-- On-premises llega por el hub al balanceador interno (subred proxy-only), no a las VM.
+- On-premises llega por el hub al balanceador interno (subred proxy-only), no a las VM. Hay uno
+  por región con cómputo y con acceso global: con `dr_active`, el de DR se agrega sin tocar el
+  primario.
+- Las imágenes de Cloud Run y GKE salen del repositorio multirregional de la aplicación, y la
+  política de Binary Authorization del proyecto rechaza las de otro registro (ADR
+  [0024](../adr/0024-artifact-registry-y-binary-authorization-por-proyecto.md)).
 - Secret Manager (6) guarda contenedores; los valores se cargan fuera de Terraform. Cloud SQL no
-  usa contraseñas: las cuentas entran por IAM (ADR
+  usa contraseñas: las cuentas `workload` (pods de GKE por Workload Identity), `run` y `mig`
+  entran por IAM según el cómputo encendido (ADR
   [0015](../adr/0015-sin-contrasenas-ni-valores-de-secretos-en-terraform.md)).
 - Cloud SQL, Memorystore y Filestore usan Private Service Access; Cloud Storage, Private Google
   Access con el VIP restringido (7).
@@ -82,3 +94,6 @@ flowchart LR
   IAP los permite solo la política del spoke, por etiqueta segura; la jerárquica los delega.
 - Se agregan el balanceador interno para on-premises, Cloud Run sin `allUsers` y Memorystore con
   TLS y sin AUTH.
+- Ronda de correcciones del 21 nov 2026: Artifact Registry y Binary Authorization por proyecto,
+  enlace de Workload Identity, balanceador interno por región con acceso global y
+  `artifactregistry` entre los servicios restringidos.

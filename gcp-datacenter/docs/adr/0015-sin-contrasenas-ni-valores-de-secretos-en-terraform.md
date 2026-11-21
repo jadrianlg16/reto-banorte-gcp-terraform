@@ -2,7 +2,10 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: `run` y `mig` también son usuarios IAM de
+Cloud SQL; las cuentas del pipeline no pueden leer valores de secretos (ADR
+[0023](0023-endurecimiento-de-la-identidad-del-pipeline.md)), con un riesgo residual en la
+etapa 4.
 
 Tipo: Aclaración.
 
@@ -22,7 +25,14 @@ estado está cifrado con CMEK (ADR 0008), pero lo leen las cuentas del pipeline 
   `root_password` y ningún usuario integrado con contraseña. Con `grant_iam_login_roles = true`
   el módulo da `roles/cloudsql.client` y `roles/cloudsql.instanceUser`, condicionados a la
   instancia, a cuentas de servicio y grupos (nunca a `user:`). Las conexiones exigen TLS
-  (`ssl_mode`).
+  (`ssl_mode`). La etapa 5 da de alta como usuario IAM a cada cuenta de ejecución cuyo cómputo
+  está encendido: `workload` (GKE, por Workload Identity), `run` (Cloud Run) y `mig` (MIG). Los
+  roles los asigna con el `projectIamAdmin` condicionado que le da la etapa 4 sobre el proyecto
+  de servicio (solo `roles/cloudsql.client` y `roles/cloudsql.instanceUser`).
+- **Cuentas del pipeline.** La de `2-security` administra los contenedores con el rol
+  personalizado `<prefix>TfSecretContainerAdmin` (sin permisos de versiones ni de IAM del
+  secreto), no con `roles/secretmanager.admin`; la de `4-projects` asigna IAM de secretos con el
+  rol personalizado de la etapa 0 (`kms_secret_iam_role_id`), sin permisos de versiones.
 - **Secret Manager** (`secrets`) crea contenedores con replicación administrada por el usuario
   y CMEK por región, y da `roles/secretmanager.secretAccessor`; no tiene ninguna variable por
   la que entre un valor ni crea `google_secret_manager_secret_version`. Las versiones las carga
@@ -53,6 +63,11 @@ estado está cifrado con CMEK (ADR 0008), pero lo leen las cuentas del pipeline 
   firewall deje pasar puede usar la caché.
 - Excepción conocida: el secreto compartido de la HA VPN sí queda en el estado del hub
   (ADR 0006), porque el túnel lo exige como argumento.
+- Riesgo residual: la cuenta de `4-projects` tiene `secretmanager.secrets.setIamPolicy` (la
+  necesita para dar `secretAccessor` a las cuentas de ejecución), así que podría darse
+  `secretAccessor` a sí misma. Lo frena la revisión del plan (ADR 0025), no un control técnico
+  (ADR 0023).
 - Primer apply: que las banderas y los roles condicionados se acepten
-  (`VERIFICAR-EN-APPLY` en `modules/cloud-sql/main.tf`); no tiene entrada propia en §12 y se
-  propone agregarla a [`docs/pendientes-apply.md`](../pendientes-apply.md).
+  (`VERIFICAR-EN-APPLY` en `modules/cloud-sql/main.tf`; punto 14 de
+  [`docs/pendientes-apply.md`](../pendientes-apply.md)) y que los permisos de los roles
+  personalizados se admitan (punto 33).

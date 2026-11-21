@@ -222,8 +222,9 @@ Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se 
    `GCP_STAGE_SERVICE_ACCOUNTS`, `GCP_STATE_BUCKET`; y escribe `GCP_TFVARS_JSON`.
 3. Crea los entornos y sus reglas (§2 y §4).
 4. Crea a mano la cuenta `GCP_AUDIT_SERVICE_ACCOUNT` (`0-bootstrap` no la crea), le da
-   `roles/iam.workloadIdentityUser` al `principalSet://…/attribute.repository/<dueño>/<repositorio>`
-   del pool de la etapa 0, y estos roles de solo lectura (**VERIFICAR** con la documentación y
+   `roles/iam.workloadIdentityUser` al `principalSet://…/attribute.repository_id/<id-del-repositorio>`
+   del pool de la etapa 0 (el mismo `github_repository_id` de su `terraform.tfvars`, igual que
+   las cuentas de etapa), y estos roles de solo lectura (**VERIFICAR** con la documentación y
    la primera corrida):
    - `roles/storage.objectViewer` en el bucket de estado (lee todos los prefijos);
    - `roles/cloudasset.viewer` en las carpetas dev, qa y prod (`search-all-resources`);
@@ -277,9 +278,12 @@ repositorio.
 
 ## 5. Limitación conocida: WIF filtra solo por repositorio
 
-Documentada en el README de `stages/0-bootstrap`. El proveedor de WIF acepta cualquier token
-con `assertion.repository == <repositorio>`, y cada cuenta de etapa da
-`roles/iam.workloadIdentityUser` al `principalSet` del repositorio completo. Por eso
+Documentada en el README de `stages/0-bootstrap` y en el ADR
+[0023](adr/0023-endurecimiento-de-la-identidad-del-pipeline.md). El proveedor de WIF acepta
+cualquier token con `assertion.repository_id == <id>` y `assertion.repository_owner_id == <id>`
+(IDs numéricos: un repositorio borrado y vuelto a crear con el mismo nombre no hereda la
+confianza), y cada cuenta de etapa da `roles/iam.workloadIdentityUser` al `principalSet` del
+repositorio completo (`attribute.repository_id/<id>`). Por eso
 **cualquier rama o flujo del repositorio** (incluido un PR desde una rama del mismo
 repositorio) puede tomar la identidad de las cuentas de etapa, que pueden aplicar cambios. La
 condición `github.ref == refs/heads/main` de `apply.yml` y la protección de los entornos no

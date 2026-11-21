@@ -2,7 +2,8 @@
 
 ## Estado
 
-Aceptado, 2026-11-21.
+Aceptado, 2026-11-21. Enmendado el mismo día: el tema de Pub/Sub de hallazgos de SCC guarda
+mensajes solo en la región de su llave, con `enforce_in_transit`.
 
 Tipo: Aclaración.
 
@@ -23,6 +24,11 @@ un llavero en la ubicación del bucket de logs y una llave para él (rotación `
 al agente de servicio de Cloud Storage del proyecto `logging`
 (`grant_kms_to_storage_agent = true`) antes de crear el bucket. La identidad que escribe el sink
 recibe `roles/storage.objectCreator` sobre el bucket y no necesita permisos de KMS.
+
+El mismo llavero tiene la llave `pubsub` (regional, `primary_region`) del tema de hallazgos de
+SCC (`<prefix>-common-ops-scc-findings`). Como la llave es regional, el tema limita el
+almacenamiento de mensajes a esa región (`allowed_persistence_regions = [primary_region]`) y lo
+impone en tránsito (`enforce_in_transit = true`), como pide la guía de CMEK de Pub/Sub.
 
 ## Alternativas consideradas
 
@@ -45,6 +51,9 @@ recibe `roles/storage.objectCreator` sobre el bucket y no necesita permisos de K
   la llave se deshabilita, los logs retenidos quedan ilegibles y no se pueden borrar. Por eso la
   llave tiene `prevent_destroy` y solo el grupo de seguridad debe poder administrarla.
 - `gcp.resourceLocations` debe admitir la ubicación elegida para el llavero y el bucket.
+- Si cae `primary_region`, las notificaciones de SCC no se entregan hasta que vuelva (la llave
+  del tema es regional); se acepta (ADR 0022). Que SCC publique en un tema con
+  `enforce_in_transit` se verifica en el primer apply (punto 34).
 - Primer apply: que el agente de Cloud Storage tenga el permiso sobre la llave antes de crear el
   bucket y que el bloqueo se aplique sobre un bucket ya creado (`VERIFICAR-EN-APPLY` en
   `modules/log-export/main.tf`); sin entrada propia en §12, se propone agregarla a

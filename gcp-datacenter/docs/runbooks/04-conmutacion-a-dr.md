@@ -31,12 +31,19 @@ No conmutar ante:
   `stages/5-workloads/envs/prod` (réplica `<prefix>-prod-data-sql-use4`, bucket de doble región
   `<prefix>-prod-data-<application>-usc1-use4`, plan de Backup for GKE en `us-east4`). Es el
   valor del ejemplo de prod.
-- Imágenes disponibles sin la región primaria: la imagen de Cloud Run no puede estar solo en un
-  repositorio de `us-central1` (pendiente 25); la imagen del MIG es global.
-- Identidad con los permisos de `<prefix>-tf-5-workloads` (incluye `roles/cloudsql.admin` en la
-  carpeta `prod`). Las personas solo tienen lectura y el pipeline no admite `-target`: hace falta
-  el acceso de emergencia, que **no está construido** ([pendientes](../pendientes-apply.md), §5).
-  Definirlo antes del primer simulacro.
+- Lo que Terraform necesita durante la caída no depende de `us-central1` (ADR 0022): el bucket de
+  estado y su llave están en la multirregión `US`/`us`; el hub tiene una segunda HA VPN en
+  `us-east4` (`enable_vpn_dr = true`, valor por defecto); el balanceador interno es uno por región
+  con acceso global; las imágenes de contenedor están en el repositorio multirregional de
+  Artifact Registry de la aplicación (`us-docker.pkg.dev/...-images-us/...`, ADR 0024) y la
+  imagen del MIG es global. Si alguna de estas no se cumple (por ejemplo, `enable_vpn_dr = false`
+  o una imagen en un registro regional), este runbook no se puede ejecutar tal como está.
+- Identidad con los permisos de `<prefix>-tf-5-workloads` (los roles de `workloads_project_roles`
+  sobre el proyecto de servicio, que da la etapa 4; incluyen `roles/cloudsql.admin`). Las personas
+  solo tienen lectura y el pipeline no admite `-target`: hace falta el acceso de emergencia, que
+  **no está construido** ([pendientes](../pendientes-apply.md), §5). Definirlo antes del primer
+  simulacro.
+- `gcloud`, `gh`, `jq` y Terraform `>= 1.9` en la máquina de quien ejecuta.
 - `stages/5-workloads/envs/prod/terraform.tfvars` con los valores reales de la raíz (los de la
   llave `stages/5-workloads/envs/prod` de `GCP_TFVARS_JSON`), con `dr_active = false`: los
   comandos de abajo solo agregan `-var="dr_active=true"`.
@@ -45,6 +52,7 @@ No conmutar ante:
   ```bash
   R=stages/5-workloads/envs/prod
   P=<service_project_id>               # salida service_project_ids["app"] de 4-projects/envs/prod
+  HUB=<hub_project_id>                 # salida hub_project_id de stages/3-networks
   REPLICA=<prefix>-prod-data-sql-use4
   ```
 
@@ -60,6 +68,24 @@ Anotar la hora UTC de cada paso en la tabla del simulacro.
 
    Evita que un push a `main` aplique la configuración normal (`dr_active = false`) a mitad de
    la conmutación.
+
+   Comprobar que on-premises sigue conectado por la VPN de DR (sesiones BGP de los túneles del
+   router del hub en `us-east4`):
+
+   ```bash
+   terraform -chdir=stages/3-networks init -backend-config="bucket=<state_bucket>"
+   terraform -chdir=stages/3-networks output -json vpn_dr_tunnel_names
+   ROUTER_DR="$(terraform -chdir=stages/3-networks output -json hub_routers | jq -r '.["us-east4"]')"
+   gcloud compute vpn-tunnels list --project="$HUB" --filter="region:us-east4" \
+     --format="table(name,status,detailedStatus)"
+   gcloud compute routers get-status "$ROUTER_DR" --region=us-east4 --project="$HUB" \
+     --format="table(result.bgpPeerStatus[].name,result.bgpPeerStatus[].status)"
+   ```
+
+   Esperado: los dos túneles `ESTABLISHED` y las dos sesiones `UP`. Leer el estado de
+   `stages/3-networks` también comprueba que el bucket de estado responde sin la región primaria.
+   Si la VPN de DR no está arriba, on-premises no llega a nada en `us-east4`: resolverlo antes de
+   seguir (punto 37 de los pendientes).
 
 2. **Medir el retraso de la réplica** (estimación del RPO de la base).
 
@@ -93,45 +119,69 @@ Anotar la hora UTC de cada paso en la tabla del simulacro.
    terraform -chdir="$R" plan -var="dr_active=true" -out=tfplan
    ```
 
-   Revisar el plan. Debe crear `module.gke["dr"]`, `module.mig["dr"]` y `module.cloud_run["dr"]`
-   (los habilitados), cambiar los servicios de backend de `module.external_lb["external"]` a
-   los grupos de DR y recrear `module.internal_lb["internal"]` en `us-east4` (su nombre lleva la
-   región). El cómputo primario no se destruye.
+   Revisar el plan (ADR 0022). Debe:
+   - crear `module.gke["dr"]`, `module.mig["dr"]` y `module.cloud_run["dr"]` (los habilitados);
+   - agregar `module.internal_lb["dr"]` (`<prefix>-prod-app-<application>-ilb-use4`, con su IP,
+     certificado y autorizaciones DNS) **sin tocar** `module.internal_lb["primary"]`;
+   - cambiar los servicios de backend de `module.external_lb["external"]` a los grupos de DR de
+     Cloud Run y del MIG. Mientras `gke_lb_negs.dr` esté vacío, el backend `gke` sale del
+     balanceador externo y el backend por defecto pasa al primero habilitado (`run`, `mig`);
+     solo si GKE es el único backend el externo conserva los NEG primarios (no destruye el
+     balanceador ni su IP).
+
+   No debe destruir nada en `us-central1`: ni el cómputo primario ni el balanceador interno
+   primario. Si propone destruir algo de la región primaria, **no aplicar** y revisar.
 
    Si el plan también cambia o reemplaza `module.cloud_sql.google_sql_database_instance.replica["dr"]`
    (esperado después de la promoción, pendiente 24), **no aplicar ese plan**. Aplicar solo
-   cómputo y balanceadores:
+   cómputo, balanceadores y el enlace de Workload Identity:
 
    ```bash
    terraform -chdir="$R" plan -var="dr_active=true" \
      -target=module.gke -target=module.mig -target=module.cloud_run \
-     -target=module.external_lb -target=module.internal_lb -out=tfplan
+     -target=module.external_lb -target=module.internal_lb \
+     -target=google_service_account_iam_member.workload_identity -out=tfplan
    terraform -chdir="$R" apply tfplan
    ```
 
    Si el plan no termina porque no puede leer recursos de la región caída, repetirlo con
-   `-refresh=false` (pendiente de verificar en el simulacro).
+   `-refresh=false` (pendiente de verificar en el simulacro). HIPÓTESIS sin comprobar: el enlace
+   de Workload Identity toma el pool de `module.gke["primary"]`; si leer ese clúster falla, es uno
+   de los casos que `-refresh=false` debería cubrir (punto 46).
 
 6. **GKE** (si `enable_gke`). El clúster `<prefix>-prod-app-gke-use4` nace vacío. Desplegar la
-   carga con el proceso de la aplicación (fuera de este repositorio) y, si hace falta estado del
-   clúster, restaurar el último respaldo de Backup for GKE (el plan existe; la restauración no
-   está construida en Terraform). Después, poner los NEG zonales del clúster de DR en
-   `gke_lb_negs.dr` y aplicar otra vez el balanceador externo:
+   carga con el proceso de la aplicación (fuera de este repositorio), con la misma cuenta de
+   Kubernetes anotada para Workload Identity (runbook 02, paso 4) y la imagen del repositorio de
+   la aplicación; si hace falta estado del clúster, restaurar el último respaldo de Backup for
+   GKE (el plan existe; la restauración no está construida en Terraform). Después, poner los NEG
+   zonales del clúster de DR en `gke_lb_negs.dr` y aplicar otra vez el balanceador externo:
 
    ```bash
    gcloud compute network-endpoint-groups list --project="$P" --filter="zone~us-east4"
+   # <negs-dr.tfvars.json>: {"gke_lb_negs": {"primary": [...los actuales...], "dr": ["<self_link>", ...]}}
    terraform -chdir="$R" plan -var="dr_active=true" -var-file=<negs-dr.tfvars.json> \
      -target=module.external_lb -out=tfplan
    terraform -chdir="$R" apply tfplan
    ```
 
+   El plan debe volver a agregar el backend `gke` al balanceador externo con los NEG de DR.
+
 7. **DNS y certificados.**
    - Balanceador externo: su IP global (`lb_ip_address`) y su certificado administrado no
      cambian; los registros DNS públicos de `domain_names` no se tocan.
-   - Balanceador interno: se recrea en `us-east4` con otra IP (`internal_lb_ip_address`).
-     Actualizar el registro DNS interno de `internal_domain_names` (fuera de este repositorio) y
-     crear los registros de `internal_lb_dns_authorization_records` si cambiaron; la emisión del
-     certificado nuevo cuenta dentro del RTO.
+   - Balanceador interno: el de `us-east4` es otro recurso, con otra IP y otro certificado. Sus
+     valores, por región:
+
+     ```bash
+     terraform -chdir="$R" output -json internal_lb_ip_addresses
+     terraform -chdir="$R" output -json internal_lb_dns_authorization_records_by_region
+     ```
+
+     Crear en la zona DNS pública del dominio los registros de autorización de `us-east4` (la
+     emisión del certificado nuevo cuenta dentro del RTO) y mover el registro DNS interno de
+     `internal_domain_names` a la IP de `us-east4` (fuera de este repositorio). Las dos reglas de
+     reenvío tienen acceso global: on-premises llega a la IP de DR por cualquiera de las dos VPN
+     (punto 44).
 
 8. **Datos que no conmutan.**
    - Bucket de la aplicación: es de doble región (`us-central1` + `us-east4`) con turbo
@@ -150,12 +200,15 @@ gcloud compute backend-services get-health <prefix>-prod-app-<application>-xlb-b
   --global --project="$P"
 terraform -chdir="$R" output active_region            # us-east4
 terraform -chdir="$R" output -json gke_cluster_names  # incluye us-east4 si enable_gke
+terraform -chdir="$R" output internal_lb_ip_address    # la IP del interno de us-east4
 gcloud storage buckets describe "gs://<prefix>-prod-data-<application>-usc1-use4" \
   --format="value(location,rpo)"
 ```
 
 - Los backends de la región de DR están `HEALTHY`; la verificación de disponibilidad del módulo
   `observability` vuelve a verde.
+- Desde on-premises, el nombre de `internal_domain_names` resuelve a la IP de `us-east4` y
+  responde por HTTPS.
 - La aplicación escribe y lee en la base promovida.
 - Anotar RPO observado (retraso del paso 2 y, si se puede, la última transacción perdida) y RTO
   (T0 a fin del paso 9).
@@ -172,8 +225,10 @@ Esbozo; se detalla después del primer simulacro.
    coinciden con lo que espera el módulo (`<prefix>-prod-data-sql-usc1` como primaria,
    `-use4` como réplica), y un nombre borrado de Cloud SQL no se puede reusar de inmediato.
    Diseñar con `terraform state rm`/`import` en un PR revisado; no improvisarlo en el incidente.
-4. `dr_active = false` (plan: vuelve los backends a la región primaria, destruye el cómputo de
-   DR y recrea el balanceador interno en `us-central1`; actualizar su DNS interno).
+4. Mover el registro DNS interno de vuelta a la IP del balanceador interno de `us-central1`
+   (que nunca se destruyó) y, después, `dr_active = false` con `gke_lb_negs.dr = []` (plan:
+   vuelve los backends del externo a la región primaria, con GKE si `gke_lb_negs.primary` tiene
+   NEG, y destruye el cómputo de DR y solo `module.internal_lb["dr"]`).
 5. Reactivar el pipeline (`gh workflow enable apply.yml`) y confirmar un `plan` sin cambios.
 
 ## Objetivos y lo que aporta cada paso
@@ -185,6 +240,7 @@ Esbozo; se detalla después del primer simulacro.
 | RPO, caché y NFS | Ninguno: Memorystore y Filestore sin DR | 8 | No aplica |
 | RPO, configuración de GKE | Backup for GKE diario en `us-east4` (pérdida de hasta un día de configuración) | 6 | No |
 | RTO ≤ 4 h | Suma de detección y decisión, promoción, apply con `dr_active`, despliegue en GKE, DNS y certificado interno, validación | 1 a 9 | No |
+| Conectividad con on-premises | Segunda HA VPN en `us-east4`, balanceador interno con acceso global | 1 y 7 | No |
 
 ## Simulacro: lista y registro de tiempos
 
@@ -195,14 +251,18 @@ Un simulacro en prod promueve la réplica de verdad y obliga a hacer la vuelta. 
 - [ ] Acceso de emergencia definido y probado.
 - [ ] `terraform plan -detailed-exitcode` de `5-workloads/envs/prod` en 0 antes de empezar.
 - [ ] Alerta de retraso de réplica sin disparar; último valor anotado.
-- [ ] Imagen de Cloud Run disponible fuera de `us-central1`.
+- [ ] Imágenes de Cloud Run y GKE en el repositorio multirregional de la aplicación (Binary
+      Authorization rechaza otras).
+- [ ] VPN de DR con sus dos sesiones BGP `UP` (paso 1).
+- [ ] Zona DNS pública accesible para crear los registros de autorización del certificado
+      interno de `us-east4`.
 - [ ] Procedimiento de despliegue de la carga en el clúster de DR a mano.
 - [ ] Plan de vuelta revisado.
 
 | # | Paso | Inicio (UTC) | Fin (UTC) | Duración | Responsable | Resultado y notas |
 |---|---|---|---|---|---|---|
 | 0 | Detección (T0) |  |  |  |  |  |
-| 1 | Decisión y congelamiento del pipeline (T1) |  |  |  |  |  |
+| 1 | Decisión, congelamiento del pipeline y VPN de DR comprobada (T1) |  |  |  |  |  |
 | 2 | Retraso de réplica medido (RPO estimado) |  |  |  |  | lag = |
 | 3 | Promoción de la réplica |  |  |  |  |  |
 | 4 | Aplicación apuntando a la base promovida |  |  |  |  |  |

@@ -4,18 +4,20 @@
 
 Crear, una sola vez, la base que necesita el pipeline: carpeta `bootstrap`, proyecto semilla,
 llave KMS y bucket del estado, cuentas de servicio de las etapas 1 a 5, Workload Identity
-Federation para GitHub y el rol personalizado de la etapa 4; migrar el estado local de la etapa
-al bucket; activar Security Command Center y dejar GitHub listo para aplicar las etapas 1 a 5.
+Federation para GitHub, los dos roles personalizados (etapas 2 y 4) y la política de denegación
+de la carpeta `bootstrap`; migrar el estado local de la etapa al bucket; activar Security
+Command Center y dejar GitHub listo para aplicar las etapas 1 a 5.
 
 Nada de esto se ha ejecutado todavía: los pasos son el procedimiento diseñado, pendiente de
-verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2, 13, 22, 23 y 27).
+verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2, 13, 22, 23,
+27, 31, 32, 33 y 50).
 
 ## Cuándo usarlo
 
 - Al conectar la organización de GCP por primera vez.
-- Para volver a aplicar la etapa 0 después (por ejemplo, para cambiar `github_repository`): en
-  ese caso solo aplican los pasos 3 y 9 con el backend ya en el bucket (ver "Cambios
-  posteriores").
+- Para volver a aplicar la etapa 0 después (por ejemplo, si cambia el repositorio y con él
+  `github_repository_id`): en ese caso solo aplican los pasos 3 y 9 con el backend ya en el
+  bucket (ver "Cambios posteriores").
 
 ## Prerrequisitos
 
@@ -24,13 +26,19 @@ verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2,
 - Organización, cuenta de facturación y los siete grupos de Cloud Identity
   ([README](../../README.md#google-cloud)).
 - Persona administradora con, en la organización, `roles/resourcemanager.organizationAdmin`,
-  `roles/resourcemanager.folderCreator`, `roles/resourcemanager.projectCreator` y
-  `roles/iam.organizationRoleAdmin`, y en la cuenta de facturación `roles/billing.admin`.
-  Para activar SCC además hace falta `roles/securitycenter.admin` en la organización (pendiente
-  de verificar el rol exacto que pide la consola).
+  `roles/resourcemanager.folderCreator`, `roles/resourcemanager.projectCreator`,
+  `roles/iam.organizationRoleAdmin` (roles personalizados) y `roles/iam.denyAdmin` (política de
+  denegación de la carpeta `bootstrap`, ADR 0023), y en la cuenta de facturación
+  `roles/billing.admin`. Para activar SCC además hace falta `roles/securitycenter.admin` en la
+  organización (pendiente de verificar el rol exacto que pide la consola).
 - Valores: `<org_id>`, `<billing_account>` (`XXXXXX-XXXXXX-XXXXXX`), `<prefix>` (2 a 6
   minúsculas o dígitos, empieza con letra; ejemplo `bnt`), `<project_suffix>` (opcional, para
-  que el ID del proyecto semilla y el nombre del bucket sean únicos), `<dueño>/<repositorio>`.
+  que el ID del proyecto semilla y el nombre del bucket sean únicos), `<dueño>/<repositorio>` y
+  los IDs numéricos del repositorio y de su dueño (paso 2).
+- Decidir **antes del primer apply** la ubicación del estado: `state_bucket_location` (`US` por
+  defecto, multirregión; `EU` o `ASIA`) y, si se quiere una doble región,
+  `state_bucket_dual_regions` (debe incluir `primary_region`). La ubicación de un bucket y de un
+  llavero no se cambia después (ADR 0022).
 
 ## Pasos
 
@@ -48,17 +56,26 @@ Todas las rutas son relativas a `gcp-datacenter/`.
      --format="value(bindings.role)"
    ```
 
-   La última orden debe listar los cuatro roles de organización de los prerrequisitos.
+   La última orden debe listar los cinco roles de organización de los prerrequisitos (los
+   roles que la persona recibe por un grupo no aparecen con este filtro: revisar también los
+   grupos).
 
 2. Preparar variables y el backend local temporal.
 
    ```bash
+   gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'   # IDs numéricos para WIF
    cd stages/0-bootstrap
    cp terraform.tfvars.example terraform.tfvars
    # editar: org_id, billing_account, prefix, project_suffix, primary_region,
-   #         github_repository, labels (app, owner, cost_center en minúsculas)
+   #         github_repository (solo informativo), github_repository_id y
+   #         github_repository_owner_id (los dos números de arriba, entre comillas),
+   #         state_bucket_location y, si aplica, state_bucket_dual_regions,
+   #         labels (app, owner, cost_center en minúsculas)
    cp backend_override.tf.example backend_override.tf
    ```
+
+   WIF confía en esos dos IDs, no en el nombre (ADR 0023): un error en ellos no se nota en el
+   plan, solo cuando el primer flujo de GitHub no consigue token.
 
    `backend_override.tf`, `terraform.tfvars` y `terraform.tfstate*` no se versionan
    (`.gitignore` de la raíz y de la etapa). Verificar antes de seguir:
@@ -73,17 +90,22 @@ Todas las rutas son relativas a `gcp-datacenter/`.
    ```
 
    Revisar en el plan: carpeta `bootstrap`, proyecto `<prefix>-bootstrap-seed[-<sufijo>]`,
-   llavero `<prefix>-bootstrap-sec-keyring-<código>` con la llave `<prefix>-bootstrap-sec-state`,
-   bucket `<prefix>-bootstrap-ops-tfstate[-<sufijo>]`, cinco cuentas `<prefix>-tf-<etapa>`, pool
-   `<prefix>-bootstrap-sec-wif-pool` y proveedor `<prefix>-bootstrap-sec-github`, y ningún rol
-   `roles/owner`, `roles/editor` ni `roles/resourcemanager.organizationAdmin`.
+   llavero `<prefix>-bootstrap-sec-keyring-us` (o el código de `state_bucket_location`) con la
+   llave `<prefix>-bootstrap-sec-state`, bucket `<prefix>-bootstrap-ops-tfstate[-<sufijo>]` en
+   `US` (o la ubicación elegida), cinco cuentas `<prefix>-tf-<etapa>`, los roles personalizados
+   `<prefix>TfKmsSecretIamGranter` y `<prefix>TfSecretContainerAdmin`, la política de denegación
+   `google_iam_deny_policy.bootstrap_folder`, pool `<prefix>-bootstrap-sec-wif-pool` y proveedor
+   `<prefix>-bootstrap-sec-github` con `attribute_condition` sobre `assertion.repository_id` y
+   `assertion.repository_owner_id`, y ningún rol `roles/owner`, `roles/editor` ni
+   `roles/resourcemanager.organizationAdmin`.
 
    Si la creación del bucket falla por permisos sobre la llave, repetir `terraform plan` y
    `terraform apply`: el permiso del agente de Cloud Storage puede tardar en propagarse
-   (`main.tf:166`). El agente se consulta con el número del proyecto semilla para que la
+   (`main.tf:194`). El agente se consulta con el número del proyecto semilla para que la
    lectura ocurra en el apply y no en el plan, cuando el proyecto aún no existe; que la API lo
-   acepte está por verificar (`main.tf:106`, pendiente 27). Si una API rechaza la llamada por
-   falta de proyecto de cuota (HYPOTHESIS, pendiente 22): `gcloud auth application-default set-quota-project <proyecto-existente>`.
+   acepte está por verificar (`main.tf:116`, pendiente 27). Si una API rechaza la llamada por
+   falta de proyecto de cuota (HYPOTHESIS, pendiente 22; la API de políticas de denegación es
+   el punto 32): `gcloud auth application-default set-quota-project <proyecto-existente>`.
 
 4. Migrar el estado al bucket. El nombre del bucket se toma **antes** de borrar el override:
    después, `terraform output` falla con `Backend initialization required` (comprobado sin GCP,
@@ -115,7 +137,11 @@ Todas las rutas son relativas a `gcp-datacenter/`.
    terraform output -raw workload_identity_provider
    terraform output -json stage_service_accounts
    terraform output -raw kms_secret_iam_role_id
+   terraform output -raw secret_container_admin_role_id
    ```
+
+   La etapa 1 lee los dos roles personalizados del estado de la etapa 0 y los asigna en el
+   proyecto `security` (a `4-projects` y a `2-security`).
 
 7. Activar Security Command Center (paso manual permitido; pendiente 2). En la consola de
    Google Cloud, con la organización seleccionada: Security → Security Command Center →
@@ -143,8 +169,17 @@ Todas las rutas son relativas a `gcp-datacenter/`.
 
    `GCP_TFVARS_JSON` lleva `{"common": {...}, "stages/1-org": {...}, ...}` con todos los valores
    reales de cada raíz (incluido `state_bucket` en `common` y `workloads_service_account` en las
-   raíces de `4-projects`). Crear los entornos `common`, `dev`, `qa` y `prod` (este con los
-   revisores obligatorios) y la protección de `main` de `pipeline.md` §4.
+   raíces de `4-projects`). Crear los entornos `common`, `dev`, `qa` y `prod` (`common` y `prod`
+   con revisores obligatorios), la protección de `main` con las comprobaciones obligatorias
+   (incluida `plan-gate`) de `pipeline.md` §4, y la cuenta de auditoría
+   `GCP_AUDIT_SERVICE_ACCOUNT` con sus roles de solo lectura y su `principalSet` por
+   `attribute.repository_id` (`pipeline.md` §3, paso 4; la etapa 0 no la crea):
+
+   ```bash
+   gh variable set GCP_AUDIT_SERVICE_ACCOUNT --body "<cuenta>@<proyecto>.iam.gserviceaccount.com"
+   ```
+
+   Sin esa cuenta, la prueba de humo de dev falla y qa y prod no se aplican.
 
 10. Encender el pipeline, al final y solo con lo anterior listo.
 
@@ -166,9 +201,22 @@ Todas las rutas son relativas a `gcp-datacenter/`.
 - La llave rota cada 90 días:
 
   ```bash
-  gcloud kms keys describe <prefix>-bootstrap-sec-state --keyring=<prefix>-bootstrap-sec-keyring-<código> \
-    --location=<primary_region> --project=<seed_project_id> --format="value(rotationPeriod,nextRotationTime)"
+  gcloud kms keys describe <prefix>-bootstrap-sec-state --keyring=<prefix>-bootstrap-sec-keyring-us \
+    --location=us --project=<seed_project_id> --format="value(rotationPeriod,nextRotationTime)"
   ```
+
+  (`us` es la ubicación por defecto; con otro `state_bucket_location`, su código en minúsculas.)
+
+- La política de denegación está en la carpeta `bootstrap`:
+
+  ```bash
+  gcloud iam policies list \
+    --attachment-point="cloudresourcemanager.googleapis.com/folders/<id-carpeta-bootstrap>" \
+    --kind=denypolicies
+  ```
+
+  Debe listar `<prefix>-bootstrap-sec-deny-1-org` (sintaxis de `gcloud` por verificar en el
+  primer uso, punto 32).
 
 - El primer trabajo `1-org` de `apply.yml` autentica por WIF e inicializa el backend: es la
   primera prueba real del punto 1 de los pendientes (IAM condicionado por prefijo).

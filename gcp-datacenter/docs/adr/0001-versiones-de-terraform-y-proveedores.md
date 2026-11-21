@@ -2,7 +2,9 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: las pruebas (`*.tftest.hcl`) exigen
+Terraform 1.11 o mayor (ADR [0021](0021-pruebas-con-terraform-1-11-y-codigo-con-1-9.md)); el
+código sigue en `>= 1.9`.
 
 Tipo: Conforme.
 
@@ -21,7 +23,10 @@ Todo `versions.tf` declara `required_version = ">= 1.9"` y los proveedores `goog
 `google-beta` con `version = "~> 6.0"` (§4.1 del contrato). Los módulos declaran solo los
 proveedores que usan y no contienen bloques `provider`. Las raíces versionan el archivo de
 bloqueo generado con `terraform providers lock` para `windows_amd64`, `linux_amd64` y
-`darwin_arm64`. No se usan funciones ni atributos que exijan Terraform posterior a 1.9.
+`darwin_arm64`. El código de módulos y raíces (`*.tf`) no usa funciones ni atributos que
+exijan Terraform posterior a 1.9. Las pruebas sí pueden: usan `override_during = plan`, que
+apareció en 1.11, y para correr `terraform test` hace falta 1.11 o mayor (ADR 0021). `pr.yml`
+comprueba el código con 1.9.8 sin `terraform test` y todo con 1.16.5.
 
 La actualización a una versión mayor del proveedor se hace por PR cuando el cliente lo pida.
 
@@ -39,8 +44,10 @@ La actualización a una versión mayor del proveedor se hace por PR cuando el cl
 
 ## Consecuencias
 
-- Positivas: versiones idénticas en todas las raíces y en CI; las pruebas con `mock_provider`
-  y `command = plan` corren con el mismo binario que el apply.
+- Positivas: versiones de proveedor idénticas en todas las raíces y en CI.
+- Las pruebas con `mock_provider` y `command = plan` necesitan Terraform 1.11 o mayor
+  (ADR 0021): con 1.9 solo se puede correr `bash scripts/check.sh --skip test`. El repositorio
+  no es compatible con 1.9 para correr las pruebas.
 - Negativas: sin atributos de solo escritura, los valores sensibles que Terraform tenga que
   pasar a un recurso quedan en el estado. Esto afecta al secreto compartido de la VPN
   (ADR 0006) y es la razón de fondo del ADR 0015 y de que AUTH de Memorystore quede apagado.

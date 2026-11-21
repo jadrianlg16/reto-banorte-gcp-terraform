@@ -9,22 +9,23 @@ flowchart TB
   org["Organización (org_id)<br/>Cloud Identity · directory_customer_id"]
 
   subgraph F_BOOT["Carpeta bootstrap (etapa 0)"]
-    seed["bnt-bootstrap-seed<br/>bucket de estado bnt-bootstrap-ops-tfstate<br/>llave KMS bnt-bootstrap-sec-state (etapa 0, ADR 0008)<br/>cuentas bnt-tf-1-org … bnt-tf-5-workloads<br/>pool y proveedor de WIF"]
+    seed["bnt-bootstrap-seed<br/>bucket de estado bnt-bootstrap-ops-tfstate (multirregión US)<br/>llave KMS bnt-bootstrap-sec-state en us (etapa 0, ADR 0008 y 0022)<br/>cuentas bnt-tf-1-org … bnt-tf-5-workloads<br/>pool y proveedor de WIF"]
+    deny["Política de denegación bnt-bootstrap-sec-deny-1-org<br/>bnt-tf-1-org no cambia el IAM de la carpeta, el semilla,<br/>las cuentas ni el bucket, ni toma su identidad (ADR 0023)"]
   end
 
-  role["Rol personalizado de organización bntTfKmsSecretIamGranter<br/>creado en la etapa 0, asignado por la etapa 2 a bnt-tf-4-projects"]
+  role["Roles personalizados de organización (etapa 0)<br/>bntTfKmsSecretIamGranter: la etapa 1 lo asigna a bnt-tf-4-projects en security<br/>bntTfSecretContainerAdmin: la etapa 1 lo asigna a bnt-tf-2-security en security"]
   org --- role
 
   subgraph F_COMMON["Carpeta common (etapa 1)"]
     hubp["bnt-common-net-hub<br/>red hub (etapa 3)"]
-    logp["bnt-common-logging<br/>bucket de logs bnt-common-ops-audit-logs<br/>llaves logs y pubsub (etapa 1, ADR 0018)<br/>tema de hallazgos de SCC"]
-    secp["bnt-common-security<br/>llaves KMS de dev, qa y prod (etapa 2)<br/>contenedores de secretos sin valores"]
+    logp["bnt-common-logging<br/>bucket de logs bnt-common-ops-audit-logs<br/>llaves logs y pubsub (etapa 1, ADR 0018)<br/>tema de hallazgos de SCC, mensajes solo en us-central1"]
+    secp["bnt-common-security<br/>llaves KMS de dev, qa y prod (etapa 2)<br/>contenedores de secretos sin valores<br/>el pipeline no lee valores (ADR 0015 y 0023)"]
     bkpp["bnt-common-backup<br/>sin recursos en el código actual"]
   end
 
   subgraph F_DEV["Carpeta dev"]
     devh["bnt-dev-net-spoke<br/>host de Shared VPC (etapa 3)"]
-    deva["bnt-dev-app<br/>proyecto de servicio (etapa 4)"]
+    deva["bnt-dev-app<br/>proyecto de servicio (etapa 4)<br/>Artifact Registry y Binary Authorization (ADR 0024)"]
   end
 
   subgraph F_QA["Carpeta qa"]
@@ -62,12 +63,13 @@ flowchart TB
   subgraph PIPE["Quién despliega"]
     admin["Persona administradora<br/>etapa 0, una sola vez, a mano"]
     gh["GitHub Actions<br/>apply.yml"]
-    wif["Proveedor de WIF<br/>attribute_condition: assertion.repository"]
-    sa["Cuenta de la etapa bnt-tf-{etapa}<br/>mínimo privilegio, sin llaves JSON"]
+    wif["Proveedor de WIF<br/>attribute_condition: assertion.repository_id<br/>y assertion.repository_owner_id (IDs numéricos)"]
+    sa["Cuenta de la etapa bnt-tf-{etapa}<br/>mínimo privilegio, sin llaves JSON<br/>roles de la etapa 5 por proyecto de servicio, no por carpeta"]
   end
   admin --> seed
   gh --> wif --> sa
   sa -- "etapas 1 a 5" --> org
+  deny -. "niega a bnt-tf-1-org" .-> seed
 ```
 
 ## Cómo se lee
@@ -81,8 +83,11 @@ flowchart TB
 - Hay tres llaveros fuera de la etapa 2: el del estado en el semilla (etapa 0) y el de logs y
   Pub/Sub en `logging` (etapa 1), para que haya CMEK desde el primer objeto.
 - Las personas solo leen. Cambia la infraestructura el pipeline, con una cuenta por etapa y WIF
-  filtrado por repositorio (limitación: cualquier rama del repositorio puede usarla, ver
-  [`pipeline.md`](../pipeline.md) §5).
+  filtrado por el ID numérico del repositorio y de su dueño (limitación: cualquier rama del
+  repositorio puede usarla, ver [`pipeline.md`](../pipeline.md) §5).
+- La cuenta de `1-org` tiene roles amplios de organización; la política de denegación de la
+  carpeta `bootstrap` le impide usarlos sobre la base del pipeline
+  (ADR [0023](../adr/0023-endurecimiento-de-la-identidad-del-pipeline.md)).
 
 ## Cambios respecto a la versión de la fase 3
 
@@ -104,3 +109,8 @@ flowchart TB
   recibe permiso de IAP ([pendientes](../pendientes-apply.md), §5).
 - Se agregan el rol personalizado de organización que crea la etapa 0 para la cuenta de la etapa
   4, el sink agregado, el Data Access de la carpeta prod y el presupuesto.
+- Ronda de correcciones del 21 nov 2026: el rol de la etapa 4 sobre `security` lo asigna la
+  etapa 1 (no la 2); se agrega el rol personalizado de contenedores de secretos de la etapa 2, la
+  política de denegación de la carpeta `bootstrap`, el estado en la multirregión `US`, WIF por
+  `assertion.repository_id`, y Artifact Registry con Binary Authorization en los proyectos de
+  servicio.

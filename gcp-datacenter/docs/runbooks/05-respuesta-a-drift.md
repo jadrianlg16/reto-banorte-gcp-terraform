@@ -9,12 +9,16 @@ cuándo escalar. Procedimiento diseñado; `drift.yml` todavía no ha corrido con
 ## Cuándo usarlo
 
 - `drift.yml` abrió o actualizó una incidencia `Drift: <raíz>` con la etiqueta `drift`.
+- El trabajo `recursos no administrados (<entorno>)` de `drift.yml` falló con recursos que
+  ningún estado describe.
 - Un `plan` de un PR (`pr.yml`) muestra cambios que el PR no explica.
+- Un trabajo `apply <raíz>` de `apply.yml` falló porque la huella del plan nuevo no coincide con
+  la del plan revisado (algo cambió entre el plan y la aprobación).
 
 ## Qué reporta `drift.yml`
 
 Corre a diario (12:17 UTC) y a mano, solo con `GCP_ENABLED = true`
-([`pipeline.md`](../pipeline.md) §1.2). Por cada raíz de `stages/` salvo `0-bootstrap`:
+([`pipeline.md`](../pipeline.md) §1.3). Por cada raíz de `stages/` salvo `0-bootstrap`:
 `terraform plan -detailed-exitcode -lock=false` con la cuenta de la etapa.
 
 - Código 0: sin cambios, nada.
@@ -29,6 +33,13 @@ una detección falsa: revisar si `apply.yml` corría a esa hora.
 
 `0-bootstrap` no está cubierta: la persona administradora corre su `plan` a mano (por ejemplo,
 cada mes; propuesta).
+
+Además, un trabajo por entorno (`recursos no administrados (dev|qa|prod)`) lista con Cloud Asset
+Inventory los recursos de la carpeta del entorno y los compara con todos los estados del bucket
+(`scripts/unmanaged-resources.py`, con la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`). Un recurso creado
+a mano no aparece en ningún plan; este trabajo es el que lo encuentra. El resumen de la ejecución
+lista los que sobran y el trabajo falla. Construido y probado con datos de ejemplo, nunca corrido
+contra una carpeta real (punto 49 de los [pendientes](../pendientes-apply.md)).
 
 ## Prerrequisitos
 
@@ -70,6 +81,7 @@ cada mes; propuesta).
    | GCP o el proveedor cambiaron un valor (por ejemplo, actualización automática de versión de GKE, valores por defecto nuevos de la API) | Codificar el valor, o `ignore_changes` en el módulo con el motivo escrito, por PR |
    | Recurso creado a mano que debe administrarse | Importar (paso 6) |
    | Recurso creado a mano que no debe existir | Borrarlo con una identidad con permisos (acceso de emergencia, no construido) tras confirmar con su dueño; Terraform no lo ve |
+   | Recurso que lista el trabajo de recursos no administrados y que crea Google o GKE de forma legítima | Agregar una regla a `scripts/unmanaged-allowlist.txt` con su motivo, por PR (nunca un tipo completo sin razón) |
    | Diferencia que reaparece en cada plan sin cambio externo (diferencia perpetua) | Error del módulo: PR al módulo con prueba en `tests/` (pendiente 11) |
 
 4. **Revertir.** Volver a aplicar el código tal como está en `main`:
@@ -78,9 +90,13 @@ cada mes; propuesta).
    gh workflow run apply.yml --ref main
    ```
 
-   Recorre todas las raíces en orden; solo la raíz con drift aplica cambios. En prod requiere
-   la aprobación del entorno `prod`. Revisar en la ejecución que el plan aplicado sea el que
-   mostró la incidencia y nada más.
+   Recorre todas las raíces en orden; cada una tiene un trabajo `plan <raíz>` (sin entorno) y,
+   solo si hay cambios, un trabajo `apply <raíz>` en su entorno ([`pipeline.md`](../pipeline.md)
+   §1.2). En `common` (`1-org`, `2-security`, hub de `3-networks`) y en `prod` el apply espera la
+   aprobación del entorno: quien aprueba revisa en el resumen del trabajo `plan <raíz>` la línea
+   `Plan:`, la huella y la lista de recursos, y confirma que coincide con la incidencia y nada
+   más. El apply vuelve a planear y solo aplica si la huella es la misma; si no, falla sin aplicar
+   nada (alguien cambió algo entre el plan y la aprobación: volver al paso 1).
 
 5. **Codificar.** PR que cambie el código o los valores de la raíz (o `GCP_TFVARS_JSON`) para que
    el plan quede sin cambios. El plan de `pr.yml` (con `GCP_ENABLED`) debe decir
@@ -115,7 +131,8 @@ cada mes; propuesta).
 gh workflow run drift.yml --ref main
 ```
 
-La ejecución no actualiza la incidencia de esa raíz (plan con código 0). Entonces cerrarla:
+La ejecución no actualiza la incidencia de esa raíz (plan con código 0) y el trabajo de
+recursos no administrados del entorno termina en verde. Entonces cerrarla:
 
 ```bash
 gh issue close <número> --comment "Resuelto: <revertido|codificado en #PR|importado en #PR>."

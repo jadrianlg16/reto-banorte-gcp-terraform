@@ -20,12 +20,16 @@ se marca "pendiente de verificar".
 
   | Etapa | Proyecto | Llavero | Llaves |
   |---|---|---|---|
-  | 0 | `<prefix>-bootstrap-seed` | `<prefix>-bootstrap-sec-keyring-<código>` | `<prefix>-bootstrap-sec-state` (bucket de estado) |
-  | 1 | `<prefix>-common-logging` | `<prefix>-common-sec-keyring-<código>` | `<prefix>-common-sec-logs` (bucket de logs), `<prefix>-common-sec-pubsub` (tema de SCC) |
-  | 2 | `<prefix>-common-security` | `<prefix>-<env>-sec-keyring-{usc1,use4,us}` | `<prefix>-<env>-sec-<uso>`; usos `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run` en las regiones; `storage` y `backup` en `us` |
+  | 0 | `<prefix>-bootstrap-seed` | `<prefix>-bootstrap-sec-keyring-us` (ubicación `us`, la de `state_bucket_location`) | `<prefix>-bootstrap-sec-state` (bucket de estado) |
+  | 1 | `<prefix>-common-logging` | `<prefix>-common-sec-keyring-<código>` (`primary_region`) | `<prefix>-common-sec-logs` (bucket de logs), `<prefix>-common-sec-pubsub` (tema de SCC) |
+  | 2 | `<prefix>-common-security` | `<prefix>-<env>-sec-keyring-{usc1,use4,us}` | `<prefix>-<env>-sec-<uso>`; usos `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run`, `artifacts` en las regiones; `storage`, `backup` y `artifacts` en `us` |
 
-  (`<código>` sale del mapa de códigos cortos: `usc1` para `us-central1`.)
-- Identidad con `roles/cloudkms.admin` sobre el proyecto de la llave. En este diseño la tienen
+  (`<código>` sale del mapa de códigos cortos: `usc1` para `us-central1`. La llave `artifacts`
+  de `us` cifra los repositorios multirregionales de Artifact Registry de la etapa 4, ADR 0024.)
+  Para la llave del estado: `LOC=us`, no `primary_region`.
+- Identidad con `roles/cloudkms.admin` sobre el proyecto de la llave (la cuenta de
+  `<prefix>-tf-4-projects` solo puede cambiar el IAM de las llaves con su rol personalizado, no
+  rotarlas). En este diseño la tienen
   la cuenta `<prefix>-tf-2-security` (proyecto `security`), la `<prefix>-tf-1-org` (dueña de
   `logging`) y la persona administradora de la etapa 0 (dueña del semilla). El grupo
   `security_admins` solo tiene `roles/cloudkms.viewer`: la operación manual requiere el acceso
@@ -80,6 +84,7 @@ se marca "pendiente de verificar".
 | Memorystore (`redis`), Filestore (`filestore`) | Sin re-cifrado automático (pendiente de verificar) | Recrear la instancia si hay que retirar la versión |
 | Backup for GKE y Backup and DR (`backup`) | Los respaldos existentes conservan la versión | Vencen a los 30 días de retención: mantener la versión vieja al menos ese tiempo |
 | Cloud Run (`run`), Pub/Sub de SCC (`pubsub`) | Pendiente de verificar | Nueva revisión de Cloud Run; los mensajes de Pub/Sub tienen retención corta |
+| Artifact Registry (`artifacts`) | Las capas de las imágenes existentes conservan la versión con que se cifraron (pendiente de verificar) | Volver a subir las imágenes que sigan en uso; mantener la versión vieja habilitada mientras haya imágenes desplegadas con ella (un nodo o una revisión que no puede descargar su imagen no arranca) |
 
 ### C. Versión comprometida
 

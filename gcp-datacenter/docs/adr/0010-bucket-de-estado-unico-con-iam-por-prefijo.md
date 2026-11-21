@@ -2,7 +2,8 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: lecturas mínimas por cuenta (menos que lo que
+permite la columna "Lee además" de §6.1) y cláusula de listado ya construida.
 
 Tipo: Aclaración.
 
@@ -27,6 +28,13 @@ raíz lee un prefijo fuera de su fila de §6.1. La etapa 0 da a cada cuenta
 - `roles/storage.objectViewer` con condiciones equivalentes para los prefijos de la columna
   "Lee además".
 
+Las lecturas son las que las raíces de cada cuenta usan de verdad (`reads` en
+`stages/0-bootstrap/service_accounts.tf`): `3-networks` lee solo `1-org` (los spokes leen el hub,
+que la misma cuenta escribe); `4-projects` lee `1-org`, `2-security` y `3-networks/<env>`; y
+`5-workloads` lee `2-security`, `3-networks/<env>` y `4-projects/<env>`, sin `1-org`. Las dos
+condiciones empiezan con `resource.type == "storage.googleapis.com/Bucket"` para que el backend
+pueda listar.
+
 Leer aguas arriba es la interpretación mínima que cumple las dos exigencias.
 
 ## Alternativas consideradas
@@ -47,10 +55,10 @@ Leer aguas arriba es la interpretación mínima que cumple las dos exigencias.
 - Negativas y riesgo principal: la documentación de IAM de Cloud Storage (consultada el
   2026-11-21) dice que `storage.objects.list` se otorga a nivel de bucket y que la condición
   `resource.name` no puede restringir el listado. El backend `gcs` lista objetos del prefijo
-  (por ejemplo para los espacios de trabajo), así que con la condición tal cual el listado se
-  espera que falle. Salidas posibles: agregar a la condición el caso del bucket
-  (`resource.type == "storage.googleapis.com/Bucket"`), con lo que cada cuenta vería los nombres
-  de todos los objetos pero no su contenido; o pasar a carpetas administradas.
+  (por ejemplo para los espacios de trabajo). Por eso la condición incluye el caso del bucket
+  (`resource.type == "storage.googleapis.com/Bucket"`): cada cuenta ve los nombres de todos los
+  objetos pero no su contenido. Si aun así el backend falla, la salida es pasar a carpetas
+  administradas.
 - El bloqueo (`<prefijo>/default.tflock`) cae dentro del prefijo propio, así que la escritura
   condicionada lo cubre.
 - Primer apply: listado de objetos del backend con IAM condicionado por prefijo (punto 1 de
