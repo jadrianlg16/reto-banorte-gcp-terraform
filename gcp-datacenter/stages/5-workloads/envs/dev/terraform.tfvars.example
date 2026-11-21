@@ -24,7 +24,9 @@ enable_internal_lb  = false
 enable_backup       = true
 deletion_protection = false
 
-cloud_run_image = "us-central1-docker.pkg.dev/example-dev-app/apps/api:latest"
+# Imagen del repositorio de la aplicación (salida artifact_registry_repositories de la etapa 4):
+# la política de Binary Authorization del proyecto niega las imágenes de otros registros.
+cloud_run_image = "us-docker.pkg.dev/example-dev-app/bnt-dev-app-app-images-us/api:latest"
 
 sql_tier             = "db-custom-1-3840"
 sql_database_version = "POSTGRES_16"

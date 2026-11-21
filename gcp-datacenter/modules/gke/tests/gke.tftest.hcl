@@ -89,6 +89,10 @@ run "exige_configuracion_de_la_especificacion" {
     condition     = output.workload_pool == "example-prod-app.svc.id.goog"
     error_message = "La salida workload_pool no es la esperada."
   }
+  assert {
+    condition     = output.subnetwork == var.subnet && output.kms_key == var.kms_key && output.master_cidr == var.master_cidr
+    error_message = "subnetwork, kms_key y master_cidr deben publicar lo configurado en el clúster."
+  }
   # Binary Authorization.
   assert {
     condition     = google_container_cluster.this.binary_authorization[0].evaluation_mode == "PROJECT_SINGLETON_POLICY_ENFORCE"

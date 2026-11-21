@@ -43,9 +43,11 @@ resource "google_compute_region_instance_template" "this" {
     }
   }
 
-  # Solo IP interna: no hay access_config ni ipv6_access_config.
+  # Solo IP interna: no hay access_config ni ipv6_access_config, y la pila es solo IPv4 (sin
+  # IPv6, la interfaz no puede recibir una dirección IPv6 externa aunque la subred la tenga).
   network_interface {
     subnetwork = var.subnet
+    stack_type = "IPV4_ONLY"
   }
 
   service_account {

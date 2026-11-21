@@ -4,7 +4,10 @@ Crea el respaldo del entorno con dos servicios. Backup and DR Service: una bóve
 (`google_backup_dr_backup_vault`) en `dr_region` con retención mínima forzada igual a
 `retention_days` y acceso restringido a la organización, un plan diario por cada tipo de recurso
 de `backup_plans` (por defecto VM de Compute Engine y Cloud SQL) en `region`, y asociaciones
-opcionales de recursos a esos planes (`protected_resources`). Backup for GKE: con
+opcionales de recursos a esos planes (`protected_resources`). El plan de Cloud SQL fija
+`log_retention_days = sql_log_retention_days` (7 por defecto): con respaldos mejorados el plan
+sobrescribe la configuración de respaldos de la instancia y esos días son la ventana de
+recuperación a un punto en el tiempo. Backup for GKE: con
 `enable_gke_backup`, un plan diario del clúster `gke_cluster_id` en `dr_region`, con todos los
 espacios de nombres, volúmenes y secretos, cifrado con CMEK (`gke_backup_kms_key`) y bloqueo de
 borrado. La especificación, en su sección "Componentes del datacenter", pide política diaria,
@@ -64,6 +67,7 @@ No modules.
 | <a name="input_protected_resources"></a> [protected\_resources](#input\_protected\_resources) | Recursos que se asocian a un plan. Llave: nombre corto. resource: ID completo del recurso (por ejemplo projects/p/zones/z/instances/vm o projects/p/instances/sql); plan: llave de backup\_plans. El recurso debe estar en region. | <pre>map(object({<br/>    resource = string<br/>    plan     = string<br/>  }))</pre> | `{}` | no |
 | <a name="input_region_short_codes"></a> [region\_short\_codes](#input\_region\_short\_codes) | Código corto de cada región para los nombres (§4.2). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_retention_days"></a> [retention\_days](#input\_retention\_days) | Días que se conserva cada respaldo diario. También es la retención mínima forzada de la bóveda (los respaldos no se pueden borrar antes). La especificación pide 30 días como mínimo. | `number` | `30` | no |
+| <a name="input_sql_log_retention_days"></a> [sql\_log\_retention\_days](#input\_sql\_log\_retention\_days) | Solo planes de Cloud SQL (sqladmin.googleapis.com/Instance): días de registros de transacciones que guarda el plan, es decir, la ventana de recuperación a un punto en el tiempo con respaldos mejorados. Igual que transaction\_log\_retention\_days del módulo cloud-sql (7 por defecto, máximo de ENTERPRISE). | `number` | `7` | no |
 
 ## Outputs
 

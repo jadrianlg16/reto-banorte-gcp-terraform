@@ -457,7 +457,13 @@ resource "google_compute_forwarding_rule" "https" {
   subnetwork            = var.subnet
   ip_address            = google_compute_address.this["this"].id
   target                = google_compute_region_target_https_proxy.this["this"].id
-  labels                = var.labels
+  # Acceso global: clientes de otras regiones de la VPC y on-premises por túneles o adjuntos de
+  # VLAN de otra región llegan al balanceador (sin esto, solo los de var.region). Hace falta para
+  # que la conmutación a DR no deje sin servicio a on-premises.
+  # VERIFICAR-EN-APPLY: on-premises llega a la IP del balanceador de la región de DR por la VPN
+  # de la región primaria y por la de DR.
+  allow_global_access = true
+  labels              = var.labels
 }
 
 resource "google_compute_region_url_map" "redirect" {
@@ -496,5 +502,7 @@ resource "google_compute_forwarding_rule" "http" {
   subnetwork            = var.subnet
   ip_address            = google_compute_address.this["this"].id
   target                = google_compute_region_target_http_proxy.redirect["this"].id
-  labels                = var.labels
+  # Las dos reglas comparten la IP (SHARED_LOADBALANCER_VIP): mismo acceso global que la de 443.
+  allow_global_access = true
+  labels              = var.labels
 }

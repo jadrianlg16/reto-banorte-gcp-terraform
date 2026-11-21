@@ -28,6 +28,16 @@ output "instance_template_self_link" {
   value       = google_compute_region_instance_template.this.self_link
 }
 
+output "subnetwork" {
+  description = "Subred de la interfaz de la plantilla (la que se configuró en el recurso)."
+  value       = google_compute_region_instance_template.this.network_interface[0].subnetwork
+}
+
+output "kms_key" {
+  description = "Llave KMS del disco de arranque de la plantilla."
+  value       = google_compute_region_instance_template.this.disk[0].disk_encryption_key[0].kms_key_self_link
+}
+
 output "named_ports" {
   description = "Puertos con nombre del grupo (nombre → puerto)."
   value       = var.named_ports

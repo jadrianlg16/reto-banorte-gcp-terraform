@@ -43,9 +43,10 @@ locals {
   # gke_nodes sigue la lista mínima de la cuenta de nodos de GKE; workload es la cuenta de los
   # pods (Workload Identity) y run la del servicio de Cloud Run: telemetría y nada más, los
   # secretos se dan uno por uno en iam.tf y Cloud SQL lo da el módulo cloud-sql en la etapa 5.
+  # La lectura de imágenes (artifactregistry.reader) va sobre el repositorio de la aplicación,
+  # no sobre el proyecto (artifacts.tf).
   runtime_roles = {
     gke_nodes = [
-      "roles/artifactregistry.reader",
       "roles/autoscaling.metricsWriter",
       "roles/logging.logWriter",
       "roles/monitoring.metricWriter",
@@ -58,7 +59,6 @@ locals {
       "roles/monitoring.metricWriter",
     ]
     mig = [
-      "roles/artifactregistry.reader",
       "roles/logging.logWriter",
       "roles/monitoring.metricWriter",
     ]

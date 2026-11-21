@@ -17,8 +17,9 @@ module "gke" {
   subnet         = local.subnets[local.subnet_keys[each.key].app].self_link
   pods_range     = local.pods_range_name
   services_range = local.services_range_name
-  # El spoke reserva gke_master/gke_master_dr sin publicarlos (§7.4): llegan por subnet_cidrs.
-  master_cidr                = var.subnet_cidrs[local.subnet_keys[each.key].gke_master]
+  # /28 que reserva el spoke (salida reserved_cidrs de la etapa 3): el mismo valor que usa la
+  # regla de firewall del plano de control. La postcondición del estado de red lo exige.
+  master_cidr                = try(local.reserved_cidrs[local.subnet_keys[each.key].gke_master], null)
   master_authorized_networks = var.gke_master_authorized_networks
 
   release_channel              = var.gke_release_channel
@@ -34,6 +35,19 @@ module "gke" {
   labels = local.labels
 
   depends_on = [terraform_data.upstream_checks]
+}
+
+# Workload Identity: la cuenta de Kubernetes <namespace>/<nombre> actúa como la cuenta workload
+# de la aplicación (Cloud SQL por IAM, secretos, telemetría). El pool <proyecto>.svc.id.goog
+# existe desde que se crea el primer clúster del proyecto, por eso se toma de module.gke (un
+# solo pool por proyecto: sirve a los clústeres primario y de DR). La etapa 4 da a la cuenta del
+# pipeline serviceAccountAdmin solo sobre esta cuenta.
+resource "google_service_account_iam_member" "workload_identity" {
+  for_each = var.enable_gke ? toset(["workload"]) : toset([])
+
+  service_account_id = "projects/${local.project_id}/serviceAccounts/${local.service_accounts["workload"]}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${module.gke["primary"].workload_pool}[${var.gke_workload_namespace}/${var.gke_workload_ksa_name}]"
 }
 
 module "mig" {

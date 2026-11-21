@@ -19,7 +19,12 @@ output "service_accounts" {
   }
 }
 
+output "artifact_registry_repositories" {
+  description = "Aplicación → URL del repositorio Docker (<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>); es la única fuente de imágenes que admite Binary Authorization además de binary_authorization_allowlist_patterns."
+  value       = { for app, r in google_artifact_registry_repository.this : app => "${r.location}-docker.pkg.dev/${r.project}/${r.repository_id}" }
+}
+
 output "service_agents" {
-  description = "[aplicación][agente] → miembro de IAM (serviceAccount:<correo>) de los agentes de servicio que recibieron permisos: apis, compute, filestore, gke, gkebackup, redis, run, sql y storage."
+  description = "[aplicación][agente] → miembro de IAM (serviceAccount:<correo>) de los agentes de servicio que recibieron permisos: apis, artifactregistry, compute, filestore, gke, gkebackup, redis, run, sql y storage."
   value       = local.service_agents
 }

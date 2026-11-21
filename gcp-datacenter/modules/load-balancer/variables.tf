@@ -238,7 +238,7 @@ variable "ssl_policy_profile" {
 }
 
 variable "region" {
-  description = "Región del balanceador interno (la región activa: la primaria o, con dr_active, la de DR). No aplica en \"external\"."
+  description = "Región del balanceador interno (uno por región: sus backends deben estar en esa región). No aplica en \"external\"."
   type        = string
   default     = null
 

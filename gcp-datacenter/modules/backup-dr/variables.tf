@@ -144,6 +144,18 @@ variable "protected_resources" {
   }
 }
 
+variable "sql_log_retention_days" {
+  description = "Solo planes de Cloud SQL (sqladmin.googleapis.com/Instance): días de registros de transacciones que guarda el plan, es decir, la ventana de recuperación a un punto en el tiempo con respaldos mejorados. Igual que transaction_log_retention_days del módulo cloud-sql (7 por defecto, máximo de ENTERPRISE)."
+  type        = number
+  default     = 7
+  nullable    = false
+
+  validation {
+    condition     = var.sql_log_retention_days >= 1 && var.sql_log_retention_days <= 35 && floor(var.sql_log_retention_days) == var.sql_log_retention_days
+    error_message = "sql_log_retention_days debe ser un entero de 1 a 35."
+  }
+}
+
 variable "backup_time_zone" {
   description = "Zona horaria (IANA) para interpretar la ventana diaria de respaldo."
   type        = string

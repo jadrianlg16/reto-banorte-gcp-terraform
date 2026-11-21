@@ -63,6 +63,14 @@ run "exige_configuracion_de_la_especificacion" {
     error_message = "La plantilla no debe tener access_config (IP pública)."
   }
   assert {
+    condition     = google_compute_region_instance_template.this.network_interface[0].stack_type == "IPV4_ONLY"
+    error_message = "La interfaz debe ser solo IPv4 (sin IPv6 externa posible)."
+  }
+  assert {
+    condition     = output.subnetwork == google_compute_region_instance_template.this.network_interface[0].subnetwork && output.kms_key == google_compute_region_instance_template.this.disk[0].disk_encryption_key[0].kms_key_self_link
+    error_message = "subnetwork y kms_key deben publicar lo que usa la plantilla."
+  }
+  assert {
     condition     = google_compute_region_instance_template.this.can_ip_forward == false
     error_message = "El reenvío de IP debe estar apagado."
   }

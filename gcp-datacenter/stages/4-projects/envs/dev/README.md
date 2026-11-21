@@ -18,9 +18,21 @@ Por cada aplicación de `applications` (por defecto una, `app`):
   tienen de 2 a 8 minúsculas o dígitos (el mismo conjunto que `application` de 5-workloads),
   así el ID más largo no pasa de 30 caracteres con cualquier prefijo y entorno.
 - **Agentes de servicio** que no existen hasta el primer uso, creados con
-  `google_project_service_identity` (google-beta): `sqladmin`, `file`, `redis`, `gkebackup`. El
+  `google_project_service_identity` (google-beta): `artifactregistry`, `sqladmin`, `file`,
+  `redis`, `gkebackup`. El
   de Cloud Storage lo crea la fuente de datos `google_storage_project_service_account`. Los de
   `container`, `compute` y `run` aparecen al habilitar la API (VERIFICAR-EN-APPLY).
+- **Repositorio Docker de Artifact Registry** `<prefix>-<environment>-app-<app>-images-<ubicación>`
+  en la multirregión `artifact_registry_location` (por defecto `us`: sobrevive a la pérdida de
+  una región), con CMEK (`kms_key_ids[environment][<ubicación>]["artifacts"]`) y etiquetas
+  inmutables; `roles/artifactregistry.reader` sobre el repositorio a la cuenta `gke_nodes`, a la
+  cuenta `mig` y al agente de Cloud Run (que es quien descarga la imagen).
+- **Política de Binary Authorization** del proyecto: `global_policy_evaluation_mode = ENABLE`,
+  regla por defecto `ALWAYS_DENY` con `ENFORCED_BLOCK_AND_AUDIT_LOG` y lista de permitidos =
+  `<repositorio>/**` más `binary_authorization_allowlist_patterns` (validada: sin `*` solo, sin
+  registros enteros, `**` solo después de `/`). Con `binary_authorization_attestors` la regla
+  pasa a `REQUIRE_ATTESTATION`. La usan GKE (`PROJECT_SINGLETON_POLICY_ENFORCE`) y Cloud Run
+  (`use_default`).
 - **Permisos** (todos aditivos, por el módulo `iam` salvo los de etiquetas seguras, que el
   módulo no cubre y van como `google_tags_tag_value_iam_member` en la raíz).
 - **En prod**: alta en el perímetro de VPC-SC de 2-security (`perimeter_name`) de cada proyecto
@@ -41,14 +53,16 @@ Por cada aplicación de `applications` (por defecto una, `app`):
 
 | Uso | Para | Roles |
 |---|---|---|
-| `gke_nodes` | Nodos de GKE | `roles/logging.logWriter`, `roles/monitoring.metricWriter`, `roles/monitoring.viewer`, `roles/stackdriver.resourceMetadata.writer`, `roles/autoscaling.metricsWriter`, `roles/artifactregistry.reader` |
+| `gke_nodes` | Nodos de GKE | `roles/logging.logWriter`, `roles/monitoring.metricWriter`, `roles/monitoring.viewer`, `roles/stackdriver.resourceMetadata.writer`, `roles/autoscaling.metricsWriter`; `roles/artifactregistry.reader` sobre el repositorio |
 | `workload` | Pods (Workload Identity) | `roles/logging.logWriter`, `roles/monitoring.metricWriter`, `roles/cloudtrace.agent`; `roles/secretmanager.secretAccessor` sobre los secretos de la aplicación |
-| `mig` | VM del MIG | `roles/logging.logWriter`, `roles/monitoring.metricWriter`, `roles/artifactregistry.reader` |
+| `mig` | VM del MIG | `roles/logging.logWriter`, `roles/monitoring.metricWriter`; `roles/artifactregistry.reader` sobre el repositorio |
 | `run` | Servicio de Cloud Run | `roles/logging.logWriter`, `roles/monitoring.metricWriter`, `roles/cloudtrace.agent`; `roles/secretmanager.secretAccessor` sobre los secretos de la aplicación |
 
-No se dan aquí: Cloud SQL (usuarios IAM y `cloudsql.client`/`instanceUser`, módulo `cloud-sql`
-en la etapa 5) ni `roles/iam.workloadIdentityUser` de la cuenta `workload` hacia la cuenta de
-Kubernetes (el pool `<proyecto>.svc.id.goog` existe solo cuando la etapa 5 crea el clúster).
+No se dan aquí: Cloud SQL (usuarios IAM y `cloudsql.client`/`instanceUser` de las cuentas con
+cómputo encendido, módulo `cloud-sql` en la etapa 5) ni `roles/iam.workloadIdentityUser` de la
+cuenta `workload` hacia la cuenta de Kubernetes: el pool `<proyecto>.svc.id.goog` existe solo
+cuando la etapa 5 crea el clúster, y la etapa 5 hace ese enlace con el
+`roles/iam.serviceAccountAdmin` que recibe aquí sobre la cuenta `workload`.
 
 ### Agentes de servicio y permisos
 
@@ -57,7 +71,8 @@ Kubernetes (el pool `<proyecto>.svc.id.goog` existe solo cuando la etapa 5 crea 
 | GKE `service-<n>@container-engine-robot` | `app`, `app_dr` | `gke` | `roles/container.hostServiceAgentUser` en el host; `tagUser` en las etiquetas seguras |
 | APIs de Google `<n>@cloudservices.gserviceaccount.com` | `app`, `app_dr` (crea las VM del MIG y los nodos) | — | `tagUser` en las etiquetas seguras |
 | Compute `service-<n>@compute-system` | — | `compute` y `gke` (discos de arranque de los nodos) | |
-| Cloud Run `service-<n>@serverless-robot-prod` | `run`, `run_dr` (salida directa a la VPC) | `run` | |
+| Cloud Run `service-<n>@serverless-robot-prod` | `run`, `run_dr` (salida directa a la VPC) | `run` | `roles/compute.networkViewer` en el host (salida directa a la VPC en Shared VPC); `artifactregistry.reader` sobre el repositorio |
+| Artifact Registry `service-<n>@gcp-sa-artifactregistry` | — | `artifacts` (solo en `artifact_registry_location`) | |
 | Cloud SQL `service-<n>@gcp-sa-cloud-sql` | — | `sql` | |
 | Cloud Storage `service-<n>@gs-project-accounts` | — | `storage` (también en la multirregión `us`) | |
 | Filestore `service-<n>@cloud-filer` | — | `filestore` | |
@@ -66,13 +81,27 @@ Kubernetes (el pool `<proyecto>.svc.id.goog` existe solo cuando la etapa 5 crea 
 
 Las llaves salen de `kms_key_ids[environment][ubicación][uso]` en las regiones primaria y de DR
 (réplica, plan de Backup for GKE y conmutación con `dr_active`) y, solo para `storage`, también
-en `us`. No se otorgan `secrets` (los secretos viven en `security`; su agente es de la etapa 2)
+en `us`; `artifacts` solo en la ubicación del repositorio. No se otorgan `secrets` (los secretos viven en `security`; su agente es de la etapa 2)
 ni `backup` en `us` (ningún consumidor en la etapa 5). Las subredes se otorgan solo si existen
 en el estado del spoke (en dev y qa no hay `*_dr`); las proxy-only no se otorgan.
 
 ### Pipeline de la etapa 5 (`workloads_service_account`)
 
-La cuenta `<prefix>-tf-5-workloads` crea las cargas en el proyecto de servicio, así que recibe:
+La cuenta `<prefix>-tf-5-workloads` crea las cargas en el proyecto de servicio. No tiene roles en
+la carpeta del entorno (que también contiene el host de la Shared VPC); recibe aquí:
+
+- En cada proyecto de servicio, un rol por tipo de recurso que crea: `backupdr.admin`,
+  `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`,
+  `compute.loadBalancerAdmin`, `compute.securityAdmin` (Cloud Armor), `container.admin`,
+  `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`, `run.admin`,
+  `storage.admin`; y `roles/resourcemanager.projectIamAdmin` con la condición
+  `modifiedGrantsByRole` limitada a `roles/cloudsql.client` y `roles/cloudsql.instanceUser`
+  (acceso a Cloud SQL por IAM de las cuentas de ejecución).
+- `roles/iam.serviceAccountAdmin` solo sobre la cuenta `workload` (enlace de Workload Identity).
+- `roles/compute.networkViewer` en el host (Memorystore pide `compute.networks.list` en el host;
+  Cloud SQL y Filestore leen la red para la IP privada por PSA). Sin `networkUser` de proyecto.
+
+Además:
 `roles/iam.serviceAccountUser` sobre cada cuenta de ejecución (no sobre el proyecto),
 `roles/compute.networkUser` sobre las subredes otorgadas (plantillas, nodos, reglas de reenvío
 del balanceador interno y Cloud Run con salida a la VPC) y `roles/resourcemanager.tagUser` sobre
@@ -92,11 +121,11 @@ la reciben. El agente de Compute (`compute-system`) no crea instancias y no la r
 | Prefijo | Salidas |
 |---|---|
 | `1-org` | `folder_ids` (map(string)) |
-| `2-security` | `kms_key_ids` (map(map(map(string)))), `secret_ids` (map(map(string))), `perimeter_name` (string), `vpc_sc_enforced` (bool) |
+| `2-security` | `kms_key_ids` (map(map(map(string))); también `[<artifact_registry_location>]["artifacts"]`), `secret_ids` (map(map(string))), `perimeter_name` (string), `vpc_sc_enforced` (bool) |
 | `3-networks/<env>` | `host_project_id` (string), `subnets` (map(object)), `secure_tags` (map(string)) |
 
 Cada lectura tiene postcondiciones: carpeta con forma `folders/<n>`, todas las llaves de uso en
-la región primaria, los secretos pedidos en `secret_ids[environment]`, subredes `app` y `run`, y
+la región primaria, la llave `artifacts` en `artifact_registry_location`, los secretos pedidos en `secret_ids[environment]`, subredes `app` y `run`, y
 etiquetas `lb_backend` e `iap_ssh` como `tagValues/<id>`.
 
 ## Cómo se corre
@@ -125,7 +154,7 @@ Prueba sin GCP: `terraform test` (o `bash scripts/check.sh stages/4-projects/env
 | Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | 1-org | crear los proyectos de servicio (queda como dueña: APIs, cuentas de ejecución, agentes y su IAM dentro de ellos) |
 | Carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | 1-org | unir el proyecto de servicio al host y dar `networkUser` por subred; leer la carpeta y el host |
 | Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.tagAdmin` | 1-org | dar `tagUser` sobre los valores de `lb_backend` e `iap_ssh` del spoke |
-| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` con condición (solo `roles/container.hostServiceAgentUser`) | 1-org | dar ese rol al agente de GKE en el host |
+| Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectIamAdmin` con condición (solo `roles/compute.networkUser`, `roles/compute.networkViewer` y `roles/container.hostServiceAgentUser`) | 1-org | dar en el host `hostServiceAgentUser` al agente de GKE y `networkViewer` al agente de Cloud Run y a la etapa 5 |
 | Proyecto `security` | rol personalizado `kms_secret_iam_role_id` (0-bootstrap) | 2-security | IAM de las llaves KMS y de los secretos, sin usarlos ni administrarlos |
 | Política de acceso (solo prod) | `roles/accesscontextmanager.policyEditor` | 2-security | alta de los proyectos en el perímetro |
 
@@ -136,11 +165,19 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 
 ## VERIFICAR-EN-APPLY
 
-- `generateServiceIdentity` para `sqladmin`, `file`, `redis` y `gkebackup`; agentes de
+- `generateServiceIdentity` para `artifactregistry`, `sqladmin`, `file`, `redis` y `gkebackup`; agentes de
   `container`, `compute` y `run` presentes tras habilitar la API.
 - `tagUser` sobre el valor basta a los agentes de GKE y de APIs para crear nodos y VM con
   etiquetas.
 - CMEK del proyecto `security` con el perímetro forzado (§12, punto 4).
+- `networkViewer` en el host más `networkUser` por subred bastan a la etapa 5 para Cloud SQL,
+  Memorystore y Filestore con IP privada (PSA); si piden `compute.networks.use`, la alternativa
+  documentada es `networkUser` en el host (todas las subredes) y se decide en revisión.
+- Repositorio con CMEK en la multirregión y política de Binary Authorization: una imagen del
+  repositorio se despliega en Cloud Run y GKE; una de otro registro se rechaza.
+- La etapa crea el repositorio, su IAM y la política de Binary Authorization en el proyecto de
+  servicio como creadora del proyecto; si no basta, necesita `roles/artifactregistry.admin` y
+  `roles/binaryauthorization.policyEditor` en él.
 - El agente de GKE puede necesitar `roles/compute.securityAdmin` en el host para crear sus
   reglas de firewall; no se otorga (mínimo privilegio): sin él GKE emite eventos con las reglas
   que hay que crear en la etapa 3.
@@ -176,6 +213,9 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 | [google-beta_google_project_service_identity.this](https://registry.terraform.io/providers/hashicorp/google-beta/latest/docs/resources/google_project_service_identity) | resource |
 | [google_access_context_manager_service_perimeter_dry_run_resource.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_dry_run_resource) | resource |
 | [google_access_context_manager_service_perimeter_resource.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_resource) | resource |
+| [google_artifact_registry_repository.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository) | resource |
+| [google_artifact_registry_repository_iam_member.reader](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository_iam_member) | resource |
+| [google_binary_authorization_policy.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/binary_authorization_policy) | resource |
 | [google_service_account.runtime](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
 | [google_tags_tag_value_iam_member.tag_user](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_tag_value_iam_member) | resource |
 | [google_folder.env](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/folder) | data source |
@@ -197,8 +237,11 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en los nombres (por ejemplo, bnt). | `string` | n/a | yes |
 | <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). Debe ser una ubicación de kms\_key\_ids en el estado de 2-security. | `string` | n/a | yes |
 | <a name="input_state_bucket"></a> [state\_bucket](#input\_state\_bucket) | Bucket del estado remoto (salida state\_bucket de 0-bootstrap). Se usa para leer 1-org, 2-security y 3-networks/<environment>. | `string` | n/a | yes |
-| <a name="input_workloads_service_account"></a> [workloads\_service\_account](#input\_workloads\_service\_account) | Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads). Debe ser igual a stage\_service\_accounts["5-workloads"] de las salidas de 0-bootstrap. Recibe el uso de subredes, el uso de etiquetas seguras y actAs sobre las cuentas de ejecución para crear las cargas. Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1). | `string` | n/a | yes |
+| <a name="input_workloads_service_account"></a> [workloads\_service\_account](#input\_workloads\_service\_account) | Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads). Debe ser igual a stage\_service\_accounts["5-workloads"] de las salidas de 0-bootstrap. Recibe en cada proyecto de servicio los roles de las cargas que crea, el uso de subredes, networkViewer en el host, el uso de etiquetas seguras, actAs sobre las cuentas de ejecución y serviceAccountAdmin sobre la cuenta workload (Workload Identity). Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1). | `string` | n/a | yes |
 | <a name="input_applications"></a> [applications](#input\_applications) | Aplicaciones del entorno: un proyecto de servicio por llave (<prefix>-<environment>-<llave>).<br/>- apis: APIs adicionales a las base que la raíz siempre habilita (ver README).<br/>- secrets: nombres cortos de secretos de 2-security (secret\_ids[environment]) que leen las<br/>  cuentas workload y run de la aplicación.<br/>La llave forma también las cuentas de servicio <prefix>-<environment>-<llave>-<uso>, que no<br/>pueden pasar de 30 caracteres (ADR 0017). | <pre>map(object({<br/>    apis    = optional(set(string), [])<br/>    secrets = optional(set(string), [])<br/>  }))</pre> | <pre>{<br/>  "app": {}<br/>}</pre> | no |
+| <a name="input_artifact_registry_location"></a> [artifact\_registry\_location](#input\_artifact\_registry\_location) | Multirregión del repositorio Docker de cada aplicación (us, eu o asia). Debe existir kms\_key\_ids[environment][<ubicación>]["artifacts"] en el estado de 2-security. | `string` | `"us"` | no |
+| <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta, con * o ** solo al final y después de una /). Vacío por defecto: ningún registro público. | `list(string)` | `[]` | no |
+| <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<nombre>) que la política exige a las imágenes fuera de la lista de permitidos. Vacío: la regla por defecto niega todo (ALWAYS\_DENY); con atestadores pasa a REQUIRE\_ATTESTATION. | `list(string)` | `[]` | no |
 | <a name="input_deletion_policy"></a> [deletion\_policy](#input\_deletion\_policy) | deletion\_policy de los proyectos de servicio: PREVENT (falla al destruir), ABANDON o DELETE. En prod solo PREVENT (lo exige project-factory); en dev se puede usar DELETE para el destroy de prueba. | `string` | `"PREVENT"` | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional para que los IDs de proyecto sean únicos a nivel mundial; se agrega al final con un guion. Vacío: sin sufijo. | `string` | `""` | no |
 
@@ -206,8 +249,9 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_artifact_registry_repositories"></a> [artifact\_registry\_repositories](#output\_artifact\_registry\_repositories) | Aplicación → URL del repositorio Docker (<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>); es la única fuente de imágenes que admite Binary Authorization además de binary\_authorization\_allowlist\_patterns. |
 | <a name="output_service_accounts"></a> [service\_accounts](#output\_service\_accounts) | [aplicación][uso] → correo de la cuenta de servicio de ejecución; usos gke\_nodes, workload, mig y run. |
-| <a name="output_service_agents"></a> [service\_agents](#output\_service\_agents) | [aplicación][agente] → miembro de IAM (serviceAccount:<correo>) de los agentes de servicio que recibieron permisos: apis, compute, filestore, gke, gkebackup, redis, run, sql y storage. |
+| <a name="output_service_agents"></a> [service\_agents](#output\_service\_agents) | [aplicación][agente] → miembro de IAM (serviceAccount:<correo>) de los agentes de servicio que recibieron permisos: apis, artifactregistry, compute, filestore, gke, gkebackup, redis, run, sql y storage. |
 | <a name="output_service_project_ids"></a> [service\_project\_ids](#output\_service\_project\_ids) | Aplicación → ID del proyecto de servicio. |
 | <a name="output_service_project_numbers"></a> [service\_project\_numbers](#output\_service\_project\_numbers) | Aplicación → número del proyecto de servicio. |
 <!-- END_TF_DOCS -->

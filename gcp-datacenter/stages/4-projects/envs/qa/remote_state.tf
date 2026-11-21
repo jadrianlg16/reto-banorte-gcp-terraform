@@ -27,9 +27,13 @@ data "terraform_remote_state" "security" {
     postcondition {
       condition = alltrue([
         for use in keys(local.kms_consumers) :
-        can(self.outputs.kms_key_ids[var.environment][var.primary_region][use])
+        can(self.outputs.kms_key_ids[var.environment][var.primary_region][use]) if use != "artifacts"
       ])
       error_message = "El estado de 2-security no tiene en kms_key_ids[environment][primary_region] todas las llaves que usan los agentes (backup, compute, filestore, gke, redis, run, sql, storage)."
+    }
+    postcondition {
+      condition     = can(self.outputs.kms_key_ids[var.environment][var.artifact_registry_location]["artifacts"])
+      error_message = "El estado de 2-security no tiene kms_key_ids[environment][artifact_registry_location][\"artifacts\"] (llave del repositorio de imágenes)."
     }
     postcondition {
       condition = alltrue(flatten([

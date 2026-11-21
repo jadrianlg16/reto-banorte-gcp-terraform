@@ -311,6 +311,13 @@ variable "transaction_log_retention_days" {
   }
 }
 
+variable "backup_plan_managed" {
+  description = "true cuando un plan de Backup and DR (módulo backup-dr) protege la instancia (respaldos mejorados): el plan define horario, retención y días de registros, y el módulo deja de declarar backup_start_time, retained_backups y transaction_log_retention_days (fijar log_retention_days del plan con el mismo valor). Respaldos y PITR quedan encendidos."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "maintenance_window" {
   description = "Ventana de mantenimiento: día (1 = lunes … 7 = domingo), hora UTC (0-23) y canal (stable o canary)."
   type = object({

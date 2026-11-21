@@ -87,10 +87,12 @@ No modules.
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_kms_key"></a> [kms\_key](#output\_kms\_key) | Llave KMS (CMEK) configurada en la plantilla del servicio. |
 | <a name="output_location"></a> [location](#output\_location) | Región del servicio. |
 | <a name="output_neg_id"></a> [neg\_id](#output\_neg\_id) | ID del NEG sin servidor; es el backend que recibe el módulo load-balancer. |
 | <a name="output_neg_self_link"></a> [neg\_self\_link](#output\_neg\_self\_link) | Self link del NEG sin servidor. |
 | <a name="output_service_id"></a> [service\_id](#output\_service\_id) | ID del servicio (projects/<p>/locations/<región>/services/<nombre>). |
 | <a name="output_service_name"></a> [service\_name](#output\_service\_name) | Nombre del servicio de Cloud Run. |
 | <a name="output_service_uri"></a> [service\_uri](#output\_service\_uri) | URI del servicio (solo alcanzable desde la red interna o el balanceador). |
+| <a name="output_subnetwork"></a> [subnetwork](#output\_subnetwork) | Subred de la salida directa a la VPC configurada en el servicio (ruta projects/<host>/regions/<r>/subnetworks/<s>). |
 <!-- END_TF_DOCS -->

@@ -129,7 +129,7 @@ variable "applications" {
 }
 
 variable "workloads_service_account" {
-  description = "Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads). Debe ser igual a stage_service_accounts[\"5-workloads\"] de las salidas de 0-bootstrap. Recibe el uso de subredes, el uso de etiquetas seguras y actAs sobre las cuentas de ejecución para crear las cargas. Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1)."
+  description = "Correo de la cuenta de servicio del pipeline de la etapa 5 (<prefix>-tf-5-workloads). Debe ser igual a stage_service_accounts[\"5-workloads\"] de las salidas de 0-bootstrap. Recibe en cada proyecto de servicio los roles de las cargas que crea, el uso de subredes, networkViewer en el host, el uso de etiquetas seguras, actAs sobre las cuentas de ejecución y serviceAccountAdmin sobre la cuenta workload (Workload Identity). Llega por variable porque esta etapa no lee el estado de 0-bootstrap (§6.1)."
   type        = string
   nullable    = false
 
@@ -140,6 +140,47 @@ variable "workloads_service_account" {
   validation {
     condition     = startswith(var.workloads_service_account, "${var.prefix}-tf-5-workloads@")
     error_message = "workloads_service_account debe ser stage_service_accounts[\"5-workloads\"] de 0-bootstrap (<prefix>-tf-5-workloads@<proyecto semilla>.iam.gserviceaccount.com)."
+  }
+}
+
+variable "artifact_registry_location" {
+  description = "Multirregión del repositorio Docker de cada aplicación (us, eu o asia). Debe existir kms_key_ids[environment][<ubicación>][\"artifacts\"] en el estado de 2-security."
+  type        = string
+  default     = "us"
+  nullable    = false
+
+  validation {
+    condition     = contains(["us", "eu", "asia"], var.artifact_registry_location)
+    error_message = "artifact_registry_location debe ser us, eu o asia (multirregión: el repositorio sobrevive a la pérdida de una región)."
+  }
+}
+
+variable "binary_authorization_allowlist_patterns" {
+  description = "Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta, con * o ** solo al final y después de una /). Vacío por defecto: ningún registro público."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    # Registro con al menos un segmento de ruta antes de cualquier comodín: nada de "*" solo ni
+    # de un registro entero (gcr.io/*), y ** solo después de / para no cubrir otros proyectos.
+    condition = alltrue([
+      for p in var.binary_authorization_allowlist_patterns :
+      can(regex("^[a-z0-9.-]+\\.[a-z]{2,}(:[0-9]+)?/[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*(/\\*\\*|/\\*|\\*)?$", p))
+    ])
+    error_message = "Cada patrón debe ser <registro>/<ruta>[/*|/**|*]: con al menos un segmento de ruta, sin comodines en medio y con ** solo después de /."
+  }
+}
+
+variable "binary_authorization_attestors" {
+  description = "Atestadores (projects/<p>/attestors/<nombre>) que la política exige a las imágenes fuera de la lista de permitidos. Vacío: la regla por defecto niega todo (ALWAYS_DENY); con atestadores pasa a REQUIRE_ATTESTATION."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for a in var.binary_authorization_attestors : can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/attestors/[A-Za-z0-9_-]+$", a))])
+    error_message = "Cada atestador debe tener la forma projects/<proyecto>/attestors/<nombre>."
   }
 }
 

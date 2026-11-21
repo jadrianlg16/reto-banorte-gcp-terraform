@@ -26,11 +26,23 @@ module "cloud_sql" {
   network            = local.network_self_link
   allocated_ip_range = local.psa_range_name
 
-  # Sin contraseñas (ADR 0015): la cuenta de servicio workload de la aplicación entra por IAM.
-  iam_users = [{
-    email = local.service_accounts["workload"]
-    type  = "CLOUD_IAM_SERVICE_ACCOUNT"
-  }]
+  # Sin contraseñas (ADR 0015): cada cuenta de ejecución cuyo cómputo está encendido entra por
+  # IAM (usuario de base de datos + cloudsql.client e instanceUser limitados a la instancia y su
+  # réplica): workload con GKE (pods por Workload Identity), run con Cloud Run y mig con el MIG.
+  iam_users = [
+    for use, enabled in {
+      workload = var.enable_gke
+      run      = var.enable_cloud_run
+      mig      = var.enable_mig
+      } : {
+      email = local.service_accounts[use]
+      type  = "CLOUD_IAM_SERVICE_ACCOUNT"
+    } if enabled
+  ]
+
+  # Con enable_backup el plan de Backup and DR (operations.tf) es dueño del horario y la
+  # retención de respaldos y de registros (respaldos mejorados).
+  backup_plan_managed = var.enable_backup
 
   deletion_protection = var.deletion_protection
   labels              = local.labels

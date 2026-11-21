@@ -90,16 +90,27 @@ resource "google_sql_database_instance" "this" {
       ssl_mode           = var.ssl_mode
     }
 
+    # Respaldos automáticos y PITR siempre encendidos al crear la instancia. Con
+    # backup_plan_managed = true (respaldos mejorados de Backup and DR), el plan define el horario
+    # y la retención de respaldos y de registros ("Manage enhanced backups": la configuración
+    # existente se sobrescribe con el plan); el módulo deja de declarar horario, retención y días
+    # de registros (atributos calculados) para no pelear con el plan en cada apply.
+    # VERIFICAR-EN-APPLY: después de asociar el plan, un segundo plan de Terraform no muestra
+    # cambios en settings.backup_configuration (enabled y point_in_time_recovery_enabled siguen
+    # en true en la API). Si aparecen, agregar ignore_changes sobre ese bloque.
     backup_configuration {
       enabled                        = true
       point_in_time_recovery_enabled = true
-      start_time                     = var.backup_start_time
+      start_time                     = var.backup_plan_managed ? null : var.backup_start_time
       location                       = var.backup_location
-      transaction_log_retention_days = var.transaction_log_retention_days
+      transaction_log_retention_days = var.backup_plan_managed ? null : var.transaction_log_retention_days
 
-      backup_retention_settings {
-        retained_backups = var.retained_backups
-        retention_unit   = "COUNT"
+      dynamic "backup_retention_settings" {
+        for_each = var.backup_plan_managed ? [] : [1]
+        content {
+          retained_backups = var.retained_backups
+          retention_unit   = "COUNT"
+        }
       }
     }
 
@@ -207,9 +218,8 @@ resource "google_sql_database_instance" "replica" {
   encryption_key_name  = var.dr_kms_key
   deletion_protection  = var.deletion_protection
 
-  replica_configuration {
-    failover_target = false
-  }
+  # Sin replica_configuration: failover_target no aplica a PostgreSQL (esquema del proveedor) y
+  # la promoción es manual (runbook de conmutación).
 
   settings {
     tier                        = var.sql_tier

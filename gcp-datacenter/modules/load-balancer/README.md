@@ -18,14 +18,18 @@ Backends: cada llave de `backends` es un servicio con su lista de grupos (grupo 
 true`) no llevan verificación de salud; los demás usan una existente (`health_check_id`) o una que
 crea el módulo (`health_check`). El modo de balanceo por defecto es `UTILIZATION` (grupos de
 instancias); para NEG zonales de GKE hay que pasar `balancing_mode = "RATE"` y
-`max_rate_per_endpoint`. La conmutación a DR (§7.6) se hace con `dr_active`: cada servicio
-pasa de `groups` a `dr_groups`.
+`max_rate_per_endpoint`. La conmutación a DR del externo (§7.6) se hace con `dr_active`:
+cada servicio pasa de `groups` a `dr_groups`. El interno es regional y sus backends deben estar
+en su región: se crea uno por región (la etapa 5 agrega el de DR al conmutar) y sus reglas de
+reenvío tienen `allow_global_access = true`, para que clientes de otras regiones y on-premises
+por túneles o adjuntos de VLAN de otra región lleguen a él. La salida `backend_groups` publica
+los grupos configurados en cada servicio de backend.
 
 Precondiciones que el módulo no crea:
 
 - Interno: la subred proxy-only (`REGIONAL_MANAGED_PROXY`) de `region` debe existir en la VPC
-  (llaves `proxy`/`proxy_dr` del plan IP, creadas por `network-spoke`). Con `dr_active`, la
-  etapa pasa `region` y `subnet` de la región de DR, y los grupos de esa región.
+  (llaves `proxy`/`proxy_dr` del plan IP, creadas por `network-spoke`). Para la región de DR,
+  la etapa pasa `region`, `subnet` y los grupos de esa región.
 - Interno: una verificación de salud existente debe ser regional (la de `compute-mig` es global
   si así se creó); si no, usar `health_check` para que el módulo cree una regional.
 - Externo: los registros DNS A de `domain_names` apuntan a `ip_address` para que el certificado
@@ -95,7 +99,7 @@ No modules.
 | <a name="input_internal_ip_address"></a> [internal\_ip\_address](#input\_internal\_ip\_address) | IP interna fija opcional para el balanceador interno, dentro de subnet. null: la asigna GCP. | `string` | `null` | no |
 | <a name="input_name"></a> [name](#input\_name) | Nombre corto del balanceador (por ejemplo, la aplicación); forma parte del nombre de cada recurso. | `string` | `"web"` | no |
 | <a name="input_network"></a> [network](#input\_network) | self\_link de la VPC de la Shared VPC (salida network\_self\_link de la etapa 3). Obligatoria en "internal". | `string` | `null` | no |
-| <a name="input_region"></a> [region](#input\_region) | Región del balanceador interno (la región activa: la primaria o, con dr\_active, la de DR). No aplica en "external". | `string` | `null` | no |
+| <a name="input_region"></a> [region](#input\_region) | Región del balanceador interno (uno por región: sus backends deben estar en esa región). No aplica en "external". | `string` | `null` | no |
 | <a name="input_region_short_codes"></a> [region\_short\_codes](#input\_region\_short\_codes) | Código corto de cada región para los nombres (§4.2). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_security_policy"></a> [security\_policy](#input\_security\_policy) | self\_link de la política de Cloud Armor (salida policy\_self\_link del módulo cloud-armor). Obligatoria en "external"; no aplica en "internal". | `string` | `null` | no |
 | <a name="input_ssl_policy_profile"></a> [ssl\_policy\_profile](#input\_ssl\_policy\_profile) | Perfil de la política SSL (siempre con TLS 1.2 como mínimo): MODERN o RESTRICTED. | `string` | `"MODERN"` | no |
@@ -105,6 +109,7 @@ No modules.
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_backend_groups"></a> [backend\_groups](#output\_backend\_groups) | Mapa llave de backends → grupos (self links o IDs) que el servicio de backend tiene configurados: groups o, con dr\_active, dr\_groups. |
 | <a name="output_backend_service_ids"></a> [backend\_service\_ids](#output\_backend\_service\_ids) | Mapa llave de backends → ID del servicio de backend. |
 | <a name="output_dns_authorization_records"></a> [dns\_authorization\_records](#output\_dns\_authorization\_records) | Solo "internal" con certificado creado por el módulo: dominio → registro DNS (name, type, data) que hay que crear para emitir el certificado. |
 | <a name="output_forwarding_rule_names"></a> [forwarding\_rule\_names](#output\_forwarding\_rule\_names) | Nombres de las reglas de reenvío, llaves https y http. |

@@ -14,6 +14,14 @@ output "backend_service_ids" {
   )
 }
 
+output "backend_groups" {
+  description = "Mapa llave de backends → grupos (self links o IDs) que el servicio de backend tiene configurados: groups o, con dr_active, dr_groups."
+  value = merge(
+    { for k, b in google_compute_backend_service.this : k => sort([for be in b.backend : be.group]) },
+    { for k, b in google_compute_region_backend_service.this : k => sort([for be in b.backend : be.group]) },
+  )
+}
+
 output "url_map_id" {
   description = "ID del mapa de URL principal (HTTPS)."
   value = one(concat(

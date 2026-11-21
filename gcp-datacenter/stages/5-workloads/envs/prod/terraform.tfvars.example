@@ -23,11 +23,11 @@ enable_memorystore = true
 enable_internal_lb = true
 enable_backup      = true
 
-# Plano de control de GKE (§5, X = 30): rangos reservados que el spoke no publica como subred.
-subnet_cidrs = {
-  gke_master    = "10.30.38.0/28"
-  gke_master_dr = "10.30.38.16/28"
-}
+# Plano de control de GKE: el /28 sale de reserved_cidrs de la etapa 3 (gke_master y, con
+# enable_dr, gke_master_dr). Workload Identity: la cuenta de Kubernetes app/app actúa como la
+# cuenta workload de la aplicación.
+gke_workload_namespace = "app"
+gke_workload_ksa_name  = "app"
 
 gke_authenticator_security_group = "gke-security-groups@example.com"
 gke_release_channel              = "STABLE"
@@ -53,7 +53,9 @@ mig_machine_type = "e2-standard-2"
 mig_min_replicas = 2
 mig_max_replicas = 6
 
-cloud_run_image = "us-central1-docker.pkg.dev/example-prod-app/apps/api:1.0.0"
+# Imagen del repositorio de la aplicación (salida artifact_registry_repositories de la etapa 4):
+# la política de Binary Authorization del proyecto niega las imágenes de otros registros.
+cloud_run_image = "us-docker.pkg.dev/example-prod-app/bnt-prod-app-app-images-us/api:1.0.0"
 
 sql_tier             = "db-custom-2-7680"
 sql_database_version = "POSTGRES_16"

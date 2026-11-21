@@ -28,7 +28,9 @@ mig_machine_type = "e2-standard-2"
 mig_min_replicas = 1
 mig_max_replicas = 3
 
-cloud_run_image = "us-central1-docker.pkg.dev/example-qa-app/apps/api:1.0.0"
+# Imagen del repositorio de la aplicación (salida artifact_registry_repositories de la etapa 4):
+# la política de Binary Authorization del proyecto niega las imágenes de otros registros.
+cloud_run_image = "us-docker.pkg.dev/example-qa-app/bnt-qa-app-app-images-us/api:1.0.0"
 
 sql_tier             = "db-custom-2-7680"
 sql_database_version = "POSTGRES_16"

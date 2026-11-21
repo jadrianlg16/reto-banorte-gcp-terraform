@@ -102,6 +102,20 @@ run "prod_cumple_exige" {
     condition     = output.replica_name == "bnt-prod-data-sql-use4"
     error_message = "replica_name debe ser el nombre de la réplica."
   }
+  # failover_target no aplica a PostgreSQL: la réplica no declara replica_configuration.
+  assert {
+    condition     = length(google_sql_database_instance.replica["dr"].replica_configuration) == 0
+    error_message = "La réplica de PostgreSQL no debe declarar replica_configuration (failover_target no se admite)."
+  }
+  # Sin plan de Backup and DR, el módulo fija horario, retención y días de registros de PITR.
+  assert {
+    condition = (
+      google_sql_database_instance.this.settings[0].backup_configuration[0].transaction_log_retention_days == 7 &&
+      google_sql_database_instance.this.settings[0].backup_configuration[0].backup_retention_settings[0].retained_backups == 30 &&
+      google_sql_database_instance.this.settings[0].backup_configuration[0].start_time == "06:00"
+    )
+    error_message = "Sin backup_plan_managed el módulo declara la retención de respaldos y de registros."
+  }
 
   # Autenticación IAM y sin contraseñas.
   assert {
@@ -193,6 +207,28 @@ run "dev_sin_dr" {
   assert {
     condition     = google_sql_database_instance.this.name == "bnt-dev-data-sql-usc1"
     error_message = "Nombre de dev incorrecto."
+  }
+}
+
+# Con un plan de Backup and DR (respaldos mejorados) el plan es el dueño del horario y de la
+# retención: el módulo no los declara, pero los respaldos y PITR siguen encendidos al crear.
+run "respaldos_administrados_por_el_plan" {
+  command = plan
+
+  variables {
+    backup_plan_managed = true
+  }
+
+  assert {
+    condition = (
+      google_sql_database_instance.this.settings[0].backup_configuration[0].enabled &&
+      google_sql_database_instance.this.settings[0].backup_configuration[0].point_in_time_recovery_enabled
+    )
+    error_message = "Con el plan, respaldos y PITR siguen encendidos en la instancia."
+  }
+  assert {
+    condition     = length(google_sql_database_instance.this.settings[0].backup_configuration[0].backup_retention_settings) == 0
+    error_message = "Con el plan, el módulo no declara retención de respaldos ni días de registros (los define el plan)."
   }
 }
 

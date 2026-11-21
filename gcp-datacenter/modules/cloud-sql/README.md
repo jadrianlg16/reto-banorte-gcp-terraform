@@ -13,6 +13,12 @@ valores fijos o validaciones:
 - `availability_type`: REGIONAL por defecto en prod y una validación rechaza ZONAL en prod. La
   réplica usa la misma disponibilidad que la primaria.
 - Respaldos diarios y PITR siempre activos (`retained_backups`, `transaction_log_retention_days`).
+  Con `backup_plan_managed = true` (un plan de Backup and DR protege la instancia: respaldos
+  mejorados), el plan define horario, retención y días de registros, y el módulo deja de declarar
+  `backup_start_time`, `retained_backups` y `transaction_log_retention_days` para no pelear con
+  él (VERIFICAR-EN-APPLY: sin diferencias en `backup_configuration` en el segundo plan).
+- La réplica no declara `replica_configuration`: `failover_target` no se admite en PostgreSQL y
+  la promoción es manual.
 - `ssl_mode` validado: `TRUSTED_CLIENT_CERTIFICATE_REQUIRED` (por defecto, compatible con los
   conectores de Cloud SQL y la autenticación IAM) o `ENCRYPTED_ONLY`; nunca sin cifrado.
 - CMEK obligatorio: `kms_key` en la región primaria y `dr_kms_key` en `dr_region` (obligatoria
@@ -92,6 +98,7 @@ No modules.
 | <a name="input_allocated_ip_range"></a> [allocated\_ip\_range](#input\_allocated\_ip\_range) | Nombre del rango de Private Service Access de donde se toma la IP (psa\_range\_name de la etapa 3). Nulo: cualquier rango de la conexión. | `string` | `null` | no |
 | <a name="input_availability_type"></a> [availability\_type](#input\_availability\_type) | REGIONAL (alta disponibilidad) o ZONAL. Nulo: REGIONAL en prod y ZONAL en dev y qa. En prod solo se acepta REGIONAL. | `string` | `null` | no |
 | <a name="input_backup_location"></a> [backup\_location](#input\_backup\_location) | Ubicación de los respaldos (región o multirregión). Nulo: la multirregión más cercana a la instancia. | `string` | `null` | no |
+| <a name="input_backup_plan_managed"></a> [backup\_plan\_managed](#input\_backup\_plan\_managed) | true cuando un plan de Backup and DR (módulo backup-dr) protege la instancia (respaldos mejorados): el plan define horario, retención y días de registros, y el módulo deja de declarar backup\_start\_time, retained\_backups y transaction\_log\_retention\_days (fijar log\_retention\_days del plan con el mismo valor). Respaldos y PITR quedan encendidos. | `bool` | `false` | no |
 | <a name="input_backup_start_time"></a> [backup\_start\_time](#input\_backup\_start\_time) | Hora de inicio del respaldo diario, HH:MM en UTC. | `string` | `"06:00"` | no |
 | <a name="input_database_version"></a> [database\_version](#input\_database\_version) | Versión de PostgreSQL (por ejemplo POSTGRES\_16). El módulo solo admite PostgreSQL: sus banderas de auditoría son de PostgreSQL. | `string` | `"POSTGRES_16"` | no |
 | <a name="input_databases"></a> [databases](#input\_databases) | Bases de datos que se crean en la instancia. | `list(string)` | `[]` | no |

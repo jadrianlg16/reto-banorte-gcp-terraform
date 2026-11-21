@@ -38,13 +38,28 @@ output "mig_instance_groups" {
 }
 
 output "internal_lb_ip_address" {
-  description = "IP interna del balanceador interno regional (null sin enable_internal_lb)."
-  value       = try(module.internal_lb["internal"].ip_address, null)
+  description = "IP interna del balanceador interno de la región activa (active_region): la que debe tener el registro DNS interno. null sin enable_internal_lb."
+  value       = try(module.internal_lb[local.active_key].ip_address, null)
+}
+
+output "internal_lb_ip_addresses" {
+  description = "Mapa región → IP interna del balanceador interno de esa región (la de DR solo con dr_active). Vacío sin enable_internal_lb."
+  value       = { for k, lb in module.internal_lb : local.compute_regions[k] => lb.ip_address }
 }
 
 output "internal_lb_dns_authorization_records" {
-  description = "Registros DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno."
-  value       = try(module.internal_lb["internal"].dns_authorization_records, {})
+  description = "Registros DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa."
+  value       = try(module.internal_lb[local.active_key].dns_authorization_records, {})
+}
+
+output "internal_lb_dns_authorization_records_by_region" {
+  description = "Mapa región → registros DNS de autorización del certificado de cada balanceador interno (con dr_active incluye dr_region)."
+  value       = { for k, lb in module.internal_lb : local.compute_regions[k] => lb.dns_authorization_records }
+}
+
+output "gke_workload_identity_member" {
+  description = "Miembro serviceAccount:<proyecto>.svc.id.goog[<namespace>/<cuenta>] que actúa como la cuenta workload (null sin enable_gke)."
+  value       = try(google_service_account_iam_member.workload_identity["workload"].member, null)
 }
 
 output "redis_host" {

@@ -123,13 +123,13 @@ override_data {
         for env in ["dev", "qa", "prod"] : env => merge(
           {
             for loc in ["us-central1", "us-east4"] : loc => {
-              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run"] :
+              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run", "artifacts"] :
               use => "projects/bnt-common-security/locations/${loc}/keyRings/bnt-${env}-sec-${loc}/cryptoKeys/bnt-${env}-sec-${use}"
             }
           },
           {
             us = {
-              for use in ["storage", "backup"] :
+              for use in ["storage", "backup", "artifacts"] :
               use => "projects/bnt-common-security/locations/us/keyRings/bnt-${env}-sec-us/cryptoKeys/bnt-${env}-sec-${use}"
             }
           },
@@ -217,7 +217,7 @@ run "dev_con_valores_de_ejemplo" {
     error_message = "service_accounts debe ser [aplicación][uso] con los usos de §7.5."
   }
   assert {
-    condition     = toset(keys(google_project_service_identity.this)) == toset(["app/file.googleapis.com", "app/gkebackup.googleapis.com", "app/redis.googleapis.com", "app/sqladmin.googleapis.com"])
+    condition     = toset(keys(google_project_service_identity.this)) == toset(["app/artifactregistry.googleapis.com", "app/file.googleapis.com", "app/gkebackup.googleapis.com", "app/redis.googleapis.com", "app/sqladmin.googleapis.com"])
     error_message = "Deben crearse los agentes de servicio que no existen hasta el primer uso."
   }
 
@@ -288,8 +288,105 @@ run "dev_con_valores_de_ejemplo" {
     error_message = "Solo workload y run leen los secretos de la aplicación."
   }
   assert {
-    condition     = contains(keys(module.iam.bindings), "runtime/app/gke_nodes/roles/logging.logWriter") && contains(keys(module.iam.bindings), "runtime/app/gke_nodes/roles/artifactregistry.reader")
+    condition     = contains(keys(module.iam.bindings), "runtime/app/gke_nodes/roles/logging.logWriter")
     error_message = "La cuenta de nodos de GKE debe tener sus roles mínimos."
+  }
+  assert {
+    condition     = !anytrue([for b in values(module.iam.bindings) : b.role == "roles/artifactregistry.reader"])
+    error_message = "artifactregistry.reader va sobre el repositorio, no sobre el proyecto."
+  }
+
+  # Permisos de la etapa 5 en el proyecto de servicio (no en la carpeta del entorno).
+  assert {
+    condition = alltrue([
+      for role in [
+        "roles/backupdr.admin", "roles/certificatemanager.editor", "roles/cloudsql.admin", "roles/compute.instanceAdmin.v1",
+        "roles/compute.loadBalancerAdmin", "roles/compute.securityAdmin", "roles/container.admin", "roles/file.editor",
+        "roles/gkebackup.admin", "roles/monitoring.editor", "roles/redis.admin", "roles/run.admin", "roles/storage.admin",
+        ] : module.iam.bindings["workloads/app/${role}"] == {
+        scope    = "project"
+        resource = "bnt-dev-app"
+        role     = role
+        member   = "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
+      }
+    ])
+    error_message = "La cuenta de la etapa 5 debe recibir en el proyecto de servicio los roles de las cargas que crea."
+  }
+  assert {
+    condition = (
+      module.iam.bindings["workloads/app/roles/resourcemanager.projectIamAdmin"].resource == "bnt-dev-app" &&
+      module.iam.conditions["workloads/app/roles/resourcemanager.projectIamAdmin"].expression == "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['roles/cloudsql.client', 'roles/cloudsql.instanceUser'])"
+    )
+    error_message = "projectIamAdmin de la etapa 5 debe limitarse a otorgar cloudsql.client y cloudsql.instanceUser."
+  }
+  assert {
+    condition     = !anytrue([for b in values(module.iam.bindings) : b.member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com" && b.scope == "project" && b.resource == "bnt-dev-net-spoke" && b.role != "roles/compute.networkViewer"])
+    error_message = "En el host la etapa 5 solo recibe networkViewer (el uso de subredes va por subred)."
+  }
+  assert {
+    condition     = module.iam.bindings["host/workloads"].role == "roles/compute.networkViewer" && module.iam.bindings["host/workloads"].resource == "bnt-dev-net-spoke"
+    error_message = "La etapa 5 necesita compute.networks.list/get en el host (Memorystore, Cloud SQL y Filestore por PSA)."
+  }
+
+  # Workload Identity: la etapa 5 administra la política IAM de la cuenta workload y de ninguna otra.
+  assert {
+    condition = (
+      module.iam.bindings["saadmin/app/workload"].scope == "service_account" &&
+      module.iam.bindings["saadmin/app/workload"].role == "roles/iam.serviceAccountAdmin" &&
+      module.iam.bindings["saadmin/app/workload"].member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com" &&
+      length([for b in values(module.iam.bindings) : b if b.role == "roles/iam.serviceAccountAdmin"]) == 1
+    )
+    error_message = "serviceAccountAdmin solo sobre la cuenta workload de cada aplicación."
+  }
+
+  # Cloud Run con salida directa a la VPC en Shared VPC: networkViewer del agente en el host.
+  assert {
+    condition = module.iam.bindings["host/app/run"] == {
+      scope    = "project"
+      resource = "bnt-dev-net-spoke"
+      role     = "roles/compute.networkViewer"
+      member   = "serviceAccount:service-123456789012@serverless-robot-prod.iam.gserviceaccount.com"
+    }
+    error_message = "El agente de Cloud Run debe tener compute.networkViewer en el host de la Shared VPC."
+  }
+
+  # Artifact Registry: repositorio multirregional con CMEK y lectores.
+  assert {
+    condition = (
+      google_artifact_registry_repository.this["app"].repository_id == "bnt-dev-app-app-images-us" &&
+      google_artifact_registry_repository.this["app"].location == "us" &&
+      google_artifact_registry_repository.this["app"].format == "DOCKER" &&
+      google_artifact_registry_repository.this["app"].kms_key_name == "projects/bnt-common-security/locations/us/keyRings/bnt-dev-sec-us/cryptoKeys/bnt-dev-sec-artifacts"
+    )
+    error_message = "Un repositorio Docker por aplicación en la multirregión, cifrado con kms_key_ids[env][us][artifacts]."
+  }
+  assert {
+    condition     = module.iam.bindings["kms/app/us/artifacts/artifactregistry"].member == "serviceAccount:service-123456789012@gcp-sa-artifactregistry.iam.gserviceaccount.com" && !contains(keys(module.iam.bindings), "kms/app/us-central1/artifacts/artifactregistry")
+    error_message = "El agente de Artifact Registry recibe solo la llave artifacts de la ubicación del repositorio."
+  }
+  assert {
+    condition = (
+      toset(keys(google_artifact_registry_repository_iam_member.reader)) == toset(["app/gke_nodes", "app/mig", "app/run_agent"]) &&
+      google_artifact_registry_repository_iam_member.reader["app/run_agent"].member == "serviceAccount:service-123456789012@serverless-robot-prod.iam.gserviceaccount.com" &&
+      alltrue([for r in google_artifact_registry_repository_iam_member.reader : r.role == "roles/artifactregistry.reader" && r.repository == "bnt-dev-app-app-images-us"])
+    )
+    error_message = "Nodos de GKE, MIG y el agente de Cloud Run leen el repositorio de su aplicación."
+  }
+  assert {
+    condition     = output.artifact_registry_repositories == { app = "us-docker.pkg.dev/bnt-dev-app/bnt-dev-app-app-images-us" }
+    error_message = "artifact_registry_repositories debe dar la URL Docker del repositorio."
+  }
+
+  # Binary Authorization: niega todo salvo el repositorio de la aplicación.
+  assert {
+    condition = (
+      google_binary_authorization_policy.this["app"].project == "bnt-dev-app" &&
+      google_binary_authorization_policy.this["app"].global_policy_evaluation_mode == "ENABLE" &&
+      google_binary_authorization_policy.this["app"].default_admission_rule[0].evaluation_mode == "ALWAYS_DENY" &&
+      google_binary_authorization_policy.this["app"].default_admission_rule[0].enforcement_mode == "ENFORCED_BLOCK_AND_AUDIT_LOG" &&
+      [for p in google_binary_authorization_policy.this["app"].admission_whitelist_patterns : p.name_pattern] == ["us-docker.pkg.dev/bnt-dev-app/bnt-dev-app-app-images-us/**"]
+    )
+    error_message = "La política de Binary Authorization debe negar todo salvo el repositorio de la aplicación y aplicarse con bloqueo."
   }
   assert {
     condition     = alltrue([for k in ["gke_nodes", "workload", "mig", "run"] : module.iam.bindings["actas/app/${k}"].member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"])
@@ -411,7 +508,7 @@ run "prod_perimetro_forzado" {
         kms_key_ids = {
           prod = {
             for loc in ["us-central1", "us-east4", "us"] : loc => {
-              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run"] :
+              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run", "artifacts"] :
               use => "projects/bnt-common-security/locations/${loc}/keyRings/bnt-prod-sec-${loc}/cryptoKeys/bnt-prod-sec-${use}"
             }
           }
@@ -452,6 +549,67 @@ run "varias_aplicaciones" {
     condition     = length(google_tags_tag_value_iam_member.tag_user) == 10
     error_message = "tagUser del pipeline una vez por etiqueta y de los agentes por aplicación."
   }
+}
+
+run "binary_authorization_con_atestadores_y_patrones" {
+  command = plan
+
+  variables {
+    binary_authorization_allowlist_patterns = ["us-docker.pkg.dev/bnt-common-images/base/**"]
+    binary_authorization_attestors          = ["projects/bnt-common-security/attestors/ci-build"]
+  }
+
+  assert {
+    condition = (
+      google_binary_authorization_policy.this["app"].default_admission_rule[0].evaluation_mode == "REQUIRE_ATTESTATION" &&
+      google_binary_authorization_policy.this["app"].default_admission_rule[0].require_attestations_by == toset(["projects/bnt-common-security/attestors/ci-build"]) &&
+      [for p in google_binary_authorization_policy.this["app"].admission_whitelist_patterns : p.name_pattern] == [
+        "us-docker.pkg.dev/bnt-dev-app/bnt-dev-app-app-images-us/**",
+        "us-docker.pkg.dev/bnt-common-images/base/**",
+      ]
+    )
+    error_message = "Con atestadores la regla por defecto exige atestación y los patrones extra se suman al repositorio propio."
+  }
+}
+
+run "rechaza_patron_que_admite_todo" {
+  command = plan
+
+  variables {
+    binary_authorization_allowlist_patterns = ["*"]
+  }
+
+  expect_failures = [var.binary_authorization_allowlist_patterns]
+}
+
+run "rechaza_patron_de_registro_entero" {
+  command = plan
+
+  variables {
+    binary_authorization_allowlist_patterns = ["gcr.io/*"]
+  }
+
+  expect_failures = [var.binary_authorization_allowlist_patterns]
+}
+
+run "rechaza_patron_que_cubre_otros_proyectos" {
+  command = plan
+
+  variables {
+    binary_authorization_allowlist_patterns = ["us-docker.pkg.dev/bnt-prod-app**"]
+  }
+
+  expect_failures = [var.binary_authorization_allowlist_patterns]
+}
+
+run "rechaza_estado_sin_llave_de_artefactos" {
+  command = plan
+
+  variables {
+    artifact_registry_location = "eu"
+  }
+
+  expect_failures = [data.terraform_remote_state.security]
 }
 
 run "rechaza_nombre_de_cuenta_largo" {
@@ -559,8 +717,15 @@ run "primer_apply_con_valores_desconocidos" {
   }
 
   assert {
-    condition     = length(google_service_account.runtime) == 8 && length(google_project_service_identity.this) == 8
+    condition     = length(google_service_account.runtime) == 8 && length(google_project_service_identity.this) == 10
     error_message = "Cuentas de ejecución y agentes: llaves conocidas en el plan."
+  }
+  assert {
+    condition = (
+      length(google_artifact_registry_repository_iam_member.reader) == 6 && length(google_binary_authorization_policy.this) == 2 &&
+      alltrue([for k in ["host/pay/run", "host/workloads", "saadmin/pay/workload", "workloads/pay/roles/run.admin", "kms/pay/us/artifacts/artifactregistry"] : contains(keys(module.iam.bindings), k)])
+    )
+    error_message = "Repositorios, lectores, políticas y permisos nuevos: llaves conocidas en el plan."
   }
   assert {
     condition     = length(google_tags_tag_value_iam_member.tag_user) == 10

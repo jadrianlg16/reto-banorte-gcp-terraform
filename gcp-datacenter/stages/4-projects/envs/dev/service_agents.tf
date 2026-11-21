@@ -12,7 +12,10 @@ locals {
   # VERIFICAR-EN-APPLY: que los agentes de container (container-engine-robot), compute
   # (compute-system) y run (serverless-robot-prod) existan justo después de habilitar sus APIs;
   # si no, agregar esos servicios a esta lista.
+  # artifactregistry: la guía de CMEK de Artifact Registry pide crear su agente antes de darle la
+  # llave (el repositorio con CMEK se crea en el mismo apply).
   generated_identity_services = toset([
+    "artifactregistry.googleapis.com",
     "file.googleapis.com",
     "gkebackup.googleapis.com",
     "redis.googleapis.com",
@@ -27,15 +30,16 @@ locals {
   # [app][agente] → miembro de IAM (serviceAccount:<correo>).
   service_agents = {
     for app, p in module.project : app => {
-      apis      = "serviceAccount:${p.project_number}@cloudservices.gserviceaccount.com"
-      compute   = "serviceAccount:service-${p.project_number}@compute-system.iam.gserviceaccount.com"
-      filestore = "serviceAccount:service-${p.project_number}@cloud-filer.iam.gserviceaccount.com"
-      gke       = "serviceAccount:service-${p.project_number}@container-engine-robot.iam.gserviceaccount.com"
-      gkebackup = "serviceAccount:service-${p.project_number}@gcp-sa-gkebackup.iam.gserviceaccount.com"
-      redis     = "serviceAccount:service-${p.project_number}@cloud-redis.iam.gserviceaccount.com"
-      run       = "serviceAccount:service-${p.project_number}@serverless-robot-prod.iam.gserviceaccount.com"
-      sql       = "serviceAccount:service-${p.project_number}@gcp-sa-cloud-sql.iam.gserviceaccount.com"
-      storage   = "serviceAccount:${data.google_storage_project_service_account.this[app].email_address}"
+      apis             = "serviceAccount:${p.project_number}@cloudservices.gserviceaccount.com"
+      artifactregistry = "serviceAccount:service-${p.project_number}@gcp-sa-artifactregistry.iam.gserviceaccount.com"
+      compute          = "serviceAccount:service-${p.project_number}@compute-system.iam.gserviceaccount.com"
+      filestore        = "serviceAccount:service-${p.project_number}@cloud-filer.iam.gserviceaccount.com"
+      gke              = "serviceAccount:service-${p.project_number}@container-engine-robot.iam.gserviceaccount.com"
+      gkebackup        = "serviceAccount:service-${p.project_number}@gcp-sa-gkebackup.iam.gserviceaccount.com"
+      redis            = "serviceAccount:service-${p.project_number}@cloud-redis.iam.gserviceaccount.com"
+      run              = "serviceAccount:service-${p.project_number}@serverless-robot-prod.iam.gserviceaccount.com"
+      sql              = "serviceAccount:service-${p.project_number}@gcp-sa-cloud-sql.iam.gserviceaccount.com"
+      storage          = "serviceAccount:${data.google_storage_project_service_account.this[app].email_address}"
     }
   }
 }

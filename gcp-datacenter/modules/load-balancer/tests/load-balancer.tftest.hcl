@@ -170,6 +170,17 @@ run "interno_cumple_lo_exigido" {
     error_message = "Falta la regla de reenvío HTTPS interna."
   }
 
+  # Acceso global: on-premises y otras regiones llegan al balanceador de cualquier región.
+  assert {
+    condition     = google_compute_forwarding_rule.https["this"].allow_global_access == true && google_compute_forwarding_rule.http["this"].allow_global_access == true
+    error_message = "Las reglas de reenvío internas (443 y 80) deben tener allow_global_access = true."
+  }
+
+  assert {
+    condition     = output.backend_groups["web"] == tolist(["projects/example-prod-app/regions/us-central1/instanceGroups/mig-usc1"]) && keys(output.backend_groups) == ["web"]
+    error_message = "backend_groups debe publicar los grupos configurados en cada servicio de backend."
+  }
+
   assert {
     condition     = google_compute_region_url_map.redirect["this"].default_url_redirect[0].https_redirect == true
     error_message = "Falta la redirección de HTTP a HTTPS en el interno."

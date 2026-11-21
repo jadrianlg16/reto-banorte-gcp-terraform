@@ -53,6 +53,12 @@ run "base_cumple_lo_exigido" {
     error_message = "Falta el plan de Cloud SQL."
   }
 
+  # Con respaldos mejorados el plan de Cloud SQL define la ventana de PITR.
+  assert {
+    condition     = google_backup_dr_backup_plan.this["sql"].log_retention_days == 7 && google_backup_dr_backup_plan.this["vm"].log_retention_days == null
+    error_message = "El plan de Cloud SQL debe fijar log_retention_days (7 por defecto) y los demás no."
+  }
+
   assert {
     condition     = length(google_gke_backup_backup_plan.this) == 0
     error_message = "Sin enable_gke_backup no se crea el plan de GKE."

@@ -27,10 +27,10 @@ locals {
   active_key    = var.dr_active ? "dr" : "primary"
   active_region = local.regions[local.active_key]
 
-  # Llaves de §5 por región.
+  # Llaves de §5 por región (gke_master* son llaves de reserved_cidrs del spoke).
   subnet_keys = {
-    primary = { app = "app", run = "run", gke_master = "gke_master" }
-    dr      = { app = "app_dr", run = "run_dr", gke_master = "gke_master_dr" }
+    primary = { app = "app", run = "run", proxy = "proxy", gke_master = "gke_master" }
+    dr      = { app = "app_dr", run = "run_dr", proxy = "proxy_dr", gke_master = "gke_master_dr" }
   }
 
   # Rangos secundarios de las subredes app/app_dr: el spoke los nombra con las mismas llaves de
@@ -58,10 +58,12 @@ locals {
     var.enable_gke && var.enable_dr && var.enable_backup ? [[var.dr_region, "backup"]] : [],
   )
 
-  # Subredes que la configuración va a pedir.
+  # Subredes que la configuración va a pedir (la proxy-only de cada región con balanceador
+  # interno no se referencia, pero el balanceador no funciona sin ella).
   required_subnets = distinct(concat(
     [for k in keys(local.compute_regions) : local.subnet_keys[k].app if var.enable_gke || var.enable_mig || var.enable_internal_lb],
     [for k in keys(local.compute_regions) : local.subnet_keys[k].run if var.enable_cloud_run],
+    [for k in keys(local.compute_regions) : local.subnet_keys[k].proxy if var.enable_internal_lb],
   ))
 }
 
@@ -84,7 +86,7 @@ resource "terraform_data" "upstream_checks" {
     }
     precondition {
       condition     = alltrue([for s in local.required_subnets : contains(keys(local.subnets), s)])
-      error_message = "Falta en subnets de la etapa 3 alguna subred necesaria (app, run y, con dr_active, app_dr y run_dr: el spoke debe tener enable_dr = true)."
+      error_message = "Falta en subnets de la etapa 3 alguna subred necesaria (app, run, proxy con enable_internal_lb y, con dr_active, sus versiones _dr: el spoke debe tener enable_dr = true)."
     }
     precondition {
       condition = !var.enable_gke || alltrue([

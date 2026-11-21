@@ -90,7 +90,10 @@ No modules.
 | <a name="output_cluster_id"></a> [cluster\_id](#output\_cluster\_id) | ID del clúster (projects/<p>/locations/<l>/clusters/<nombre>); lo usa backup-dr como gke\_cluster\_id. |
 | <a name="output_cluster_name"></a> [cluster\_name](#output\_cluster\_name) | Nombre del clúster. |
 | <a name="output_endpoint"></a> [endpoint](#output\_endpoint) | IP del plano de control (privada si enable\_private\_endpoint = true). |
+| <a name="output_kms_key"></a> [kms\_key](#output\_kms\_key) | Llave KMS del cifrado de secretos de Kubernetes en la capa de aplicación. |
 | <a name="output_location"></a> [location](#output\_location) | Ubicación del clúster (región si es regional). |
+| <a name="output_master_cidr"></a> [master\_cidr](#output\_master\_cidr) | Rango /28 del plano de control configurado en el clúster (private\_cluster\_config.master\_ipv4\_cidr\_block). |
 | <a name="output_node_pool_names"></a> [node\_pool\_names](#output\_node\_pool\_names) | Mapa llave de gke\_node\_pools → nombre del pool de nodos. |
+| <a name="output_subnetwork"></a> [subnetwork](#output\_subnetwork) | Subred del clúster (la configurada en el recurso). |
 | <a name="output_workload_pool"></a> [workload\_pool](#output\_workload\_pool) | Pool de Workload Identity (<proyecto>.svc.id.goog) para enlazar cuentas de Kubernetes con cuentas de servicio. |
 <!-- END_TF_DOCS -->

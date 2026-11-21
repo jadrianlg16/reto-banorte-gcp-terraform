@@ -10,7 +10,9 @@ locals {
   # arranque de los nodos (el módulo gke usa la misma llave para los dos).
   # secrets no aparece: los secretos viven en el proyecto security y su agente lo maneja la
   # etapa 2.
+  # artifacts: el agente de Artifact Registry cifra el repositorio de imágenes (artifacts.tf).
   kms_consumers = {
+    artifacts = ["artifactregistry"]
     backup    = ["gkebackup"]
     compute   = ["compute"]
     filestore = ["filestore"]
@@ -19,6 +21,44 @@ locals {
     run       = ["run"]
     sql       = ["sql"]
     storage   = ["storage"]
+  }
+
+  # Ubicaciones de kms_key_ids en las que se otorga cada uso: las regiones primaria y de DR
+  # salvo storage (también la multirregión, bucket de doble región) y artifacts (solo la
+  # ubicación del repositorio).
+  kms_grant_locations = {
+    for use in keys(local.kms_consumers) : use => (
+      use == "artifacts" ? [var.artifact_registry_location] :
+      use == "storage" ? keys(local.kms_key_ids) :
+      local.regional_locations
+    )
+  }
+
+  # Roles de la cuenta del pipeline de la etapa 5 en cada proyecto de servicio (no en la
+  # carpeta del entorno, que también contiene el host de la Shared VPC). Uno por tipo de
+  # recurso que crea la etapa 5:
+  workloads_project_roles = [
+    "roles/backupdr.admin",            # bóveda, planes y asociaciones de Backup and DR
+    "roles/certificatemanager.editor", # certificado y autorizaciones DNS del balanceador interno
+    "roles/cloudsql.admin",            # instancia, réplica, bases y usuarios IAM
+    "roles/compute.instanceAdmin.v1",  # plantillas, MIG y autoescaladores
+    "roles/compute.loadBalancerAdmin", # balanceadores, NEG, verificaciones de salud, IP y SSL
+    "roles/compute.securityAdmin",     # políticas de Cloud Armor
+    "roles/container.admin",           # clústeres y pools de GKE
+    "roles/file.editor",               # Filestore
+    "roles/gkebackup.admin",           # plan de Backup for GKE
+    "roles/monitoring.editor",         # canales, alertas, uptime checks, tableros y SLO
+    "roles/redis.admin",               # Memorystore
+    "roles/run.admin",                 # servicios de Cloud Run y su IAM de invocador
+    "roles/storage.admin",             # bucket de la aplicación
+  ]
+
+  # Lo único que la etapa 5 puede otorgar en el proyecto: el acceso a Cloud SQL por IAM de las
+  # cuentas de ejecución (módulo cloud-sql). Misma forma de CEL que stages/1-org/iam.tf.
+  workloads_iam_admin_condition = {
+    title       = "solo-login-de-cloud-sql"
+    description = "La etapa 5 solo puede otorgar roles/cloudsql.client y roles/cloudsql.instanceUser."
+    expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['roles/cloudsql.client', 'roles/cloudsql.instanceUser'])"
   }
 
   # Subred del spoke (llave de §5) → agentes que crean recursos en ella desde el proyecto de
@@ -108,8 +148,9 @@ locals {
     ],
 
     # CMEK: cada agente sobre las llaves de su uso, en las regiones primaria y de DR (la de DR
-    # la usan la réplica, el plan de Backup for GKE y la conmutación con dr_active) y, para
-    # Cloud Storage, también en la multirregión us (bucket de doble región).
+    # la usan la réplica, el plan de Backup for GKE y la conmutación con dr_active); para
+    # Cloud Storage también en la multirregión (bucket de doble región) y para Artifact
+    # Registry solo en la ubicación del repositorio.
     flatten([
       for app in keys(var.applications) : [
         for location, keys_by_use in local.kms_key_ids : [
@@ -121,10 +162,74 @@ locals {
               role     = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
               member   = local.service_agents[app][agent]
             }
-          ] if contains(local.regional_locations, location) || use == "storage"
+          ] if contains(lookup(local.kms_grant_locations, use, []), location)
         ]
       ]
     ]),
+
+    # Decisión de la ronda de correcciones: los permisos de la etapa 5 viven en cada proyecto
+    # de servicio, no en la carpeta del entorno.
+    flatten([
+      for app in keys(var.applications) : [
+        for role in local.workloads_project_roles : {
+          key      = "workloads/${app}/${role}"
+          scope    = "project"
+          resource = module.project[app].project_id
+          role     = role
+          member   = local.workloads_member
+        }
+      ]
+    ]),
+    [
+      for app in keys(var.applications) : {
+        key       = "workloads/${app}/roles/resourcemanager.projectIamAdmin"
+        scope     = "project"
+        resource  = module.project[app].project_id
+        role      = "roles/resourcemanager.projectIamAdmin"
+        member    = local.workloads_member
+        condition = local.workloads_iam_admin_condition
+      }
+    ],
+
+    # Workload Identity: la etapa 5 enlaza la cuenta de Kubernetes con la cuenta workload
+    # (iam.serviceAccounts.setIamPolicy) una vez que existe el clúster. Solo sobre esa cuenta.
+    [
+      for app in keys(var.applications) : {
+        key      = "saadmin/${app}/workload"
+        scope    = "service_account"
+        resource = google_service_account.runtime["${app}/workload"].name
+        role     = "roles/iam.serviceAccountAdmin"
+        member   = local.workloads_member
+      }
+    ],
+
+    # Host de la Shared VPC, sin networkUser de proyecto (el uso de subredes va por subred):
+    # - Cloud Run con salida directa a la VPC: su agente necesita compute.networks.get en el
+    #   host (Compute Network Viewer) además de networkUser en la subred ("Direct VPC egress
+    #   with a Shared VPC network", opción 2).
+    # - Pipeline de la etapa 5: Memorystore pide compute.networks.list en el proyecto local y en
+    #   el host ("Memorystore for Redis networking"); Cloud SQL y Filestore leen la red del host
+    #   para la IP privada por PSA.
+    # VERIFICAR-EN-APPLY: que networkViewer en el host más networkUser por subred basten para
+    # crear Cloud SQL, Memorystore y Filestore con IP privada (PSA) desde el proyecto de
+    # servicio; si piden compute.networks.use, la alternativa documentada es networkUser en el
+    # host (más amplio: todas las subredes) y se decide en revisión.
+    [
+      for app in keys(var.applications) : {
+        key      = "host/${app}/run"
+        scope    = "project"
+        resource = local.host_project_id
+        role     = "roles/compute.networkViewer"
+        member   = local.service_agents[app]["run"]
+      }
+    ],
+    [{
+      key      = "host/workloads"
+      scope    = "project"
+      resource = local.host_project_id
+      role     = "roles/compute.networkViewer"
+      member   = local.workloads_member
+    }],
 
     # Lectura de los secretos de cada aplicación por sus cuentas workload y run (ADR 0015: los
     # valores los carga una persona fuera de Terraform).

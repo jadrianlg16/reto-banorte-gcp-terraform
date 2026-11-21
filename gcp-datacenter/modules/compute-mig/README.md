@@ -7,7 +7,7 @@ datacenter" de la especificación exige a las cargas en VM, como valores fijos: 
 (arranque seguro, vTPM y monitoreo de integridad), imagen endurecida por variable (sin valor
 por defecto; en prod se rechazan las imágenes públicas base de Google), autoescalado
 (`min_replicas` <= `max_replicas`, y al menos 2 en prod) con autocuración, y sin IP pública
-(la interfaz no tiene `access_config`). Además fija el cifrado CMEK del disco de arranque con
+(la interfaz no tiene `access_config` ni `ipv6_access_config` y es `stack_type = "IPV4_ONLY"`). Además fija el cifrado CMEK del disco de arranque con
 `kms_key` (uso `compute` de la etapa 2, en la misma región), la cuenta de servicio dedicada (se
 rechaza la de Compute por defecto), OS Login, bloqueo de llaves SSH del proyecto y puerto
 serie apagado, y expone puertos con nombre para el balanceador.
@@ -86,5 +86,7 @@ No modules.
 | <a name="output_instance_group_manager_id"></a> [instance\_group\_manager\_id](#output\_instance\_group\_manager\_id) | ID del MIG regional. |
 | <a name="output_instance_group_manager_name"></a> [instance\_group\_manager\_name](#output\_instance\_group\_manager\_name) | Nombre del MIG regional. |
 | <a name="output_instance_template_self_link"></a> [instance\_template\_self\_link](#output\_instance\_template\_self\_link) | Self link de la plantilla de instancias vigente. |
+| <a name="output_kms_key"></a> [kms\_key](#output\_kms\_key) | Llave KMS del disco de arranque de la plantilla. |
 | <a name="output_named_ports"></a> [named\_ports](#output\_named\_ports) | Puertos con nombre del grupo (nombre → puerto). |
+| <a name="output_subnetwork"></a> [subnetwork](#output\_subnetwork) | Subred de la interfaz de la plantilla (la que se configuró en el recurso). |
 <!-- END_TF_DOCS -->

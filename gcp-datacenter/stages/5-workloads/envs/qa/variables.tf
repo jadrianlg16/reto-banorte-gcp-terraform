@@ -246,27 +246,27 @@ variable "gke_node_pools" {
   }
 }
 
-variable "subnet_cidrs" {
-  description = "Rangos reservados del plan de §5 que el spoke no publica como subred: gke_master (obligatorio con enable_gke) y gke_master_dr (obligatorio con enable_gke y dr_active), /28 para el plano de control de GKE. Puede ser el mismo mapa subnet_cidrs de la etapa 3; las demás llaves se ignoran."
-  type        = map(string)
-  default     = {}
+variable "gke_workload_namespace" {
+  description = "Namespace de Kubernetes de la cuenta de servicio de Kubernetes que actúa como la cuenta workload de la aplicación (Workload Identity)."
+  type        = string
+  default     = "app"
   nullable    = false
 
   validation {
-    condition     = alltrue([for v in values(var.subnet_cidrs) : can(cidrhost(v, 0))])
-    error_message = "Cada valor de subnet_cidrs debe ser un CIDR válido."
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", var.gke_workload_namespace)) && !contains(["default", "kube-system", "kube-public", "kube-node-lease"], var.gke_workload_namespace)
+    error_message = "gke_workload_namespace debe ser un nombre DNS-1123 de hasta 63 caracteres y no un namespace del sistema ni default."
   }
+}
+
+variable "gke_workload_ksa_name" {
+  description = "Nombre de la cuenta de servicio de Kubernetes (en gke_workload_namespace) que actúa como la cuenta workload de la aplicación (Workload Identity)."
+  type        = string
+  default     = "app"
+  nullable    = false
+
   validation {
-    condition     = alltrue([for k in ["gke_master", "gke_master_dr"] : !contains(keys(var.subnet_cidrs), k) || endswith(lookup(var.subnet_cidrs, k, ""), "/28")])
-    error_message = "gke_master y gke_master_dr deben ser /28."
-  }
-  validation {
-    condition     = !var.enable_gke || contains(keys(var.subnet_cidrs), "gke_master")
-    error_message = "enable_gke = true exige subnet_cidrs[\"gke_master\"]."
-  }
-  validation {
-    condition     = !(var.enable_gke && var.dr_active) || contains(keys(var.subnet_cidrs), "gke_master_dr")
-    error_message = "enable_gke con dr_active exige subnet_cidrs[\"gke_master_dr\"]."
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", var.gke_workload_ksa_name)) && var.gke_workload_ksa_name != "default"
+    error_message = "gke_workload_ksa_name debe ser un nombre DNS-1123 de hasta 63 caracteres y no la cuenta default del namespace."
   }
 }
 
@@ -318,7 +318,10 @@ variable "gke_lb_negs" {
     después del primer despliegue de la carga y se aplica de nuevo. Vacío por defecto: sin backend
     de GKE en el balanceador.
     - primary: self links de los NEG zonales del clúster de la región primaria.
-    - dr: los del clúster de DR (obligatorios con dr_active si hay primary).
+    - dr: los del clúster de DR. Se llenan después de conmutar (el clúster de DR nace con
+      dr_active): mientras estén vacíos, con dr_active el backend de GKE queda fuera del
+      balanceador (si es el único backend, sigue con los NEG primarios para no destruir el
+      balanceador).
     - max_rate_per_endpoint: solicitudes por segundo por endpoint (modo RATE).
     - health_check_path: ruta de la verificación de salud que crea el balanceador.
   EOT
@@ -337,10 +340,6 @@ variable "gke_lb_negs" {
       can(regex("(^|/)projects/[^/]+/zones/[^/]+/networkEndpointGroups/[^/]+$", n))
     ])
     error_message = "Cada NEG debe ser un self link projects/<p>/zones/<zona>/networkEndpointGroups/<nombre>."
-  }
-  validation {
-    condition     = !var.dr_active || length(var.gke_lb_negs.primary) == 0 || length(var.gke_lb_negs.dr) > 0
-    error_message = "Con dr_active y NEG de GKE en primary, hay que declarar los NEG del clúster de DR en dr."
   }
   validation {
     condition     = var.gke_lb_negs.max_rate_per_endpoint > 0
@@ -405,7 +404,7 @@ variable "mig_max_replicas" {
 }
 
 variable "mig_http_port" {
-  description = "Puerto HTTP en el que sirven las VM (puerto con nombre http del grupo y de las verificaciones de salud)."
+  description = "Puerto HTTP en el que sirven las VM (puerto con nombre http del grupo y de las verificaciones de salud). Debe estar en lb_backend_ports de la etapa 3 (lo comprueba el plan si la etapa 3 publica esa salida)."
   type        = number
   default     = 80
 

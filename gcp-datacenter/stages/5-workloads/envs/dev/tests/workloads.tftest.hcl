@@ -164,9 +164,11 @@ override_data {
           secondary_ranges = {}
         }
       }
-      psa_range_name  = "bnt-net-psa"
-      secure_tags     = { lb_backend = "tagValues/111111", iap_ssh = "tagValues/222222" }
-      secure_tag_keys = { lb_backend = "tagKeys/333333", iap_ssh = "tagKeys/444444" }
+      psa_range_name   = "bnt-net-psa"
+      secure_tags      = { lb_backend = "tagValues/111111", iap_ssh = "tagValues/222222" }
+      secure_tag_keys  = { lb_backend = "tagKeys/333333", iap_ssh = "tagKeys/444444" }
+      reserved_cidrs   = { gke_master = "10.30.38.0/28", gke_master_dr = "10.30.38.16/28" }
+      lb_backend_ports = ["80", "443", "8080"]
     }
   }
 }
@@ -210,10 +212,6 @@ variables {
   enable_internal_lb = true
   enable_backup      = true
 
-  subnet_cidrs = {
-    gke_master    = "10.30.38.0/28"
-    gke_master_dr = "10.30.38.16/28"
-  }
   gke_authenticator_security_group = "gke-security-groups@example.com"
   gke_release_channel              = "STABLE"
   gke_master_authorized_networks   = [{ cidr_block = "192.168.0.0/16", display_name = "onprem" }]
@@ -234,7 +232,7 @@ variables {
   mig_min_replicas = 2
   mig_max_replicas = 6
 
-  cloud_run_image = "us-central1-docker.pkg.dev/example-prod-app/apps/api:1.0.0"
+  cloud_run_image = "us-docker.pkg.dev/example-svc-app/bnt-prod-app-app-images-us/api:1.0.0"
 
   sql_tier             = "db-custom-2-7680"
   sql_database_version = "POSTGRES_16"
@@ -278,6 +276,12 @@ run "prod_operacion_normal" {
     error_message = "Sin dr_active el tráfico va a la región primaria."
   }
 
+  # El plano de control de GKE usa el /28 que publica la etapa 3 (reserved_cidrs).
+  assert {
+    condition     = module.gke["primary"].master_cidr == "10.30.38.0/28"
+    error_message = "master_cidr del clúster primario debe salir de reserved_cidrs[\"gke_master\"] de la etapa 3."
+  }
+
   # Etiquetas de §4.3.
   assert {
     condition     = local.labels == { app = "app", owner = "plataforma", cost_center = "ti-001", env = "prod", managed_by = "terraform" }
@@ -311,6 +315,26 @@ run "prod_operacion_normal" {
     error_message = "Memorystore y Filestore deben existir en la región primaria."
   }
 
+  # Cloud SQL por IAM: las tres cuentas de ejecución con cómputo encendido son usuarios de la base.
+  assert {
+    condition = module.cloud_sql.iam_user_names == {
+      "bnt-app-workload@example-svc-app.iam.gserviceaccount.com" = "bnt-app-workload@example-svc-app.iam"
+      "bnt-app-run@example-svc-app.iam.gserviceaccount.com"      = "bnt-app-run@example-svc-app.iam"
+      "bnt-app-mig@example-svc-app.iam.gserviceaccount.com"      = "bnt-app-mig@example-svc-app.iam"
+    }
+    error_message = "GKE (workload), Cloud Run (run) y el MIG (mig) deben entrar a Cloud SQL por IAM."
+  }
+
+  # Workload Identity: la cuenta de Kubernetes app/app actúa como la cuenta workload.
+  assert {
+    condition = (
+      google_service_account_iam_member.workload_identity["workload"].service_account_id == "projects/example-svc-app/serviceAccounts/bnt-app-workload@example-svc-app.iam.gserviceaccount.com" &&
+      google_service_account_iam_member.workload_identity["workload"].role == "roles/iam.workloadIdentityUser" &&
+      google_service_account_iam_member.workload_identity["workload"].member == "serviceAccount:example-svc-app.svc.id.goog[app/app]"
+    )
+    error_message = "Debe existir el enlace de Workload Identity de app/app a la cuenta workload."
+  }
+
   # Balanceador externo con Cloud Armor y backends de los cómputos habilitados (GKE sin NEG aún).
   assert {
     condition     = join(",", sort(keys(module.external_lb["external"].backend_service_ids))) == "mig,run"
@@ -328,10 +352,10 @@ run "prod_operacion_normal" {
     condition     = local.external_backends["run"].serverless && length(local.external_backends["run"].dr_groups) == 0
     error_message = "Cloud Run entra como NEG sin servidor y sin grupos de DR fuera de una conmutación."
   }
-  # Balanceador interno en la región primaria.
+  # Balanceador interno solo en la región primaria.
   assert {
-    condition     = module.internal_lb["internal"].url_map_name == "bnt-prod-app-app-ilb-usc1-um"
-    error_message = "El balanceador interno debe estar en la región primaria."
+    condition     = keys(module.internal_lb) == ["primary"] && module.internal_lb["primary"].url_map_name == "bnt-prod-app-app-ilb-usc1-um"
+    error_message = "Sin dr_active debe existir solo el balanceador interno de la región primaria."
   }
 
   # Observabilidad: verificación de disponibilidad sobre el primer dominio.
@@ -346,6 +370,8 @@ run "prod_operacion_normal" {
   }
 }
 
+# Conmutación con los NEG del clúster de DR ya declarados (paso 6 del runbook 04). Los grupos del
+# MIG y de Cloud Run tienen valores fijos por región para comprobar qué grupo usa cada backend.
 run "prod_conmutacion_a_dr" {
   command = plan
 
@@ -355,6 +381,27 @@ run "prod_conmutacion_a_dr" {
       primary = ["projects/example-svc-app/zones/us-central1-a/networkEndpointGroups/k8s1-web"]
       dr      = ["projects/example-svc-app/zones/us-east4-a/networkEndpointGroups/k8s1-web"]
     }
+  }
+
+  override_resource {
+    target          = module.cloud_run["primary"].google_compute_region_network_endpoint_group.this
+    override_during = plan
+    values          = { id = "projects/example-svc-app/regions/us-central1/networkEndpointGroups/neg-usc1" }
+  }
+  override_resource {
+    target          = module.cloud_run["dr"].google_compute_region_network_endpoint_group.this
+    override_during = plan
+    values          = { id = "projects/example-svc-app/regions/us-east4/networkEndpointGroups/neg-use4" }
+  }
+  override_resource {
+    target          = module.mig["primary"].google_compute_region_instance_group_manager.this
+    override_during = plan
+    values          = { instance_group = "projects/example-svc-app/regions/us-central1/instanceGroups/mig-usc1" }
+  }
+  override_resource {
+    target          = module.mig["dr"].google_compute_region_instance_group_manager.this
+    override_during = plan
+    values          = { instance_group = "projects/example-svc-app/regions/us-east4/instanceGroups/mig-use4" }
   }
 
   # El cómputo se agrega en la región de DR con sus nombres.
@@ -374,30 +421,131 @@ run "prod_conmutacion_a_dr" {
     condition     = output.active_region == "us-east4"
     error_message = "Con dr_active el tráfico va a la región de DR."
   }
-  # Los backends llevan grupos de DR (el módulo los usa con dr_active).
+
+  # Cada cómputo de DR usa las subredes y las llaves KMS de la región de DR (y el primario las suyas).
   assert {
-    condition = alltrue([
-      for k in ["run", "mig", "gke"] : length(local.external_backends[k].dr_groups) == 1
-    ])
-    error_message = "Cada backend del balanceador externo debe tener su grupo de DR."
+    condition = (
+      module.gke["dr"].subnetwork == "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/us-east4/subnetworks/bnt-net-app-use4" &&
+      module.gke["dr"].kms_key == "projects/example-security/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/gke" &&
+      module.gke["dr"].master_cidr == "10.30.38.16/28" &&
+      module.gke["primary"].subnetwork == "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/us-central1/subnetworks/bnt-net-app-usc1" &&
+      module.gke["primary"].master_cidr == "10.30.38.0/28"
+    )
+    error_message = "El clúster de DR debe usar app_dr, la llave gke de us-east4 y gke_master_dr; el primario, las suyas."
   }
   assert {
-    condition     = local.external_backends["gke"].dr_groups[0].group == "projects/example-svc-app/zones/us-east4-a/networkEndpointGroups/k8s1-web"
-    error_message = "El backend de GKE debe apuntar al NEG del clúster de DR."
+    condition = (
+      module.mig["dr"].subnetwork == "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/us-east4/subnetworks/bnt-net-app-use4" &&
+      module.mig["dr"].kms_key == "projects/example-security/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/compute" &&
+      module.mig["primary"].kms_key == "projects/example-security/locations/us-central1/keyRings/bnt-prod-sec-kr-usc1/cryptoKeys/compute"
+    )
+    error_message = "El MIG de DR debe usar app_dr y la llave compute de us-east4."
   }
   assert {
-    condition     = join(",", sort(keys(module.external_lb["external"].backend_service_ids))) == "gke,mig,run"
-    error_message = "Con NEG de GKE el balanceador externo debe tener el backend gke."
+    condition = (
+      module.cloud_run["dr"].subnetwork == "projects/example-net-spoke/regions/us-east4/subnetworks/bnt-net-run-use4" &&
+      module.cloud_run["dr"].kms_key == "projects/example-security/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/run" &&
+      module.cloud_run["primary"].subnetwork == "projects/example-net-spoke/regions/us-central1/subnetworks/bnt-net-run-usc1"
+    )
+    error_message = "Cloud Run de DR debe usar run_dr y la llave run de us-east4."
   }
-  # El interno se mueve a la región de DR.
+
+  # Los servicios de backend del externo usan solo los grupos de la región de DR.
   assert {
-    condition     = module.internal_lb["internal"].url_map_name == "bnt-prod-app-app-ilb-use4-um"
-    error_message = "Con dr_active el balanceador interno debe estar en la región de DR."
+    condition = module.external_lb["external"].backend_groups == {
+      gke = tolist(["projects/example-svc-app/zones/us-east4-a/networkEndpointGroups/k8s1-web"])
+      mig = tolist(["projects/example-svc-app/regions/us-east4/instanceGroups/mig-use4"])
+      run = tolist(["projects/example-svc-app/regions/us-east4/networkEndpointGroups/neg-use4"])
+    }
+    error_message = "Con dr_active cada servicio de backend del externo debe tener solo el grupo de la región de DR."
+  }
+
+  # Balanceador interno por región: se agrega el de DR con los grupos de DR y el primario sigue
+  # igual (mismo nombre y mismos grupos de la región primaria).
+  assert {
+    condition = (
+      toset(keys(module.internal_lb)) == toset(["primary", "dr"]) &&
+      module.internal_lb["primary"].url_map_name == "bnt-prod-app-app-ilb-usc1-um" &&
+      module.internal_lb["dr"].url_map_name == "bnt-prod-app-app-ilb-use4-um"
+    )
+    error_message = "Con dr_active debe agregarse el balanceador interno de la región de DR sin tocar el primario."
+  }
+  assert {
+    condition = (
+      module.internal_lb["dr"].backend_groups == {
+        mig = tolist(["projects/example-svc-app/regions/us-east4/instanceGroups/mig-use4"])
+        run = tolist(["projects/example-svc-app/regions/us-east4/networkEndpointGroups/neg-use4"])
+      } &&
+      module.internal_lb["primary"].backend_groups == {
+        mig = tolist(["projects/example-svc-app/regions/us-central1/instanceGroups/mig-usc1"])
+        run = tolist(["projects/example-svc-app/regions/us-central1/networkEndpointGroups/neg-usc1"])
+      }
+    )
+    error_message = "Cada balanceador interno debe usar los grupos de su propia región."
   }
   # Los datos no se mueven: la primaria de Cloud SQL sigue igual (la réplica se promueve por runbook).
   assert {
     condition     = module.cloud_sql.instance_name == "bnt-prod-data-sql-usc1"
     error_message = "La conmutación no debe cambiar la instancia primaria de Cloud SQL."
+  }
+  # Un solo enlace de Workload Identity: el pool es del proyecto y sirve a los dos clústeres.
+  assert {
+    condition     = length(google_service_account_iam_member.workload_identity) == 1
+    error_message = "El enlace de Workload Identity es uno por proyecto, no por clúster."
+  }
+}
+
+# Paso 5 del runbook 04 con los tfvars normales: NEG de GKE solo en primary (los de DR no existen
+# todavía). Debe planear: GKE sale del externo hasta que se llenen los NEG de DR.
+run "prod_conmutacion_sin_neg_de_dr" {
+  command = plan
+
+  variables {
+    dr_active          = true
+    lb_default_backend = "gke"
+    lb_backend_paths   = { gke = ["/k8s/*"], mig = ["/legacy/*"] }
+    gke_lb_negs = {
+      primary = ["projects/example-svc-app/zones/us-central1-a/networkEndpointGroups/k8s1-web"]
+    }
+  }
+
+  assert {
+    condition     = join(",", sort(keys(module.external_lb["external"].backend_service_ids))) == "mig,run"
+    error_message = "Sin NEG de DR, el backend gke debe quedar fuera del externo durante la conmutación."
+  }
+  assert {
+    condition     = local.external_default_backend == "run"
+    error_message = "Con lb_default_backend = gke y sin NEG de DR, el backend por defecto debe pasar al primero habilitado (run)."
+  }
+  assert {
+    condition     = toset(keys(module.internal_lb)) == toset(["primary", "dr"]) && output.gke_cluster_names["us-east4"] == "bnt-prod-app-gke-use4"
+    error_message = "La conmutación crea el clúster y el balanceador interno de DR aunque falten los NEG."
+  }
+}
+
+# Solo GKE con NEG primarios: al conmutar sin NEG de DR el externo no se destruye (sigue con los
+# NEG primarios hasta que se declaren los de DR).
+run "prod_conmutacion_solo_gke_sin_neg_de_dr" {
+  command = plan
+
+  variables {
+    dr_active          = true
+    enable_mig         = false
+    enable_cloud_run   = false
+    enable_internal_lb = false
+    lb_backend_paths   = {}
+    gke_lb_negs = {
+      primary = ["projects/example-svc-app/zones/us-central1-a/networkEndpointGroups/k8s1-web"]
+    }
+  }
+
+  assert {
+    condition     = module.external_lb["external"].backend_groups == { gke = tolist(["projects/example-svc-app/zones/us-central1-a/networkEndpointGroups/k8s1-web"]) }
+    error_message = "Si GKE es el único backend, el externo se queda con los NEG primarios en lugar de destruirse."
+  }
+  assert {
+    condition     = keys(module.cloud_sql.iam_user_names) == ["bnt-app-workload@example-svc-app.iam.gserviceaccount.com"]
+    error_message = "Solo con GKE, solo la cuenta workload entra a Cloud SQL."
   }
 }
 
@@ -416,10 +564,9 @@ run "dev_solo_cloud_run_y_sql" {
     enable_memorystore  = false
     enable_internal_lb  = false
     deletion_protection = false
-    subnet_cidrs        = {}
     gke_node_pools      = {}
     mig_image           = null
-    cloud_run_image     = "us-central1-docker.pkg.dev/example-dev-app/apps/api:latest"
+    cloud_run_image     = "us-docker.pkg.dev/example-dev-app/bnt-dev-app-app-images-us/api:latest"
     sql_tier            = "db-custom-1-3840"
     lb_backend_paths    = {}
     domain_names        = ["app.dev.example.com"]
@@ -427,8 +574,8 @@ run "dev_solo_cloud_run_y_sql" {
   }
 
   assert {
-    condition     = output.gke_cluster_names == {}
-    error_message = "Sin GKE gke_cluster_names debe ser un mapa vacío."
+    condition     = output.gke_cluster_names == {} && length(google_service_account_iam_member.workload_identity) == 0
+    error_message = "Sin GKE no hay clúster ni enlace de Workload Identity."
   }
   assert {
     condition     = length(module.mig) == 0 && length(module.memorystore) == 0 && length(module.filestore) == 0 && length(module.internal_lb) == 0
@@ -441,6 +588,11 @@ run "dev_solo_cloud_run_y_sql" {
   assert {
     condition     = module.cloud_sql.instance_name == "bnt-dev-data-sql-usc1" && module.cloud_sql.replica_name == null
     error_message = "Sin enable_dr no debe haber réplica de Cloud SQL."
+  }
+  # Cloud Run es el único cómputo: su cuenta entra a Cloud SQL por IAM (y solo ella).
+  assert {
+    condition     = keys(module.cloud_sql.iam_user_names) == ["bnt-app-run@example-svc-app.iam.gserviceaccount.com"]
+    error_message = "En dev la cuenta run de Cloud Run debe ser el único usuario IAM de Cloud SQL."
   }
   assert {
     condition     = output.bucket_names == { data = "bnt-dev-data-app-usc1" } && module.storage.data_locations == []
@@ -475,11 +627,10 @@ run "qa_mig_cloud_run_y_redis" {
     enable_memorystore  = true
     enable_internal_lb  = false
     deletion_protection = false
-    subnet_cidrs        = {}
     gke_node_pools      = {}
     mig_min_replicas    = 1
     mig_max_replicas    = 3
-    cloud_run_image     = "us-central1-docker.pkg.dev/example-qa-app/apps/api:1.0.0"
+    cloud_run_image     = "us-docker.pkg.dev/example-qa-app/bnt-qa-app-app-images-us/api:1.0.0"
     lb_backend_paths    = { mig = ["/legacy/*"] }
     domain_names        = ["app.qa.example.com"]
     notification_emails = ["alertas-qa@example.com"]
@@ -497,6 +648,192 @@ run "qa_mig_cloud_run_y_redis" {
     condition     = output.gke_cluster_names == {} && module.cloud_sql.replica_name == null
     error_message = "qa no lleva GKE ni réplica de DR."
   }
+  assert {
+    condition     = toset(keys(module.cloud_sql.iam_user_names)) == toset(["bnt-app-run@example-svc-app.iam.gserviceaccount.com", "bnt-app-mig@example-svc-app.iam.gserviceaccount.com"])
+    error_message = "En qa las cuentas run y mig deben entrar a Cloud SQL por IAM."
+  }
+}
+
+# Un puerto dentro de un rango de lb_backend_ports de la etapa 3 está cubierto.
+run "puerto_de_backend_dentro_de_un_rango" {
+  command = plan
+
+  variables {
+    enable_gke    = false
+    mig_http_port = 8000
+  }
+
+  override_data {
+    target = data.terraform_remote_state.network
+    values = {
+      outputs = {
+        host_project_id   = "example-net-spoke"
+        network_name      = "bnt-net-vpc"
+        network_self_link = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/global/networks/bnt-net-vpc"
+        subnets = {
+          for k, s in {
+            app      = { region = "us-central1", code = "usc1" }
+            app_dr   = { region = "us-east4", code = "use4" }
+            run      = { region = "us-central1", code = "usc1" }
+            run_dr   = { region = "us-east4", code = "use4" }
+            proxy    = { region = "us-central1", code = "usc1" }
+            proxy_dr = { region = "us-east4", code = "use4" }
+            } : k => {
+            self_link        = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/${s.region}/subnetworks/bnt-net-${trimsuffix(k, "_dr")}-${s.code}"
+            name             = "bnt-net-${trimsuffix(k, "_dr")}-${s.code}"
+            region           = s.region
+            cidr             = "10.30.0.0/24"
+            secondary_ranges = {}
+          }
+        }
+        psa_range_name   = "bnt-net-psa"
+        secure_tags      = { lb_backend = "tagValues/111111", iap_ssh = "tagValues/222222" }
+        secure_tag_keys  = { lb_backend = "tagKeys/333333", iap_ssh = "tagKeys/444444" }
+        reserved_cidrs   = { gke_master = "10.30.38.0/28" }
+        lb_backend_ports = ["443", "7990-8100"]
+      }
+    }
+  }
+
+  assert {
+    condition     = module.mig["primary"].named_ports["http"] == 8000
+    error_message = "Un puerto dentro de un rango de lb_backend_ports debe aceptarse."
+  }
+}
+
+# Estado de la etapa 3 anterior a la salida lb_backend_ports: la comprobación de puertos se omite.
+run "puertos_de_backend_sin_salida_de_la_etapa_3" {
+  command = plan
+
+  variables {
+    enable_gke    = false
+    mig_http_port = 8000
+  }
+
+  override_data {
+    target = data.terraform_remote_state.network
+    values = {
+      outputs = {
+        host_project_id   = "example-net-spoke"
+        network_name      = "bnt-net-vpc"
+        network_self_link = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/global/networks/bnt-net-vpc"
+        subnets = {
+          for k, s in {
+            app      = { region = "us-central1", code = "usc1" }
+            app_dr   = { region = "us-east4", code = "use4" }
+            run      = { region = "us-central1", code = "usc1" }
+            run_dr   = { region = "us-east4", code = "use4" }
+            proxy    = { region = "us-central1", code = "usc1" }
+            proxy_dr = { region = "us-east4", code = "use4" }
+            } : k => {
+            self_link        = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/${s.region}/subnetworks/bnt-net-${trimsuffix(k, "_dr")}-${s.code}"
+            name             = "bnt-net-${trimsuffix(k, "_dr")}-${s.code}"
+            region           = s.region
+            cidr             = "10.30.0.0/24"
+            secondary_ranges = {}
+          }
+        }
+        psa_range_name  = "bnt-net-psa"
+        secure_tags     = { lb_backend = "tagValues/111111", iap_ssh = "tagValues/222222" }
+        secure_tag_keys = { lb_backend = "tagKeys/333333", iap_ssh = "tagKeys/444444" }
+        reserved_cidrs  = { gke_master = "10.30.38.0/28" }
+      }
+    }
+  }
+
+  assert {
+    condition     = module.mig["primary"].named_ports["http"] == 8000
+    error_message = "Sin lb_backend_ports en el estado de la etapa 3, el plan no debe fallar por el puerto."
+  }
+}
+
+run "rechaza_puerto_de_backend_fuera_del_firewall" {
+  command = plan
+
+  variables {
+    mig_http_port = 8000
+  }
+
+  expect_failures = [data.terraform_remote_state.network]
+}
+
+run "rechaza_gke_sin_rango_del_plano_de_control" {
+  command = plan
+
+  variables {
+    enable_mig         = false
+    enable_cloud_run   = false
+    enable_internal_lb = false
+  }
+
+  override_data {
+    target = data.terraform_remote_state.network
+    values = {
+      outputs = {
+        host_project_id   = "example-net-spoke"
+        network_name      = "bnt-net-vpc"
+        network_self_link = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/global/networks/bnt-net-vpc"
+        subnets = {
+          app = {
+            self_link        = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/us-central1/subnetworks/bnt-net-app-usc1"
+            name             = "bnt-net-app-usc1"
+            region           = "us-central1"
+            cidr             = "10.30.0.0/20"
+            secondary_ranges = { pods = "10.30.64.0/18", services = "10.30.128.0/20" }
+          }
+        }
+        psa_range_name   = "bnt-net-psa"
+        secure_tags      = { lb_backend = "tagValues/111111", iap_ssh = "tagValues/222222" }
+        secure_tag_keys  = { lb_backend = "tagKeys/333333", iap_ssh = "tagKeys/444444" }
+        reserved_cidrs   = {}
+        lb_backend_ports = ["80", "443", "8080"]
+      }
+    }
+  }
+
+  expect_failures = [data.terraform_remote_state.network]
+}
+
+run "rechaza_conmutacion_sin_rango_de_dr_del_plano_de_control" {
+  command = plan
+
+  variables {
+    dr_active = true
+  }
+
+  override_data {
+    target = data.terraform_remote_state.network
+    values = {
+      outputs = {
+        host_project_id   = "example-net-spoke"
+        network_name      = "bnt-net-vpc"
+        network_self_link = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/global/networks/bnt-net-vpc"
+        subnets = {
+          for k, s in {
+            app      = { region = "us-central1", code = "usc1" }
+            app_dr   = { region = "us-east4", code = "use4" }
+            run      = { region = "us-central1", code = "usc1" }
+            run_dr   = { region = "us-east4", code = "use4" }
+            proxy    = { region = "us-central1", code = "usc1" }
+            proxy_dr = { region = "us-east4", code = "use4" }
+            } : k => {
+            self_link        = "https://www.googleapis.com/compute/v1/projects/example-net-spoke/regions/${s.region}/subnetworks/bnt-net-${trimsuffix(k, "_dr")}-${s.code}"
+            name             = "bnt-net-${trimsuffix(k, "_dr")}-${s.code}"
+            region           = s.region
+            cidr             = "10.30.0.0/24"
+            secondary_ranges = { pods = "10.30.64.0/18", services = "10.30.128.0/20" }
+          }
+        }
+        psa_range_name   = "bnt-net-psa"
+        secure_tags      = { lb_backend = "tagValues/111111", iap_ssh = "tagValues/222222" }
+        secure_tag_keys  = { lb_backend = "tagKeys/333333", iap_ssh = "tagKeys/444444" }
+        reserved_cidrs   = { gke_master = "10.30.38.0/28" }
+        lb_backend_ports = ["80", "443", "8080"]
+      }
+    }
+  }
+
+  expect_failures = [data.terraform_remote_state.network]
 }
 
 run "rechaza_etiqueta_app_distinta_de_application" {
@@ -544,27 +881,14 @@ run "rechaza_prefijo_invalido" {
   expect_failures = [var.prefix]
 }
 
-run "rechaza_gke_sin_rango_del_plano_de_control" {
+run "rechaza_namespace_del_sistema_para_workload_identity" {
   command = plan
 
   variables {
-    subnet_cidrs = {}
+    gke_workload_namespace = "kube-system"
   }
 
-  expect_failures = [var.subnet_cidrs]
-}
-
-run "rechaza_conmutacion_sin_neg_de_dr" {
-  command = plan
-
-  variables {
-    dr_active = true
-    gke_lb_negs = {
-      primary = ["projects/example-svc-app/zones/us-central1-a/networkEndpointGroups/k8s1-web"]
-    }
-  }
-
-  expect_failures = [var.gke_lb_negs]
+  expect_failures = [var.gke_workload_namespace]
 }
 
 run "rechaza_balanceador_interno_sin_backends" {

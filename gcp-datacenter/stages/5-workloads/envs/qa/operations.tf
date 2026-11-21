@@ -48,6 +48,9 @@ module "backup" {
   backup_plans = {
     sql = "sqladmin.googleapis.com/Instance"
   }
+  # Ventana de PITR de Cloud SQL con respaldos mejorados: 7 días, la misma que el módulo
+  # cloud-sql fija sin plan (transaction_log_retention_days).
+  sql_log_retention_days = 7
   # VERIFICAR-EN-APPLY: formato del recurso de Cloud SQL que acepta la asociación de Backup and DR (projects/<p>/instances/<instancia>) y roles de la cuenta de servicio de la bóveda sobre la instancia.
   protected_resources = {
     sql = {

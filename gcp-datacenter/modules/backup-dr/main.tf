@@ -45,6 +45,12 @@ resource "google_backup_dr_backup_plan" "this" {
   resource_type  = each.value
   backup_vault   = google_backup_dr_backup_vault.this.id
 
+  # Solo Cloud SQL: días de registros de transacciones que guarda el plan. Con respaldos
+  # mejorados el plan sobrescribe la configuración de respaldos de la instancia y define esta
+  # retención ("Manage enhanced backups"), así que es la ventana de recuperación a un punto en
+  # el tiempo. VERIFICAR-EN-APPLY: que la API acepte el valor y que PITR cubra esos días.
+  log_retention_days = each.value == "sqladmin.googleapis.com/Instance" ? var.sql_log_retention_days : null
+
   backup_rules {
     rule_id               = "daily"
     backup_retention_days = var.retention_days

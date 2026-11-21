@@ -67,6 +67,10 @@ run "exige_configuracion_de_la_especificacion" {
     error_message = "La red de la salida directa a la VPC no es la esperada."
   }
   assert {
+    condition     = output.subnetwork == "projects/example-prod-net-spoke/regions/us-central1/subnetworks/bnt-prod-net-run-usc1" && output.kms_key == var.kms_key
+    error_message = "subnetwork y kms_key deben publicar la subred y la llave del servicio."
+  }
+  assert {
     condition     = google_cloud_run_v2_service.this.template[0].vpc_access[0].egress == "ALL_TRAFFIC"
     error_message = "Por defecto toda la salida debe pasar por la VPC."
   }

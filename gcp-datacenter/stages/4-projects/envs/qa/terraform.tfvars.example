@@ -16,6 +16,13 @@ workloads_service_account = "bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gservicea
 
 deletion_policy = "PREVENT"
 
+# Repositorio Docker por aplicación (multirregión, llave artifacts de la etapa 2) y Binary
+# Authorization: solo se admiten imágenes de ese repositorio, más estos patrones y, si hay
+# atestadores, las imágenes atestadas por todos ellos.
+artifact_registry_location              = "us"
+binary_authorization_allowlist_patterns = []
+binary_authorization_attestors          = []
+
 applications = {
   app = {
     apis    = []

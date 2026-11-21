@@ -12,18 +12,18 @@ Nombres con `prefix = "bnt"`, `application = "app"` y región primaria `us-centr
 
 | Carga | Interruptor | Módulo | Nombre | Notas |
 |---|---|---|---|---|
-| GKE | `enable_gke` | `gke` | `bnt-<env>-app-gke-usc1` | subred `app`, rangos secundarios `pods`/`services`, plano de control en `subnet_cidrs["gke_master"]`, llave `gke`, nodos con la cuenta `gke_nodes` y la etiqueta segura `lb_backend`; regional en prod |
+| GKE | `enable_gke` | `gke` | `bnt-<env>-app-gke-usc1` | subred `app`, rangos secundarios `pods`/`services`, plano de control en `reserved_cidrs["gke_master"]` de la etapa 3, llave `gke`, nodos con la cuenta `gke_nodes` y la etiqueta segura `lb_backend`; regional en prod; Workload Identity de `gke_workload_namespace`/`gke_workload_ksa_name` hacia la cuenta `workload` |
 | MIG | `enable_mig` | `compute-mig` | `bnt-<env>-app-mig-usc1` | subred `app`, llave `compute`, cuenta `mig`, etiquetas seguras `lb_backend` e `iap_ssh` (`resource_manager_tags`), imagen endurecida por variable (`mig_image`, sin valor por defecto) |
 | Cloud Run | `enable_cloud_run` | `cloud-run` | `bnt-<env>-app-run-usc1` | salida directa a la VPC por la subred `run`, llave `run`, cuenta `run`, `public_via_load_balancer = true` (ADR 0020) |
-| Cloud SQL | siempre | `cloud-sql` | `bnt-<env>-data-sql-usc1` | PostgreSQL, IP privada en el rango de PSA, llave `sql`, usuario IAM = cuenta `workload` (ADR 0015); con `enable_dr`, réplica `bnt-<env>-data-sql-use4` con la llave `sql` de DR |
+| Cloud SQL | siempre | `cloud-sql` | `bnt-<env>-data-sql-usc1` | PostgreSQL, IP privada en el rango de PSA, llave `sql`, usuarios IAM = cuentas de ejecución con cómputo encendido (`workload` con GKE, `run` con Cloud Run, `mig` con el MIG; ADR 0015); con `enable_backup`, horario y retención de respaldos y de registros los define el plan de Backup and DR (`backup_plan_managed`); con `enable_dr`, réplica `bnt-<env>-data-sql-use4` con la llave `sql` de DR |
 | Memorystore | `enable_memorystore` | `memorystore` | `bnt-<env>-data-redis-usc1` | PSA, llave `redis`, STANDARD_HA en prod |
 | Filestore | `enable_filestore` | `filestore` | `bnt-<env>-data-nfs-usc1` | PSA, llave `filestore`, tier por variable |
 | Cloud Storage | siempre | `storage` | `bnt-<env>-data-app-usc1` | llave `storage`; con `enable_dr`, doble región `bnt-<env>-data-app-usc1-use4` en `US` con turbo replication y la llave `storage` de la multirregión `us` |
 | Cloud Armor | con el balanceador externo | `cloud-armor` | `bnt-<env>-app-app-armor` | OWASP (SQLi, XSS y demás), límite de tasa |
 | Balanceador externo | hay al menos un backend | `load-balancer` (`external`) | `bnt-<env>-app-app-xlb-*` | HTTPS global, certificado administrado para `domain_names`, redirección de HTTP, Cloud Armor (ADR 0005) |
-| Balanceador interno | `enable_internal_lb` | `load-balancer` (`internal`) | `bnt-<env>-app-app-ilb-usc1-*` | regional, IP en la subred `app` de la región activa, subred proxy-only del spoke, certificado de Certificate Manager para `internal_domain_names` |
+| Balanceador interno | `enable_internal_lb` | `load-balancer` (`internal`) | `bnt-<env>-app-app-ilb-<usc1\|use4>-*` | uno por región con cómputo (con `dr_active` se agrega el de `dr_region`), IP en la subred `app` de su región, subred proxy-only del spoke, acceso global en las reglas de reenvío, certificado de Certificate Manager para `internal_domain_names` |
 | Observabilidad | siempre | `observability` | — | canales para `notification_emails`, verificación de disponibilidad del primer dominio, alertas, tablero y SLO de 99.9 % filtrado por el mapa de URL del balanceador externo |
-| Respaldo | `enable_backup` (true) | `backup-dr` | `bnt-<env>-bkp-vault-use4` | bóveda en `dr_region`, plan diario de Cloud SQL con 30 días de retención y la instancia asociada; con `enable_gke` y `enable_dr`, plan de Backup for GKE del clúster primario en `dr_region` con la llave `backup` de DR |
+| Respaldo | `enable_backup` (true) | `backup-dr` | `bnt-<env>-bkp-vault-use4` | bóveda en `dr_region`, plan diario de Cloud SQL con 30 días de retención y 7 días de registros (`log_retention_days`, ventana de PITR) y la instancia asociada; con `enable_gke` y `enable_dr`, plan de Backup for GKE del clúster primario en `dr_region` con la llave `backup` de DR |
 
 Todas las llaves vienen de `kms_key_ids[<env>][<ubicación>][<uso>]` (etapa 2) y todas las
 cuentas de servicio de `service_accounts[<application>][<uso>]` (etapa 4). Todo recurso
@@ -33,7 +33,7 @@ etiquetable lleva `local.labels` (§4.3).
 
 Se arman con lo que esté habilitado: `run` (NEG sin servidor de Cloud Run), `mig` (grupo de
 instancias del MIG con su verificación de salud) y `gke`. El backend por defecto es
-`lb_default_backend` o, si es null, el primero habilitado en el orden `run`, `mig`, `gke`;
+`lb_default_backend` si está habilitado o, si no, el primero habilitado en el orden `run`, `mig`, `gke`;
 `lb_backend_paths` asigna rutas a cada backend. Si no hay ningún backend, no se crean el
 balanceador ni Cloud Armor y `lb_ip_address` es null.
 
@@ -44,11 +44,14 @@ carga, y se aplica otra vez; el balanceador les crea una verificación de salud
 (`gke_lb_negs.health_check_path`) y usa el modo `RATE` con `max_rate_per_endpoint`. Con
 `gke_lb_negs.primary` vacío el clúster existe pero no recibe tráfico del balanceador externo.
 
-### Plano de control de GKE
+### Plano de control de GKE y puertos de backend
 
-El spoke reserva `gke_master`/`gke_master_dr` sin publicarlos (§7.4 solo publica subredes). La
-raíz los recibe en `subnet_cidrs` con las mismas llaves de §5, así que se puede pasar el mismo
-mapa de la etapa 3; las demás llaves se ignoran.
+El /28 del plano de control sale de la salida `reserved_cidrs` de la etapa 3 (`gke_master` y,
+con `dr_active`, `gke_master_dr`): es el mismo valor que usa la regla de firewall del spoke. Una
+postcondición sobre el estado de red lo exige con `enable_gke`. Otra comprueba que
+`mig_http_port` (con `enable_mig`) esté en `lb_backend_ports` de la etapa 3 (puerto o rango);
+si la etapa 3 todavía no publica esa salida, no se comprueba. El puerto de los NEG de GKE lo
+fija el `Service` de Kubernetes, fuera de Terraform.
 
 ## DR
 
@@ -57,10 +60,19 @@ mapa de la etapa 3; las demás llaves se ignoran.
   `enable_dr` reemplaza el bucket (cambian ubicación y nombre): se decide al crear el entorno.
 - `dr_active = true` (conmutación; exige `enable_dr`, validado): GKE, MIG y Cloud Run se crean
   también en `dr_region` (llave `dr` de cada `for_each`, subredes `app_dr`/`run_dr`,
-  `subnet_cidrs["gke_master_dr"]`, llaves de DR) y los backends de los balanceadores pasan a
-  esa región (`dr_active`/`dr_groups` del módulo `load-balancer`; para GKE, `gke_lb_negs.dr`).
-  El cómputo primario se conserva para no destruirlo durante el incidente. El balanceador
-  interno se recrea en la región de DR (su nombre lleva la región).
+  `reserved_cidrs["gke_master_dr"]`, llaves de DR) y los backends del balanceador externo pasan
+  a esa región (`dr_active`/`dr_groups` del módulo `load-balancer`). El cómputo primario se
+  conserva para no destruirlo durante el incidente.
+- GKE en la conmutación: los NEG del clúster de DR no existen hasta desplegar la carga en él,
+  así que `dr_active = true` planea con los tfvars normales (`gke_lb_negs.dr` vacío): el backend
+  `gke` sale del externo (y el backend por defecto pasa al primero habilitado) hasta que se
+  llenen los NEG de DR y se aplique otra vez. Si GKE es el único backend, se queda con los NEG
+  primarios para no destruir el balanceador ni su IP.
+- Balanceador interno: uno por región con cómputo. `dr_active = true` agrega el de `dr_region`
+  con los grupos de esa región y no toca el primario; las reglas de reenvío tienen acceso
+  global, así que on-premises llega a cualquiera de los dos. El registro DNS interno se cambia a
+  `internal_lb_ip_address` (la IP del de la región activa; todas en `internal_lb_ip_addresses`).
+  El `moved` de `load_balancing.tf` lleva el estado anterior (`["internal"]`) a `["primary"]`.
 - **Promoción de la réplica de Cloud SQL**: es un paso del runbook de conmutación a DR, no de
   Terraform (`gcloud sql instances promote-replica`). Después hay que reconciliar el estado
   (la réplica promovida deja de ser réplica) antes del siguiente `apply`.
@@ -70,7 +82,7 @@ mapa de la etapa 3; las demás llaves se ignoran.
 | Prefijo | Salidas que usa (§7) |
 |---|---|
 | `2-security` | `kms_key_ids` (map(map(map(string)))) |
-| `3-networks/<env>` | `network_self_link`, `subnets` (map(object)), `psa_range_name`, `secure_tags`, `secure_tag_keys` |
+| `3-networks/<env>` | `network_self_link`, `subnets` (map(object)), `psa_range_name`, `secure_tags`, `secure_tag_keys`, `reserved_cidrs` (map(string)), `lb_backend_ports` (list(string), opcional) |
 | `4-projects/<env>` | `service_project_ids`, `service_accounts` (map(map(string))) |
 
 La fila de §6.1 admite también `1-org`, pero esta etapa no usa ninguna de sus salidas y no lo
@@ -90,25 +102,30 @@ terraform apply tfplan
 Orden: después de `4-projects/envs/<env>`. Con GKE detrás del balanceador externo: primer
 apply sin `gke_lb_negs`, despliegue de la carga en el clúster, segundo apply con los NEG.
 Prueba sin GCP: `terraform test` (proveedores simulados; `tests/workloads.tftest.hcl` cubre
-prod normal, prod en conmutación, dev con solo Cloud Run y SQL, qa y entradas rechazadas).
+prod normal, prod en conmutación con y sin NEG de DR, solo GKE en conmutación, dev con solo
+Cloud Run y SQL, qa, puertos de backend y entradas rechazadas).
 
 Pasos fuera de Terraform: registros DNS A de `domain_names` hacia `lb_ip_address` (el
 certificado se activa entonces); registros de `internal_lb_dns_authorization_records` en la
-zona pública del dominio interno; `CREATE EXTENSION pgaudit;` en cada base.
+zona pública del dominio interno; `CREATE EXTENSION pgaudit;` en cada base; la cuenta de
+Kubernetes `gke_workload_namespace`/`gke_workload_ksa_name` con la anotación
+`iam.gke.io/gcp-service-account` = correo de la cuenta `workload`. Las imágenes de Cloud Run y
+de GKE deben estar en el repositorio de la etapa 4 (`artifact_registry_repositories`): Binary
+Authorization niega las demás.
 
 ## Roles de la cuenta `<prefix>-tf-5-workloads`
 
-Sobre la carpeta del entorno (los asigna `1-org`, `stages/1-org/iam.tf`): `roles/backupdr.admin`,
-`roles/certificatemanager.editor` (certificado del balanceador interno, `enable_internal_lb`),
+Ninguno en la carpeta del entorno. Todos los asigna la etapa 4, sobre el proyecto de servicio:
+`roles/backupdr.admin`, `roles/certificatemanager.editor` (certificado del balanceador interno),
 `roles/cloudsql.admin`, `roles/compute.instanceAdmin.v1`, `roles/compute.loadBalancerAdmin`,
-`roles/compute.networkUser`, `roles/compute.securityAdmin` (Cloud Armor),
-`roles/container.admin`, `roles/file.editor`, `roles/gkebackup.admin`,
-`roles/iam.serviceAccountUser` (usar las cuentas `gke_nodes`, `mig` y `run`),
-`roles/monitoring.editor`, `roles/redis.admin`, `roles/run.admin`, `roles/storage.admin`, y
-`roles/resourcemanager.projectIamAdmin` con una condición que solo le deja asignar
-`roles/cloudsql.client` y `roles/cloudsql.instanceUser` (entrada por IAM de la cuenta `workload`
-a Cloud SQL, que el módulo `cloud-sql` otorga). La etapa 4 le da además `actAs` sobre cada cuenta
-de ejecución, `roles/compute.networkUser` en las subredes `app` y `run` y
+`roles/compute.securityAdmin` (Cloud Armor), `roles/container.admin`, `roles/file.editor`,
+`roles/gkebackup.admin`, `roles/monitoring.editor`, `roles/redis.admin`, `roles/run.admin`,
+`roles/storage.admin`, y `roles/resourcemanager.projectIamAdmin` con una condición que solo le
+deja asignar `roles/cloudsql.client` y `roles/cloudsql.instanceUser` (entrada por IAM de las
+cuentas de ejecución a Cloud SQL, que el módulo `cloud-sql` otorga). Sobre recursos: `actAs`
+(`roles/iam.serviceAccountUser`) sobre cada cuenta de ejecución, `roles/iam.serviceAccountAdmin`
+sobre la cuenta `workload` (enlace de Workload Identity), `roles/compute.networkUser` en las
+subredes `app` y `run` (y `_dr`), `roles/compute.networkViewer` en el host de la Shared VPC y
 `roles/resourcemanager.tagUser` sobre los valores de `lb_backend` e `iap_ssh` (§7.4). La etapa 0
 le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lectura del estado:
 `roles/storage.objectViewer` condicionado a los prefijos de §6.1.
@@ -126,6 +143,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 
 | Name | Version |
 | ---- | ------- |
+| <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
 | <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
@@ -149,6 +167,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 
 | Name | Type |
 | ---- | ---- |
+| [google_service_account_iam_member.workload_identity](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account_iam_member) | resource |
 | [terraform_data.upstream_checks](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_remote_state.network](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/data-sources/remote_state) | data source |
 | [terraform_remote_state.projects](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/data-sources/remote_state) | data source |
@@ -184,16 +203,18 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="input_filestore_tier"></a> [filestore\_tier](#input\_filestore\_tier) | Nivel de Filestore con CMEK: ZONAL (en la zona primary\_region-<filestore\_zone\_suffix>), REGIONAL o ENTERPRISE. | `string` | `"REGIONAL"` | no |
 | <a name="input_filestore_zone_suffix"></a> [filestore\_zone\_suffix](#input\_filestore\_zone\_suffix) | Letra de la zona de primary\_region para Filestore ZONAL (por ejemplo, a). | `string` | `"a"` | no |
 | <a name="input_gke_authenticator_security_group"></a> [gke\_authenticator\_security\_group](#input\_gke\_authenticator\_security\_group) | Grupo raíz de Google Groups for RBAC del clúster (gke-security-groups@<dominio>). Obligatorio con enable\_gke. | `string` | `null` | no |
-| <a name="input_gke_lb_negs"></a> [gke\_lb\_negs](#input\_gke\_lb\_negs) | Backends de GKE para el balanceador externo. GKE crea los NEG zonales al desplegar un Service<br/>con la anotación cloud.google.com/neg (fuera de Terraform), así que sus self links se llenan<br/>después del primer despliegue de la carga y se aplica de nuevo. Vacío por defecto: sin backend<br/>de GKE en el balanceador.<br/>- primary: self links de los NEG zonales del clúster de la región primaria.<br/>- dr: los del clúster de DR (obligatorios con dr\_active si hay primary).<br/>- max\_rate\_per\_endpoint: solicitudes por segundo por endpoint (modo RATE).<br/>- health\_check\_path: ruta de la verificación de salud que crea el balanceador. | <pre>object({<br/>    primary               = optional(list(string), [])<br/>    dr                    = optional(list(string), [])<br/>    max_rate_per_endpoint = optional(number, 100)<br/>    health_check_path     = optional(string, "/healthz")<br/>  })</pre> | `{}` | no |
+| <a name="input_gke_lb_negs"></a> [gke\_lb\_negs](#input\_gke\_lb\_negs) | Backends de GKE para el balanceador externo. GKE crea los NEG zonales al desplegar un Service<br/>con la anotación cloud.google.com/neg (fuera de Terraform), así que sus self links se llenan<br/>después del primer despliegue de la carga y se aplica de nuevo. Vacío por defecto: sin backend<br/>de GKE en el balanceador.<br/>- primary: self links de los NEG zonales del clúster de la región primaria.<br/>- dr: los del clúster de DR. Se llenan después de conmutar (el clúster de DR nace con<br/>  dr\_active): mientras estén vacíos, con dr\_active el backend de GKE queda fuera del<br/>  balanceador (si es el único backend, sigue con los NEG primarios para no destruir el<br/>  balanceador).<br/>- max\_rate\_per\_endpoint: solicitudes por segundo por endpoint (modo RATE).<br/>- health\_check\_path: ruta de la verificación de salud que crea el balanceador. | <pre>object({<br/>    primary               = optional(list(string), [])<br/>    dr                    = optional(list(string), [])<br/>    max_rate_per_endpoint = optional(number, 100)<br/>    health_check_path     = optional(string, "/healthz")<br/>  })</pre> | `{}` | no |
 | <a name="input_gke_master_authorized_networks"></a> [gke\_master\_authorized\_networks](#input\_gke\_master\_authorized\_networks) | Rangos autorizados para llegar al plano de control privado de GKE (por ejemplo, el rango on-premises o una subred de administración). | <pre>list(object({<br/>    cidr_block   = string<br/>    display_name = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_gke_node_pools"></a> [gke\_node\_pools](#input\_gke\_node\_pools) | Pools de nodos de GKE (llave → configuración); mismo formato que el módulo gke. min\_node\_count y max\_node\_count son por zona. Obligatorio con enable\_gke. | <pre>map(object({<br/>    machine_type    = string<br/>    min_node_count  = number<br/>    max_node_count  = number<br/>    disk_size_gb    = optional(number, 100)<br/>    disk_type       = optional(string, "pd-balanced")<br/>    spot            = optional(bool, false)<br/>    node_locations  = optional(list(string))<br/>    max_surge       = optional(number, 1)<br/>    max_unavailable = optional(number, 0)<br/>    k8s_labels      = optional(map(string), {})<br/>    taints = optional(list(object({<br/>      key    = string<br/>      value  = string<br/>      effect = string<br/>    })), [])<br/>  }))</pre> | `{}` | no |
 | <a name="input_gke_release_channel"></a> [gke\_release\_channel](#input\_gke\_release\_channel) | Canal de versiones de GKE: RAPID, REGULAR o STABLE (sin RAPID en prod, lo valida el módulo). | `string` | `"REGULAR"` | no |
+| <a name="input_gke_workload_ksa_name"></a> [gke\_workload\_ksa\_name](#input\_gke\_workload\_ksa\_name) | Nombre de la cuenta de servicio de Kubernetes (en gke\_workload\_namespace) que actúa como la cuenta workload de la aplicación (Workload Identity). | `string` | `"app"` | no |
+| <a name="input_gke_workload_namespace"></a> [gke\_workload\_namespace](#input\_gke\_workload\_namespace) | Namespace de Kubernetes de la cuenta de servicio de Kubernetes que actúa como la cuenta workload de la aplicación (Workload Identity). | `string` | `"app"` | no |
 | <a name="input_internal_domain_names"></a> [internal\_domain\_names](#input\_internal\_domain\_names) | Dominios del certificado del balanceador interno (Certificate Manager con autorización DNS). Obligatorio con enable\_internal\_lb. | `list(string)` | `[]` | no |
 | <a name="input_lb_backend_paths"></a> [lb\_backend\_paths](#input\_lb\_backend\_paths) | Rutas del mapa de URL por backend (llaves gke, mig o run → lista de rutas, por ejemplo { run = ["/api/*"] }). Las solicitudes sin ruta van a lb\_default\_backend. | `map(list(string))` | `{}` | no |
 | <a name="input_lb_default_backend"></a> [lb\_default\_backend](#input\_lb\_default\_backend) | Backend por defecto del mapa de URL externo: gke, mig o run. null: el primero habilitado en el orden run, mig, gke. | `string` | `null` | no |
 | <a name="input_memorystore_memory_gb"></a> [memorystore\_memory\_gb](#input\_memorystore\_memory\_gb) | Memoria de la instancia de Redis en GB (el tier lo decide el módulo: STANDARD\_HA en prod, BASIC fuera). | `number` | `5` | no |
 | <a name="input_mig_health_check_path"></a> [mig\_health\_check\_path](#input\_mig\_health\_check\_path) | Ruta HTTP de la verificación de salud del MIG (autocuración y balanceadores). | `string` | `"/healthz"` | no |
-| <a name="input_mig_http_port"></a> [mig\_http\_port](#input\_mig\_http\_port) | Puerto HTTP en el que sirven las VM (puerto con nombre http del grupo y de las verificaciones de salud). | `number` | `80` | no |
+| <a name="input_mig_http_port"></a> [mig\_http\_port](#input\_mig\_http\_port) | Puerto HTTP en el que sirven las VM (puerto con nombre http del grupo y de las verificaciones de salud). Debe estar en lb\_backend\_ports de la etapa 3 (lo comprueba el plan si la etapa 3 publica esa salida). | `number` | `80` | no |
 | <a name="input_mig_image"></a> [mig\_image](#input\_mig\_image) | Imagen endurecida de las VM del MIG (projects/<p>/global/images/<imagen> o .../images/family/<familia>). Sin valor por defecto público: obligatoria con enable\_mig. | `string` | `null` | no |
 | <a name="input_mig_machine_type"></a> [mig\_machine\_type](#input\_mig\_machine\_type) | Tipo de máquina de las VM del MIG. | `string` | `"e2-standard-2"` | no |
 | <a name="input_mig_max_replicas"></a> [mig\_max\_replicas](#input\_mig\_max\_replicas) | Máximo de VM del autoescalador. | `number` | `4` | no |
@@ -204,7 +225,6 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="input_sql_database_version"></a> [sql\_database\_version](#input\_sql\_database\_version) | Versión de PostgreSQL de Cloud SQL (POSTGRES\_<n>). | `string` | `"POSTGRES_16"` | no |
 | <a name="input_sql_databases"></a> [sql\_databases](#input\_sql\_databases) | Bases de datos que se crean en la instancia de Cloud SQL. | `list(string)` | <pre>[<br/>  "app"<br/>]</pre> | no |
 | <a name="input_sql_tier"></a> [sql\_tier](#input\_sql\_tier) | Tipo de máquina de Cloud SQL (db-custom-* en edición ENTERPRISE). | `string` | `"db-custom-2-7680"` | no |
-| <a name="input_subnet_cidrs"></a> [subnet\_cidrs](#input\_subnet\_cidrs) | Rangos reservados del plan de §5 que el spoke no publica como subred: gke\_master (obligatorio con enable\_gke) y gke\_master\_dr (obligatorio con enable\_gke y dr\_active), /28 para el plano de control de GKE. Puede ser el mismo mapa subnet\_cidrs de la etapa 3; las demás llaves se ignoran. | `map(string)` | `{}` | no |
 | <a name="input_uptime_check_path"></a> [uptime\_check\_path](#input\_uptime\_check\_path) | Ruta HTTPS que revisa la verificación de disponibilidad sobre el primer dominio de domain\_names. | `string` | `"/"` | no |
 
 ## Outputs
@@ -218,8 +238,11 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="output_cloud_run_service_names"></a> [cloud\_run\_service\_names](#output\_cloud\_run\_service\_names) | Mapa región → nombre del servicio de Cloud Run (vacío con enable\_cloud\_run = false). |
 | <a name="output_filestore_ip_address"></a> [filestore\_ip\_address](#output\_filestore\_ip\_address) | IP privada del servidor NFS de Filestore (null con enable\_filestore = false). |
 | <a name="output_gke_cluster_names"></a> [gke\_cluster\_names](#output\_gke\_cluster\_names) | Mapa región → nombre del clúster de GKE (vacío con enable\_gke = false; con dr\_active incluye dr\_region). |
-| <a name="output_internal_lb_dns_authorization_records"></a> [internal\_lb\_dns\_authorization\_records](#output\_internal\_lb\_dns\_authorization\_records) | Registros DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno. |
-| <a name="output_internal_lb_ip_address"></a> [internal\_lb\_ip\_address](#output\_internal\_lb\_ip\_address) | IP interna del balanceador interno regional (null sin enable\_internal\_lb). |
+| <a name="output_gke_workload_identity_member"></a> [gke\_workload\_identity\_member](#output\_gke\_workload\_identity\_member) | Miembro serviceAccount:<proyecto>.svc.id.goog[<namespace>/<cuenta>] que actúa como la cuenta workload (null sin enable\_gke). |
+| <a name="output_internal_lb_dns_authorization_records"></a> [internal\_lb\_dns\_authorization\_records](#output\_internal\_lb\_dns\_authorization\_records) | Registros DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa. |
+| <a name="output_internal_lb_dns_authorization_records_by_region"></a> [internal\_lb\_dns\_authorization\_records\_by\_region](#output\_internal\_lb\_dns\_authorization\_records\_by\_region) | Mapa región → registros DNS de autorización del certificado de cada balanceador interno (con dr\_active incluye dr\_region). |
+| <a name="output_internal_lb_ip_address"></a> [internal\_lb\_ip\_address](#output\_internal\_lb\_ip\_address) | IP interna del balanceador interno de la región activa (active\_region): la que debe tener el registro DNS interno. null sin enable\_internal\_lb. |
+| <a name="output_internal_lb_ip_addresses"></a> [internal\_lb\_ip\_addresses](#output\_internal\_lb\_ip\_addresses) | Mapa región → IP interna del balanceador interno de esa región (la de DR solo con dr\_active). Vacío sin enable\_internal\_lb. |
 | <a name="output_lb_ip_address"></a> [lb\_ip\_address](#output\_lb\_ip\_address) | IP pública global del balanceador HTTPS externo (para los registros DNS A de domain\_names). null si no hay ningún backend habilitado. |
 | <a name="output_mig_instance_groups"></a> [mig\_instance\_groups](#output\_mig\_instance\_groups) | Mapa región → URL del grupo de instancias del MIG (vacío con enable\_mig = false). |
 | <a name="output_redis_host"></a> [redis\_host](#output\_redis\_host) | IP privada de Memorystore (null con enable\_memorystore = false). |
