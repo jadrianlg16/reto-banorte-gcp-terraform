@@ -271,7 +271,7 @@ Esto sube el costo hacia el del diseño completo: hazlo en un bloque corto y apa
 |---|---|
 | Despliegue desde cero sin errores | Ejecución de `apply.yml` en verde; tiempo total |
 | Segundo `plan` sin cambios | `gh workflow run drift.yml` después del apply: debe terminar en verde |
-| `destroy` de dev sin huérfanos | Sección H, paso 2, con dev; después, `gcloud asset search-all-resources` en la carpeta dev |
+| `destroy` de dev sin huérfanos | Sección H, paso 1: `destroy.yml` con dev en verde, incluido su último trabajo (huérfanos con Cloud Asset Inventory en la carpeta dev) |
 | El pipeline bloquea un PR que viola una política | PR de prueba que agregue, por ejemplo, una IP pública a una VM: `pr.yml` debe fallar en Conftest |
 | Conectividad con on-premises | Prueba de humo de dev y, con cómputo en prod, una Connectivity Test desde prod |
 | Sin hallazgos críticos ni altos en SCC | [`cumplimiento-cis.md`](cumplimiento-cis.md) §6 |
@@ -302,13 +302,33 @@ o, si falla, **Falló el AAAA-MM-DD** con el error exacto. Además:
 
 ## H. Apagar todo al terminar
 
-1. `gh variable set GCP_ENABLED --body "false"`: ningún flujo vuelve a aplicar.
-2. Para el criterio de `destroy`: `terraform destroy` de dev de la etapa 5 a la 3 con la
-   identidad de cada etapa (README, "Despliegue"). Prod no se desmonta con `destroy`: tiene
-   protección contra borrado obligatoria.
-3. Borra los proyectos (consola → Administrar recursos, o `gcloud projects delete <id>`): primero
-   los de `dev`, `qa` y `prod`, luego los de `common` y al final el semilla. Un proyecto borrado
-   tarda 30 días en eliminarse del todo y deja de cobrar al borrarse.
+1. **Destroy de dev con `destroy.yml`** (criterio "`destroy` de dev sin huérfanos"), con
+   `GCP_ENABLED` todavía en `"true"` (el flujo lo exige). Primero la "Preparación" de
+   [`pipeline.md`](pipeline.md) §1.5: en `GCP_TFVARS_JSON`, los valores que permiten borrar
+   (`deletion_protection`, `deletion_policy`, `project_deletion_policy`) y un `apply.yml` para que
+   lleguen al estado. Para que la bóveda de respaldos no lo bloquee, despliega dev desde el
+   principio con `"enable_backup": false`; si ya tiene respaldos, punto 86 de
+   `pendientes-apply.md`. Después:
+
+   ```bash
+   gh workflow run destroy.yml --ref main -f entorno=dev -f confirmacion=dev
+   gh run watch
+   ```
+
+   Destruye `5-workloads`, `4-projects` y `3-networks` de dev, en ese orden, y termina buscando
+   huérfanos en la carpeta dev con Cloud Asset Inventory. Guarda el resumen de la ejecución como
+   evidencia del criterio. Si se detiene, el resumen dice en qué raíz y por qué (puntos 11 y 85 a
+   89 de `pendientes-apply.md`): corrige y lanza `destroy.yml` otra vez; las raíces ya vacías se
+   saltan. Para desmontar qa, lo mismo con `entorno=qa -f confirmacion=qa`.
+2. `gh variable set GCP_ENABLED --body "false"` en cuanto termine el destroy: ningún flujo vuelve
+   a aplicar. Con `"true"`, el siguiente push a `main` lanza `apply.yml`, que vuelve a crear el
+   entorno destruido (y falla al crear sus proyectos si no cambiaste `project_suffix`,
+   `pipeline.md` §1.5, "Después del destroy").
+3. prod, el hub, `common` y la etapa 0 no tienen flujo de destroy (prod tiene protección contra
+   borrado obligatoria). Borra los proyectos que queden (consola → Administrar recursos, o
+   `gcloud projects delete <id>`): primero los de `qa` y `prod`, luego los de `common` y al final
+   el semilla. Un proyecto borrado tarda 30 días en eliminarse del todo y deja de cobrar al
+   borrarse.
 4. Desvincula la facturación de los proyectos que queden o cierra la cuenta de facturación de
    prueba.
 

@@ -17,7 +17,9 @@ Contenido:
    [3.5 Agregados por la ronda de correcciones del 21 nov 2026](#35-agregados-por-la-ronda-de-correcciones-del-21-nov-2026),
    puntos 31 a 54; y
    [3.6 Agregados por la revisión del 23 nov 2026](#36-agregados-por-la-revisión-del-23-nov-2026),
-   punto 55.
+   punto 55; y
+   [3.7 Agregados por el flujo de destroy](#37-agregados-por-el-flujo-de-destroy),
+   puntos 85 a 89.
 4. [Marcadores `VERIFICAR-EN-APPLY` del código](#4-marcadores-verificar-en-apply-del-código),
    por etapa y módulo.
 5. [Alcance no cubierto y limitaciones conocidas](#5-alcance-no-cubierto-y-limitaciones-conocidas).
@@ -116,10 +118,18 @@ Si falla: medir por raíz y documentar cuál domina (propuesta).
 Qué: `terraform plan -detailed-exitcode` sale con 0 en todas las raíces después del primer
 apply; `terraform destroy` de `5-workloads/envs/dev`, `4-projects/envs/dev` y
 `3-networks/envs/dev` (en ese orden) no deja recursos.
+**Destroy construido en el código el 23 nov 2026** (sin correr): `.github/workflows/destroy.yml`
+lo hace con la cuenta de cada etapa, el mismo plan, huella y aprobación que `apply.yml`, y
+termina buscando huérfanos en la carpeta de dev con Cloud Asset Inventory
+([`pipeline.md`](pipeline.md) §1.5). Lo que queda por comprobar en GCP está en los puntos 85 a 89.
 Dónde: todas las raíces; marcadores de `modules/gke/main.tf:144`, `modules/backup-dr/main.tf:21`,
-`modules/network-spoke/main.tf:158`.
+`modules/network-spoke/main.tf:158`; `.github/workflows/destroy.yml`,
+`scripts/destroy-guard.sh`, `scripts/destroy-plan-check.py`, `scripts/destroy-orphans.py`.
 Si falla: cada diferencia perpetua se corrige en el módulo (no con `ignore_changes` a ciegas);
-para el destroy, `deletion_policy = "DELETE"` y `deletion_protection = false` en dev.
+para el destroy, antes de lanzarlo, `deletion_policy = "DELETE"` (4-projects),
+`project_deletion_policy = "DELETE"` (3-networks) y `deletion_protection = false` (5-workloads)
+en `GCP_TFVARS_JSON` y un `apply.yml` para que lleguen al estado (si no, `destroy-plan-check.py`
+detiene la raíz antes de borrar); para lo que bloquea GCP, puntos 86, 87 y 89.
 
 **12. Protección de rama, comprobaciones obligatorias y revisores de `common` y `prod`.**
 Qué: que el plan de GitHub del equipo permita proteger `main` con las seis comprobaciones
@@ -582,6 +592,85 @@ aplicadas dan "sin cambios"). Un apply que falla a medias deja en el estado lo q
 
 ---
 
+## 3.7 Agregados por el flujo de destroy
+
+Del 23 nov 2026, con `destroy.yml` ([`pipeline.md`](pipeline.md) §1.5). Numerados desde el 85
+para no chocar con otras ramas abiertas; se pueden renumerar al integrar.
+
+**85. Primer destroy de dev con `destroy.yml` (HYPOTHESIS).**
+Qué: que el flujo destruya las tres raíces de dev y el trabajo de huérfanos salga con 0; que
+Cloud Asset muestre los proyectos borrados en `DELETE_REQUESTED` o `DELETE_IN_PROGRESS` (o que
+ya no los muestre), con nombre `//cloudresourcemanager.googleapis.com/projects/<número>` y el
+campo `project` en sus recursos; cuánto tarda el índice en dejar de listar lo destruido (el
+trabajo lista hasta tres veces, con cinco minutos entre una y otra); que el plan de destrucción de cada raíz dé la
+misma huella en `plan` y en `destroy` (como el punto 48); y que GitHub rechace por API un valor
+de `entorno` fuera de la lista (`gh workflow run destroy.yml --ref main -f entorno=prod -f
+confirmacion=prod`; si GitHub lo acepta, lo rechaza el trabajo `pedido de destrucción`).
+Dónde: `.github/workflows/destroy.yml`, `scripts/destroy-orphans.py`,
+`scripts/destroy-plan-check.py`; `_terraform-root.yml` con `destroy: true`.
+Si falla: un recurso que GCP deja a propósito y sale como huérfano: agregar la regla en
+`scripts/destroy-orphans.py` con su motivo y su fuente, y su caso en `scripts/selftest.sh`. Si el
+índice tarda más, subir `ORPHAN_ATTEMPTS` u `ORPHAN_WAIT_SECONDS` en `destroy.yml` o volver a
+lanzar el flujo (las raíces vacías se saltan y solo corre la búsqueda).
+
+**86. Bóveda de Backup and DR en el destroy.**
+Qué: con `enable_backup = true` (ejemplos de dev y qa), la bóveda tiene retención forzada de 30
+días. Según la
+[documentación de la bóveda](https://docs.cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault),
+ningún respaldo se borra antes y, desde el 1 nov 2026, Backup and DR pone un gravamen (lien) en el
+proyecto que tenga respaldos retenidos, que impide borrar el proyecto de servicio. Según el
+esquema de google 6.50.0, `ignore_inactive_datasources` permite borrar una bóveda "sin respaldos,
+pero con fuentes de datos vacías"; el módulo no lo fija, así que una bóveda que tuvo respaldos
+podría no borrarse aunque ya estén vencidos (HYPOTHESIS). Comprobar: destroy de `5-workloads`
+con una bóveda sin respaldos (pasa), con respaldos (falla en la bóveda, el resto se borra) y
+después de vencidos.
+Dónde: `modules/backup-dr/main.tf:21` (marcador) y `:23`; `stages/5-workloads/envs/*/operations.tf:46`
+(`retention_days = 30`); `destroy-plan-check.py` lo avisa con `backup_count`.
+Si falla: para la prueba de destroy, desplegar dev con `"enable_backup": false`. Propuesta no
+construida (fuera del alcance de esta rama, que no toca Terraform): `ignore_inactive_datasources`
+por variable del módulo, en `true` fuera de prod, aplicado antes del destroy.
+
+**87. Conexión de Private Service Access en el destroy de `3-networks/envs/<env>`.**
+Qué: según la
+[documentación de PSA](https://docs.cloud.google.com/vpc/docs/configure-private-services-access),
+después de borrar una instancia de Cloud SQL el servicio espera cuatro días antes de liberar sus
+recursos, y la conexión no se borra mientras tanto. Comprobar el mensaje de error, que volver a
+lanzar `destroy.yml` pasado el plazo complete el destroy, y si Memorystore y Filestore tienen
+una espera parecida.
+Dónde: `modules/network-spoke/main.tf:158` (marcador) y `:160`.
+Si falla: volver a lanzar `destroy.yml` después del plazo (`5-workloads` y `4-projects`, ya
+vacías, se saltan). Alternativa no construida: `deletion_policy = "ABANDON"` en
+`google_service_networking_connection` (según el esquema de google 6.50.0, Terraform deja de
+administrarla y la conexión sigue existiendo); dejaría el peering de servicios vivo y no se sabe
+si la red se puede borrar con él (HYPOTHESIS).
+
+**88. Recrear un entorno después del destroy.**
+Qué: según la
+[documentación de Resource Manager](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),
+el ID de un proyecto borrado no se puede volver a usar, así que el `apply.yml` siguiente con el
+mismo `project_suffix` fallaría al crear `net-spoke` y detendría la cadena de entornos.
+Comprobar que basta un `project_suffix` nuevo en `stages/3-networks/envs/<env>` y
+`stages/4-projects/envs/<env>`; si el nombre del bucket de la aplicación queda libre (si no,
+`bucket_name_suffix` en `5-workloads`; HYPOTHESIS); y que `drift.yml` vuelva a verde después de
+recrear (las incidencias de drift del entorno se cierran a mano).
+Dónde: [`pipeline.md`](pipeline.md) §1.5, "Después del destroy"; variables `project_suffix` de
+las raíces de entorno.
+Si falla: sin indicación en el código; anotar qué nombre no se pudo reutilizar y agregar su
+sufijo a la lista de "Después del destroy".
+
+**89. Bucket de la aplicación sin `force_destroy`.**
+Qué: `module.storage` de `5-workloads` no pasa `force_destroy` (por defecto `false`); si el bucket
+tiene objetos (también versiones no actuales), el destroy de `5-workloads` falla en él, y nadie
+del equipo puede vaciarlo (las personas tienen solo lectura). Se espera, sin verlo en GCP, que un
+entorno recién desplegado no tenga objetos (HYPOTHESIS).
+Dónde: `stages/5-workloads/envs/*/data.tf:100`; `modules/storage/variables.tf:201`;
+`destroy-plan-check.py` lo avisa.
+Si falla: propuesta no construida (esta rama no toca `5-workloads`):
+`force_destroy = var.environment != "prod"` en la raíz (el módulo ya lo prohíbe en prod),
+aplicado antes del destroy.
+
+---
+
 ## 4. Marcadores `VERIFICAR-EN-APPLY` del código
 
 Conteo al 21 nov 2026, desde `gcp-datacenter/`:
@@ -676,7 +765,7 @@ indicación".
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
 | `backup-dr/main.tf:19` | API `backupdr` habilitada y bóveda en otra región que acepte respaldos de VM y Cloud SQL | Sin indicación |
-| `backup-dr/main.tf:21` | El destroy de dev falla mientras la bóveda tenga respaldos dentro de la retención forzada | El procedimiento de destroy debe contemplarlo (esperar la retención o `enable_backup = false` en dev, propuesta) |
+| `backup-dr/main.tf:21` | El destroy de dev falla mientras la bóveda tenga respaldos dentro de la retención forzada | Ver punto 86 (`destroy.yml` lo avisa en el plan; para la prueba, `enable_backup = false` en dev) |
 | `backup-dr/main.tf:35` | Plan de Cloud SQL (`sqladmin.googleapis.com/Instance`) en el proveedor 6.x y roles de la cuenta de la bóveda (salida `vault_service_account`) | Otorgar los roles en la etapa 4 o 5 |
 | `backup-dr/main.tf:51` | `log_retention_days` aceptado y recuperación a un punto en el tiempo de esos días (punto 45) | Ver punto 45 |
 | `backup-dr/main.tf:85` | Backup for GKE en otra región, complemento activo y permiso del agente de `gkebackup` sobre la llave | Sin indicación |
@@ -706,7 +795,7 @@ indicación".
 | `log-export/main.tf:65` | Bloqueo sobre un bucket ya creado (punto 15) | Ver punto 15 |
 | `log-export/main.tf:97` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply |
 | `memorystore/main.tf:65` | Permiso del agente sobre la llave y PSA sobre la red del host | Sin indicación |
-| `network-spoke/main.tf:158` | Destroy de la conexión de PSA después de borrar las instancias de la etapa 5 | Sin indicación; esperar a que servicenetworking libere el peering y repetir (propuesta) |
+| `network-spoke/main.tf:158` | Destroy de la conexión de PSA después de borrar las instancias de la etapa 5 | Ver punto 87 (volver a lanzar `destroy.yml` pasado el plazo de cuatro días que documenta PSA) |
 | `network-spoke/main.tf:181` | Dos spokes no crean su peering a la vez; las rutas BGP llegan al spoke (punto 6) | El pipeline aplica los entornos en serie |
 | `observability/main.tf:55` | Los buzones de `notification_emails` existen y aceptan las alertas | Sin indicación |
 | `observability/main.tf:203` | La alerta de memoria de VM necesita Ops Agent | Sin él la condición queda sin datos |
@@ -743,6 +832,13 @@ servicios, no como configuración mínima (contrato §8). Si se piden: módulo n
 
 **Apagado de dev fuera de horario no construido.** Mitigación de costo opcional (contrato §8).
 Si se pide: Cloud Scheduler con el cambio de tamaño del MIG y de los pools de GKE (propuesta).
+
+**`destroy.yml` solo destruye dev y qa, y solo sus tres raíces.** prod, el hub (`3-networks`
+raíz) y las etapas 0 a 2 no tienen flujo de destroy; se desmontan a mano con la sección H de
+[`guia-colaborador-gcp.md`](guia-colaborador-gcp.md). Además, los entornos de GitHub dev y qa no
+piden revisores: la barrera humana del destroy es la confirmación escrita, y cualquiera con
+permiso de lanzar flujos en el repositorio puede pedirlo ([`pipeline.md`](pipeline.md) §1.5,
+"Aprobación"). Si importa: revisores obligatorios en esos entornos (también frenan los apply).
 
 **Servicios de PSA y plano de control de GKE no alcanzables desde on-premises.** Cloud SQL,
 Memorystore y Filestore (rango `psa`, `10.X.176.0/20`) y el endpoint privado de GKE viven detrás

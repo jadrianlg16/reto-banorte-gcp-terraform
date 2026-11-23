@@ -16,7 +16,8 @@ real puede probar está marcado **VERIFICAR**.
 | `apply.yml` | Push a `main` con cambios en `gcp-datacenter/**` o `.github/workflows/**`, o manual | Solo el trabajo `GCP habilitado`, que avisa que no se aplica nada | Por raíz, de 1 a 5: plan sin entorno y apply aprobado en su entorno (abajo); prueba de humo de dev antes de qa |
 | `drift.yml` | Diario (12:17 UTC) y manual | Nada | `plan -detailed-exitcode -lock=false` por raíz con incidencia `drift`; recursos no administrados por entorno (Cloud Asset Inventory) |
 | `terratest.yml` | Nocturno (06:41 UTC), manual y etiquetas `modules/<módulo>/vX.Y.Z` | `go vet ./...` y `go test -run XXX ./...` (solo compila) en `tests/`; si no hay `tests/go.mod`, avisa y termina en verde | Pruebas reales de Terratest sin `tests/e2e` (con una etiqueta, solo las del módulo); falla si se omiten más pruebas que `TERRATEST_MAX_SKIPS` |
-| `_terraform-root.yml` | Solo `workflow_call` | — | Trabajos `plan` y `apply` de una raíz; lo llama `apply.yml` |
+| `destroy.yml` | Solo manual (`workflow_dispatch`) desde `main`, entradas `entorno` (`dev` o `qa`) y `confirmacion` | El trabajo `pedido de destrucción` falla: sin GCP no se destruye nada | Destruye `5-workloads` → `4-projects` → `3-networks` del entorno con el mismo plan, huella y aprobación que `apply.yml`, y busca huérfanos en su carpeta con Cloud Asset Inventory (§1.5) |
+| `_terraform-root.yml` | Solo `workflow_call` | — | Trabajos `plan` y `apply` de una raíz; lo llama `apply.yml` y, con `destroy: true`, `destroy.yml` |
 
 ### 1.1 `pr.yml`
 
@@ -244,6 +245,155 @@ un tipo completo sin razón).
   (`TEST_ALLOW_EXPENSIVE`, `TEST_ALLOW_ORG`) y sus datos, la corrida nocturna falla en rojo hasta
   que el equipo las configure o acepte las omisiones subiendo ese número a propósito.
 
+### 1.5 `destroy.yml`
+
+Desmonta dev o qa; es como se demuestra el criterio "`destroy` de dev sin huérfanos"
+(pendiente 11). No hay otra forma: las etapas 1 a 5 solo las aplican sus cuentas de servicio, que
+solo se obtienen por WIF desde Actions, y las personas tienen solo lectura.
+
+Se lanza a mano desde `main` (Actions → destroy → Run workflow, o
+`gh workflow run destroy.yml --ref main -f entorno=dev -f confirmacion=dev`) con
+`GCP_ENABLED = true`. Entradas: `entorno` (lista cerrada `dev`, `qa`) y `confirmacion` (el nombre
+del entorno, escrito exactamente).
+
+```
+pedido de destrucción
+  → <env> / destruir 5-workloads → <env> / destruir 4-projects → <env> / destruir 3-networks
+  → <env> / huérfanos (Cloud Asset)
+```
+
+1. **`pedido de destrucción`**: `scripts/destroy-guard.sh pedido`. Falla si el entorno no es
+   `dev` o `qa` (prod con un mensaje propio, también `PROD` o con espacios), si la confirmación no
+   es exactamente el nombre del entorno, si la rama no es `main` o si `GCP_ENABLED` no es `true`
+   (a diferencia de `apply.yml`, falla: se pidió destruir y no se destruiría nada). Deja en el
+   resumen quién lo pidió.
+2. **Una raíz por trabajo, en orden inverso al de `apply.yml`**, cada una con la cuenta de su
+   etapa (`5-workloads`, `4-projects`, `3-networks`) y `_terraform-root.yml` con
+   `destroy: true`: los mismos trabajos `plan` y `apply` de §1.2 (aquí `plan -destroy <raíz>` y
+   `destroy <raíz>`), con estas diferencias:
+   - `scripts/destroy-guard.sh raiz` en los dos trabajos, antes de autenticarse: solo
+     `stages/{3-networks,4-projects,5-workloads}/envs/<entorno>` con entorno `dev` o `qa`;
+   - `terraform plan -destroy`, con el plan guardado, la huella y Conftest de siempre (las
+     políticas aceptan un plan de destrucción: probado con los planes de
+     `scripts/testdata/destroy/`);
+   - `scripts/destroy-plan-check.py` sobre ese plan, en el trabajo `plan` (antes de la
+     aprobación, con una tabla en el resumen) y otra vez en `destroy` (antes de
+     `terraform apply`). Sale con 2 si alguna acción no es `delete`, con 1 si el estado tiene un
+     **bloqueo** (abajo) y con 0 con **avisos**;
+   - el resumen se titula "Plan de DESTRUCCIÓN" y lista `delete <dirección>` de cada recurso;
+   - `destroy <raíz>` corre en el entorno de GitHub `dev` o `qa`, compara las variables y la
+     huella con las del plan revisado, repite `check-main-tip.sh` y aplica ese `tfplan`.
+
+   Una raíz ya destruida planea "sin cambios" y no pide aprobación ni aplica. Comprobado sin
+   GCP el 23 nov 2026 con Terraform 1.16.5 y recursos integrados: con el estado vacío,
+   `plan -destroy -detailed-exitcode` sale con 0 aunque la raíz de la que lee ya no tenga
+   salidas; con recursos en el estado y la de arriba sin salidas, falla (por eso el orden
+   inverso). Así, **volver a lanzar el flujo** retoma un destroy que falló a medias. "Re-run
+   failed jobs" no sirve después de un destroy parcial: el trabajo `destroy` vuelve a planear,
+   la huella ya no es la revisada y falla sin aplicar.
+3. **`huérfanos`**, con `GCP_AUDIT_SERVICE_ACCOUNT` (los roles de §3 ya alcanzan): toma la
+   carpeta del entorno de la salida `folder_ids` del estado de `1-org`, la lista con
+   `gcloud asset search-all-resources --scope=<carpeta> --format=json` y
+   `scripts/destroy-orphans.py` falla con la lista de lo que quede. Si quedan recursos, vuelve a
+   listar hasta tres veces con cinco minutos entre intentos (HYPOTHESIS: el índice de Cloud Asset
+   tarda en reflejar los borrados; la documentación no da un plazo). Es **esperado** (se lista
+   en el resumen, no falla):
+   - la carpeta misma (es de `1-org`);
+   - un proyecto en `DELETE_REQUESTED` o `DELETE_IN_PROGRESS` (estados que la
+     [referencia de searchAllResources](https://docs.cloud.google.com/asset-inventory/docs/reference/rest/v1/TopLevel/searchAllResources#ResourceSearchResult)
+     lista para un proyecto) y todo lo que esté dentro de él: según la
+     [documentación de Resource Manager](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),
+     un proyecto borrado se elimina del todo a los 30 días;
+   - un recurso en estado `DELETED`, `DELETE_REQUESTED` o `DELETE_IN_PROGRESS`;
+   - una versión de llave de KMS `DESTROYED` o `DESTROY_SCHEDULED`. Las llaves de los entornos
+     viven en `security` (carpeta `common`) y este flujo no las toca: en la carpeta del entorno
+     solo aparecerían si alguien las creó a mano.
+
+   Todo lo demás es **huérfano**: un proyecto `ACTIVE` (por ejemplo, con `deletion_policy =
+   "ABANDON"`), una red, un bucket. Un listado vacío pasa (un error de permisos hace fallar a
+   `gcloud`); un listado mal formado sale con 2. Lo que el destroy deja fuera de la carpeta (el
+   peering y la zona DNS sobre la VPC hub, IAM sobre las llaves de `security`) lo destruyen las
+   mismas raíces; si algo quedara, lo ve el trabajo de recursos no administrados de `common` en
+   `drift.yml` (§1.3).
+
+**Contra un destroy de prod.** En el flujo, cuatro barreras independientes: la lista cerrada de
+`entorno` (HYPOTHESIS: que GitHub rechace por API un valor fuera de `options`; la
+[sintaxis de flujos](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+solo dice que el valor por defecto debe estar en la lista), `destroy-guard.sh pedido`, la
+condición `inputs.entorno == 'dev' || inputs.entorno == 'qa'` de cada trabajo y
+`destroy-guard.sh raiz` en los dos trabajos de cada raíz. Además, en Terraform, prod exige
+`deletion_protection = true` en `5-workloads` y `deletion_policy = "PREVENT"` en sus proyectos
+(validaciones de la raíz y de `project-factory`), que el proveedor respeta y
+`destroy-plan-check.py` detiene antes de borrar. No cierra la limitación de §5: una rama puede
+traer su propio flujo y tomar la identidad de las cuentas.
+
+**Contra un commit viejo.** Lo mismo que `apply.yml`: `check-main-tip.sh` en el trabajo `plan` y
+justo antes de `terraform apply`, y el grupo de concurrencia `apply-gcp-datacenter`, el mismo de
+`apply.yml`: un destroy no corre mientras corre un apply, ni al revés. Según la
+[documentación de concurrencia de GitHub](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency),
+el grupo es de todo el repositorio y una ejecución nueva en espera cancela la que esperaba: un
+destroy lanzado mientras corre un apply queda cancelado si llega otro push antes de que empiece
+(hay que lanzarlo otra vez), y el `apply.yml` de un push durante un destroy espera y, al terminar
+el destroy, intenta volver a crear el entorno (ver "Después del destroy").
+
+**Aprobación.** El trabajo `destroy` corre en el entorno de GitHub `dev` o `qa`, que no tienen
+revisores (§2): no se detiene a pedir aprobación y aplica en cuanto el plan pasa. La
+confirmación escrita es el paso humano. Si el equipo quiere revisar el plan de destrucción
+antes, tiene que agregar revisores a `dev` y `qa` (también frenaría `apply.yml`; propuesta).
+
+**Preparación.** El proveedor decide el borrado con el valor del **estado**, no con el de la
+configuración (descripciones de `deletion_protection` de `google_container_cluster` y
+`google_cloud_run_v2_service` en el esquema de google 6.50.0): el valor tiene que llegar al estado
+con un `apply.yml` antes del destroy. En `GCP_TFVARS_JSON`, para el entorno:
+
+| Llave | Valor | Ejemplo actual |
+|---|---|---|
+| `stages/5-workloads/envs/<env>` | `"deletion_protection": false` | `false` en dev y qa |
+| `stages/4-projects/envs/<env>` | `"deletion_policy": "DELETE"` | `DELETE` en dev, `PREVENT` en qa |
+| `stages/3-networks/envs/<env>` | `"project_deletion_policy": "DELETE"` | sin valor: `PREVENT` por defecto en los tres |
+
+Después, `apply.yml` (cambios en el lugar) y entonces `destroy.yml`. Si falta, el trabajo
+`plan -destroy` de la raíz falla en `destroy-plan-check.py` con un **bloqueo** que nombra el
+recurso y la variable, antes de borrar nada. Bloqueos: `deletion_protection = true` o
+`deletion_protection_enabled = true` (también en `settings` de Cloud SQL) en cualquier recurso,
+`deletion_policy = "PREVENT"` en cualquier recurso y, en `google_project`, todo lo que no sea
+`"DELETE"` (con `"ABANDON"` el proyecto quedaría vivo y sería un huérfano).
+
+**Lo que el plan no ve (avisos) y qué hacer:**
+
+| Caso | Qué pasa | Qué hacer |
+|---|---|---|
+| Bóveda de Backup and DR con respaldos (`enable_backup = true`, retención forzada de 30 días en `stages/5-workloads/envs/*/operations.tf`) | Según la [documentación de la bóveda](https://docs.cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault), ningún respaldo se borra antes de la retención forzada y, desde el 1 nov 2026, Backup and DR pone un gravamen (lien) en el proyecto que los tenga. El destroy de `5-workloads` borra lo demás (incluida la asociación, que deja de crear respaldos) y falla en la bóveda | Para la prueba de destroy, desplegar dev con `"enable_backup": false`. Con respaldos: esperar a que venzan y volver a lanzar; puede seguir fallando sin `ignore_inactive_datasources` (pendiente 86) |
+| Conexión de Private Service Access | Según la [documentación de PSA](https://docs.cloud.google.com/vpc/docs/configure-private-services-access), después de borrar una instancia de Cloud SQL el servicio espera cuatro días antes de liberar sus recursos y la conexión no se borra mientras tanto | `3-networks` falla; volver a lanzar `destroy.yml` pasados cuatro días (`5-workloads` y `4-projects` se saltan) (pendiente 87) |
+| Bucket de la aplicación sin `force_destroy` | Si tiene objetos, el borrado falla | Pendiente 89 |
+| `deletion_policy = "ABANDON"` fuera de un proyecto | Terraform lo suelta y queda en GCP | La comprobación de huérfanos lo ve si está en la carpeta |
+
+**Después del destroy.**
+
+- **El siguiente `apply.yml` vuelve a crear el entorno**: cualquier push a `main` que toque
+  `gcp-datacenter/**` o `.github/workflows/**`, o una ejecución manual. Para que no lo haga,
+  `GCP_ENABLED` a otro valor después del destroy (guía del colaborador, sección H).
+- **IDs de proyecto nuevos antes de recrear.** Según la
+  [documentación de Resource Manager](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),
+  el ID de un proyecto borrado no se puede volver a usar. Con el mismo `project_suffix`, el
+  `apply.yml` siguiente fallaría al crear el proyecto `net-spoke` del entorno y, como los entornos
+  van en cadena, tampoco aplicaría los que vienen después. Antes de recrear, poner un
+  `project_suffix` nuevo (hasta 8 minúsculas o dígitos) en las llaves
+  `stages/3-networks/envs/<env>` y `stages/4-projects/envs/<env>` de `GCP_TFVARS_JSON`
+  (pendiente 88).
+- **`drift.yml` se queja hasta recrear el entorno**: las raíces destruidas planean todo como
+  creación (incidencias `Drift: …`), la de `5-workloads` puede fallar al leer salidas que ya no
+  existen, y el trabajo de recursos no administrados del entorno sale con 2 (ningún proyecto de
+  los estados está en la carpeta). Se cierran a mano después de recrear.
+
+Probado sin GCP (`scripts/selftest.sh`): rechazos de `destroy-guard.sh` (prod, mayúsculas,
+espacios, confirmación distinta, otra rama, raíz de otro entorno o etapa, `..`), los bloqueos y
+avisos de `destroy-plan-check.py` sobre dos planes de destrucción reales de google 6.50.0
+(`plan -destroy -refresh=false` sobre un estado escrito a mano), la huella de dos planes de
+destrucción reales del mismo estado, la clasificación de `destroy-orphans.py` y la estructura de
+`destroy.yml` y del modo destroy de `_terraform-root.yml`. **VERIFICAR** en el primer destroy de
+dev (pendiente 85).
+
 ## 2. Variables, secretos y entornos que crea el equipo
 
 En Settings → Secrets and variables → Actions → **Variables** (de repositorio). Ninguna es
@@ -324,8 +474,8 @@ entorno sin reglas la primera vez que un trabajo lo usa, así que hay que crearl
 | Entorno | Lo usan | Reglas |
 |---|---|---|
 | `common` | apply de `1-org`, `2-security`, `3-networks` (hub) | **Required reviewers** (seguridad y plataforma), "Prevent self-review" y "Deployment branches: `main`" |
-| `dev` | apply de las raíces de dev | Ninguna (automático); "Deployment branches: `main`" recomendado |
-| `qa` | apply de las raíces de qa | Ninguna; corre solo después de dev y de la prueba de humo de dev |
+| `dev` | apply de las raíces de dev; destroy de dev (`destroy.yml`) | Ninguna (automático); "Deployment branches: `main`" recomendado |
+| `qa` | apply de las raíces de qa; destroy de qa (`destroy.yml`) | Ninguna; el apply corre solo después de dev y de la prueba de humo de dev |
 | `prod` | apply de las raíces de prod | **Required reviewers** con dos revisores, "Prevent self-review" y "Deployment branches: `main`" |
 
 Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se vea el plan.
@@ -361,7 +511,9 @@ Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se 
    no empieza: asignar los roles y usar "Re-run failed jobs" en esa ejecución
    (`check-main-tip.sh` lo permite mientras `main` no cambie el despliegue). El trabajo de
    recursos no administrados de `drift.yml` falla igual hasta que la cuenta tenga
-   `cloudasset.viewer` en las cuatro carpetas.
+   `cloudasset.viewer` en las cuatro carpetas. El trabajo de huérfanos de `destroy.yml` (§1.5)
+   usa los mismos roles: lectura del estado de `1-org` y `cloudasset.viewer` en la carpeta del
+   entorno.
 5. Pone `GCP_ENABLED = true`. Desde ese momento:
    - `pr.yml` planea las raíces afectadas por cada PR y comenta el resultado;
    - el siguiente push a `main` (o una ejecución manual de `apply`) planea y aplica 1 → 5,

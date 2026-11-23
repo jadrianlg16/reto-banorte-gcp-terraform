@@ -1,0 +1,5 @@
+HUERFANO cloudkms.googleapis.com/CryptoKeyVersion //cloudkms.googleapis.com/projects/bnt-dev-net-spoke/locations/us-central1/keyRings/manual/cryptoKeys/k/cryptoKeyVersions/1 [ENABLED]
+HUERFANO cloudkms.googleapis.com/KeyRing //cloudkms.googleapis.com/projects/bnt-dev-net-spoke/locations/us-central1/keyRings/manual
+HUERFANO cloudresourcemanager.googleapis.com/Project //cloudresourcemanager.googleapis.com/projects/111111111101 [ACTIVE]
+HUERFANO compute.googleapis.com/Network //compute.googleapis.com/projects/bnt-dev-net-spoke/global/networks/bnt-dev-net-vpc
+HUERFANO compute.googleapis.com/Subnetwork //compute.googleapis.com/projects/bnt-dev-net-spoke/regions/us-central1/subnetworks/bnt-dev-net-app-usc1

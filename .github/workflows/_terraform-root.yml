@@ -1,6 +1,12 @@
 # Flujo reutilizable: plan, Conftest, aprobación y apply de una sola raíz de etapa
 # (CONTRATO §9.3). Lo llama apply.yml una vez por raíz. Ver gcp-datacenter/docs/pipeline.md.
 #
+# Modo destroy (entrada `destroy`, solo la usa destroy.yml): los mismos dos trabajos con
+# `terraform plan -destroy`. Antes de autenticarse, scripts/destroy-guard.sh admite solo raíces
+# envs/dev o envs/qa de las etapas 3 a 5 (prod nunca); después del plan,
+# scripts/destroy-plan-check.py detiene la raíz si algo del estado impediría el borrado
+# (deletion_protection, deletion_policy) y avisa de lo que el plan no ve. Ver pipeline.md §1.5.
+#
 # Dos trabajos:
 #   plan   sin entorno de GitHub: WIF con la cuenta de la etapa, plan guardado, Conftest sobre
 #          el plan y resumen del plan (acciones por dirección y la línea "Plan:") en el resumen
@@ -41,6 +47,11 @@ on:
         description: Entorno de GitHub del apply (common, dev, qa o prod).
         type: string
         required: true
+      destroy:
+        description: Destruir la raíz (plan -destroy). Solo destroy.yml; solo envs/dev o envs/qa.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -57,7 +68,7 @@ defaults:
 
 jobs:
   plan:
-    name: plan ${{ inputs.root }}
+    name: ${{ inputs.destroy && 'plan -destroy' || 'plan' }} ${{ inputs.root }}
     # Defensa adicional: apply.yml ya omite la llamada si GCP_ENABLED no es "true" o si la
     # ejecución no es de main.
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
@@ -71,10 +82,17 @@ jobs:
       vars_fingerprint: ${{ steps.vars.outputs.fingerprint }}
     env:
       ROOT: ${{ inputs.root }}
+      DESTROY: ${{ inputs.destroy }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # check-main-tip.sh necesita la historia de main
+
+      # Modo destroy: solo stages/{3-networks,4-projects,5-workloads}/envs/{dev,qa}, nunca prod.
+      - name: Raíz y entorno que se pueden destruir
+        if: inputs.destroy
+        run: bash scripts/destroy-guard.sh raiz "${TARGET_ENVIRONMENT}" "${ROOT}"
 
       # Una ejecución vieja que se vuelve a correr ("Re-run") trae su github.sha original: si
       # main avanzó con cambios en gcp-datacenter/ o .github/workflows/, no se planea código
@@ -140,9 +158,12 @@ jobs:
         id: plan
         run: |
           cd "${ROOT}"
-          # -detailed-exitcode: 0 sin cambios, 1 error, 2 con cambios.
+          # -detailed-exitcode: 0 sin cambios, 1 error, 2 con cambios. Con -destroy y el estado
+          # vacío (raíz ya destruida) sale con 0: sin cambios.
+          mode=()
+          if [ "${DESTROY}" = "true" ]; then mode=(-destroy); fi
           set +e
-          terraform plan -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
+          terraform plan "${mode[@]}" -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
           code=$?
           set -e
           case "${code}" in
@@ -160,6 +181,12 @@ jobs:
         id: conftest
         run: conftest test "${ROOT}/plan.json" --policy policies --no-color
 
+      # Modo destroy: se detiene antes de pedir la aprobación si el estado impide el borrado.
+      - name: Comprobaciones del plan de destrucción
+        id: destroy_check
+        if: inputs.destroy && steps.plan.outputs.changes == 'true'
+        run: python3 scripts/destroy-plan-check.py "${ROOT}/plan.json" --root "${ROOT}" --summary "${GITHUB_STEP_SUMMARY}"
+
       - name: Resumen del plan (lo que se aprueba)
         if: always()
         env:
@@ -167,17 +194,23 @@ jobs:
           CHANGES: ${{ steps.plan.outputs.changes }}
           FINGERPRINT: ${{ steps.plan.outputs.fingerprint }}
           CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          DESTROY_CHECK_OUTCOME: ${{ steps.destroy_check.outcome }}
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           line=""
           if [ -f "${ROOT}/plan.txt" ]; then
             line="$(grep -E '^(Plan:|No changes\.)' "${ROOT}/plan.txt" | head -n 1 || true)"
           fi
+          title="Plan"
+          if [ "${DESTROY}" = "true" ]; then title="Plan de DESTRUCCIÓN"; fi
           {
-            echo "### Plan de \`${ROOT}\`"
+            echo "### ${title} de \`${ROOT}\`"
             echo
             echo "- Plan: ${PLAN_OUTCOME:-no corrió}${line:+ (${line})}"
             echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
+            if [ "${DESTROY}" = "true" ]; then
+              echo "- Comprobaciones del destroy: ${DESTROY_CHECK_OUTCOME:-no corrió}"
+            fi
             if [ "${CHANGES}" = "true" ]; then
               echo "- Huella: \`${FINGERPRINT}\`"
               echo "- Apply: espera la aprobación del entorno \`${ENVIRONMENT}\` (si tiene revisores)"
@@ -194,7 +227,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   apply:
-    name: apply ${{ inputs.root }}
+    name: ${{ inputs.destroy && 'destroy' || 'apply' }} ${{ inputs.root }}
     needs: plan
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.plan.outputs.changes == 'true'
     runs-on: ubuntu-latest
@@ -206,11 +239,16 @@ jobs:
       ROOT: ${{ inputs.root }}
       REVIEWED_FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
       APPLY_ENVIRONMENT: ${{ inputs.environment }}
+      DESTROY: ${{ inputs.destroy }}
     steps:
       # Mismo commit que el trabajo plan (github.sha es fijo en la ejecución).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # check-main-tip.sh necesita la historia de main
+
+      - name: Raíz y entorno que se pueden destruir
+        if: inputs.destroy
+        run: bash scripts/destroy-guard.sh raiz "${APPLY_ENVIRONMENT}" "${ROOT}"
 
       - name: Variables iguales a las del plan (de repositorio, no del entorno)
         env:
@@ -270,8 +308,10 @@ jobs:
         id: plan
         run: |
           cd "${ROOT}"
+          mode=()
+          if [ "${DESTROY}" = "true" ]; then mode=(-destroy); fi
           set +e
-          terraform plan -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
+          terraform plan "${mode[@]}" -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
           code=$?
           set -e
           if [ "${code}" -ne 2 ]; then
@@ -290,6 +330,11 @@ jobs:
         id: conftest
         run: conftest test "${ROOT}/plan.json" --policy policies --no-color
 
+      - name: Comprobaciones del plan de destrucción que se aplica
+        id: destroy_check
+        if: inputs.destroy
+        run: python3 scripts/destroy-plan-check.py "${ROOT}/plan.json"
+
       # Otra vez justo antes del apply: main pudo avanzar mientras se esperaba la aprobación.
       - name: main no cambió el despliegue desde este commit (antes del apply)
         run: bash scripts/check-main-tip.sh "${GITHUB_SHA}"
@@ -305,12 +350,18 @@ jobs:
         env:
           PLAN_OUTCOME: ${{ steps.plan.outcome }}
           CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          DESTROY_CHECK_OUTCOME: ${{ steps.destroy_check.outcome }}
           APPLY_OUTCOME: ${{ steps.apply.outcome }}
         run: |
+          title="Apply"
+          if [ "${DESTROY}" = "true" ]; then title="Destroy"; fi
           {
-            echo "### Apply de \`${ROOT}\`"
+            echo "### ${title} de \`${ROOT}\`"
             echo
             echo "- Plan igual al revisado (\`${REVIEWED_FINGERPRINT}\`): ${PLAN_OUTCOME:-no corrió}"
             echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
-            echo "- Apply: ${APPLY_OUTCOME:-no corrió}"
+            if [ "${DESTROY}" = "true" ]; then
+              echo "- Comprobaciones del destroy: ${DESTROY_CHECK_OUTCOME:-no corrió}"
+            fi
+            echo "- ${title}: ${APPLY_OUTCOME:-no corrió}"
           } >> "${GITHUB_STEP_SUMMARY}"

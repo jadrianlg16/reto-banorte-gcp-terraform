@@ -1,0 +1,58 @@
+[
+  {
+    "name": "//cloudresourcemanager.googleapis.com/folders/222222222222",
+    "assetType": "cloudresourcemanager.googleapis.com/Folder",
+    "displayName": "dev",
+    "state": "ACTIVE"
+  },
+  {
+    "name": "//cloudresourcemanager.googleapis.com/projects/111111111101",
+    "assetType": "cloudresourcemanager.googleapis.com/Project",
+    "project": "projects/111111111101",
+    "displayName": "bnt-dev-net-spoke",
+    "state": "DELETE_REQUESTED",
+    "folders": ["folders/222222222222"],
+    "additionalAttributes": {"projectId": "bnt-dev-net-spoke"}
+  },
+  {
+    "name": "//cloudresourcemanager.googleapis.com/projects/111111111102",
+    "assetType": "cloudresourcemanager.googleapis.com/Project",
+    "project": "projects/111111111102",
+    "displayName": "bnt-dev-app",
+    "state": "DELETE_IN_PROGRESS",
+    "folders": ["folders/222222222222"],
+    "additionalAttributes": {"projectId": "bnt-dev-app"}
+  },
+  {
+    "name": "//serviceusage.googleapis.com/projects/111111111102/services/compute.googleapis.com",
+    "assetType": "serviceusage.googleapis.com/Service",
+    "project": "projects/111111111102",
+    "displayName": "compute.googleapis.com",
+    "state": "ENABLED"
+  },
+  {
+    "name": "//storage.googleapis.com/bnt-dev-data-app-usc1",
+    "assetType": "storage.googleapis.com/Bucket",
+    "project": "projects/111111111102",
+    "displayName": "bnt-dev-data-app-usc1"
+  },
+  {
+    "name": "//compute.googleapis.com/projects/bnt-dev-net-spoke/global/networks/bnt-dev-net-vpc",
+    "assetType": "compute.googleapis.com/Network",
+    "displayName": "bnt-dev-net-vpc"
+  },
+  {
+    "name": "//compute.googleapis.com/projects/bnt-dev-app/zones/us-central1-a/disks/bnt-dev-app-mig-abcd",
+    "assetType": "compute.googleapis.com/Disk",
+    "project": "projects/111111111102",
+    "displayName": "bnt-dev-app-mig-abcd",
+    "state": "DELETED"
+  },
+  {
+    "name": "//cloudkms.googleapis.com/projects/bnt-otro/locations/us-central1/keyRings/manual/cryptoKeys/k/cryptoKeyVersions/1",
+    "assetType": "cloudkms.googleapis.com/CryptoKeyVersion",
+    "project": "projects/111111111199",
+    "displayName": "1",
+    "state": "DESTROYED"
+  }
+]

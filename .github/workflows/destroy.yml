@@ -1,0 +1,214 @@
+# Destrucción de un entorno de dev o qa, a mano (CONTRATO §9.3; criterio "destroy de dev sin
+# huérfanos"). Ver gcp-datacenter/docs/pipeline.md §1.5.
+#
+# Solo workflow_dispatch, solo desde main y con GCP_ENABLED = "true". Entradas:
+#   entorno       dev o qa. prod no se puede elegir y además lo rechazan scripts/destroy-guard.sh
+#                 (aquí y en cada raíz de _terraform-root.yml) y la condición de cada trabajo.
+#   confirmacion  hay que escribir exactamente el nombre del entorno.
+#
+# Orden (inverso al de apply.yml; cada flecha espera a que el trabajo anterior termine con éxito):
+#   pedido → 5-workloads/envs/<env> → 4-projects/envs/<env> → 3-networks/envs/<env> → huérfanos
+# Cada raíz llama a _terraform-root.yml con destroy: true y la cuenta de su etapa (WIF): un
+# trabajo `plan -destroy` sin entorno (plan guardado, huella, Conftest, comprobaciones de
+# scripts/destroy-plan-check.py y la lista de lo que se destruye en el resumen) y un trabajo
+# `destroy` en el entorno de GitHub del entorno (dev o qa), que vuelve a planear, exige la misma
+# huella, vuelve a comprobar que main no cambió el despliegue (check-main-tip.sh) y aplica ese
+# plan. Una raíz ya destruida planea "sin cambios" y se salta: volver a lanzar el flujo retoma un
+# destroy que falló a medias.
+#
+# Al final, con la cuenta de auditoría (GCP_AUDIT_SERVICE_ACCOUNT), Cloud Asset Inventory lista la
+# carpeta del entorno y scripts/destroy-orphans.py falla si queda algo que no sea esperado.
+#
+# Comparte el grupo de concurrencia de apply.yml: nunca corren a la vez. El siguiente apply.yml
+# (push a main o manual) vuelve a crear el entorno destruido, y necesita un project_suffix nuevo
+# para sus proyectos (los IDs borrados no se reutilizan; pipeline.md §1.5, pendiente 88). Para
+# que no lo recree: GCP_ENABLED a otro valor después del destroy.
+
+name: destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      entorno:
+        description: "Entorno a destruir: dev o qa (prod no se destruye con este flujo)."
+        type: choice
+        options:
+          - dev
+          - qa
+        required: true
+      confirmacion:
+        description: "Escriba el nombre del entorno (dev o qa) para confirmar que quiere destruirlo."
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# El mismo grupo que apply.yml: un destroy no corre mientras corre un apply, ni al revés. GitHub
+# conserva una sola ejecución en espera por grupo y cancela la que esperaba antes (pipeline.md §1.5).
+concurrency:
+  group: apply-gcp-datacenter
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: gcp-datacenter
+
+jobs:
+  gate:
+    name: pedido de destrucción
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Entorno, confirmación, rama y GCP_ENABLED
+        env:
+          ENTORNO: ${{ inputs.entorno }}
+          CONFIRMACION: ${{ inputs.confirmacion }}
+          REF: ${{ github.ref }}
+          GCP_ENABLED: ${{ vars.GCP_ENABLED }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          bash scripts/destroy-guard.sh pedido "${ENTORNO}" "${CONFIRMACION}" "${REF}"
+          if [ "${GCP_ENABLED}" != "true" ]; then
+            echo "::error::GCP_ENABLED no es \"true\": no se destruye nada."
+            exit 1
+          fi
+          {
+            echo "### Destroy de ${ENTORNO}"
+            echo
+            echo "Pedido por \`${ACTOR}\` con la confirmación escrita. Orden: 5-workloads, 4-projects y"
+            echo "3-networks de ${ENTORNO}; después, huérfanos en la carpeta con Cloud Asset Inventory."
+            echo "El siguiente apply.yml vuelve a crear el entorno, con un project_suffix nuevo en"
+            echo "3-networks y 4-projects de ${ENTORNO} (gcp-datacenter/docs/pipeline.md §1.5)."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  workloads:
+    name: ${{ inputs.entorno }} / destruir 5-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && (inputs.entorno == 'dev' || inputs.entorno == 'qa')
+    needs: gate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/5-workloads/envs/${{ inputs.entorno }}
+      stage: 5-workloads
+      environment: ${{ inputs.entorno }}
+      destroy: true
+
+  projects:
+    name: ${{ inputs.entorno }} / destruir 4-projects
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && (inputs.entorno == 'dev' || inputs.entorno == 'qa')
+    needs: workloads
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/4-projects/envs/${{ inputs.entorno }}
+      stage: 4-projects
+      environment: ${{ inputs.entorno }}
+      destroy: true
+
+  networks:
+    name: ${{ inputs.entorno }} / destruir 3-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && (inputs.entorno == 'dev' || inputs.entorno == 'qa')
+    needs: projects
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-networks/envs/${{ inputs.entorno }}
+      stage: 3-networks
+      environment: ${{ inputs.entorno }}
+      destroy: true
+
+  # Huérfanos: lo que quede en la carpeta del entorno después de destruir las tres raíces. Solo
+  # lee (cuenta de auditoría, roles de pipeline.md §3: objectViewer en el bucket de estado y
+  # cloudasset.viewer en la carpeta).
+  orphans:
+    name: ${{ inputs.entorno }} / huérfanos (Cloud Asset)
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && (inputs.entorno == 'dev' || inputs.entorno == 'qa')
+    needs: networks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENV_NAME: ${{ inputs.entorno }}
+      STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+      # El índice de Cloud Asset puede tardar en reflejar los borrados (HYPOTHESIS, pendiente 85):
+      # hasta ORPHAN_ATTEMPTS listados separados por ORPHAN_WAIT_SECONDS mientras queden huérfanos.
+      ORPHAN_ATTEMPTS: "3"
+      ORPHAN_WAIT_SECONDS: "300"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          missing=""
+          for v in GCP_AUDIT_SERVICE_ACCOUNT STATE_BUCKET; do
+            if [ -z "${!v:-}" ]; then
+              missing="${missing} ${v}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::Faltan variables de repositorio:${missing} (docs/pipeline.md §2). Las raíces ya se destruyeron; configurarlas y volver a lanzar destroy.yml (las raíces vacías se saltan)."
+            exit 1
+          fi
+
+      - name: Autenticar con Workload Identity Federation (cuenta de auditoría)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # El estado de 1-org lleva valores sensibles: queda en la carpeta temporal del runner, no se
+      # sube como artefacto y se borra después de leer la carpeta.
+      - name: Carpeta del entorno (salida folder_ids de 1-org)
+        id: folder
+        run: |
+          state="${RUNNER_TEMP}/1-org.tfstate"
+          gcloud storage cp --quiet "gs://${STATE_BUCKET}/1-org/default.tfstate" "${state}"
+          folder="$(jq -r --arg e "${ENV_NAME}" '.outputs.folder_ids.value[$e] // empty' "${state}")"
+          rm -f "${state}"
+          if [ -z "${folder}" ]; then
+            echo "::error::La salida folder_ids de 1-org no tiene la carpeta ${ENV_NAME}."
+            exit 1
+          fi
+          echo "Carpeta de ${ENV_NAME}: ${folder}"
+          echo "folder=${folder}" >> "${GITHUB_OUTPUT}"
+
+      - name: Buscar huérfanos con Cloud Asset Inventory
+        env:
+          FOLDER: ${{ steps.folder.outputs.folder }}
+        run: |
+          assets="${RUNNER_TEMP}/assets.json"
+          for i in $(seq 1 "${ORPHAN_ATTEMPTS}"); do
+            # VERIFICAR-EN-APPLY: qué muestra Cloud Asset de los proyectos en borrado y cuánto tarda
+            # en dejar de listar lo destruido (pendiente 85).
+            gcloud asset search-all-resources --scope="${FOLDER}" --format=json > "${assets}"
+            set +e
+            python3 scripts/destroy-orphans.py --folder "${FOLDER}" --assets "${assets}" > /dev/null
+            code=$?
+            set -e
+            if [ "${code}" -ne 1 ] || [ "${i}" -ge "${ORPHAN_ATTEMPTS}" ]; then
+              break
+            fi
+            echo "Intento ${i} de ${ORPHAN_ATTEMPTS}: quedan recursos; se vuelve a listar en ${ORPHAN_WAIT_SECONDS} s."
+            sleep "${ORPHAN_WAIT_SECONDS}"
+          done
+          {
+            echo "### Huérfanos de ${ENV_NAME} después del destroy"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+          # Sale con 1 si quedan huérfanos y con 2 si el listado no sirve: el trabajo falla.
+          python3 scripts/destroy-orphans.py --folder "${FOLDER}" --assets "${assets}" --summary "${GITHUB_STEP_SUMMARY}"
