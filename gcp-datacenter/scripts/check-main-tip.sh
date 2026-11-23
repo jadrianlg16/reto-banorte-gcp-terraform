@@ -9,8 +9,16 @@
 #   después de otro merge que sí cambia Terraform o los flujos, falla sin planear ni aplicar
 #   código viejo encima de lo que ya aplicó una ejecución más nueva;
 # - un merge que no toca esas rutas (README de la raíz, labs/, la configuración de Dependabot)
-#   no detiene la cadena en curso. apply.yml solo se dispara con cambios en gcp-datacenter/**,
-#   así que ese merge no traería otra ejecución que la retome.
+#   no detiene la cadena en curso. apply.yml solo se dispara con cambios en esas mismas rutas
+#   (gcp-datacenter/** y .github/workflows/**; selftest.sh comprueba que coinciden), así que
+#   ese merge no traería otra ejecución que la retome.
+#
+# Dos comprobaciones, las dos obligatorias: `git log` de las rutas (lista los commits que las
+# tocan) y `git diff` entre el árbol de <sha> y el de la punta. La segunda cubre lo que la
+# primera no ve: `git log -- <rutas>` simplifica la historia y, en un merge cuyo resultado en
+# esas rutas es igual al de uno de sus padres, sigue solo a ese padre; un merge que descarta un
+# cambio de <sha> (resuelto a favor de la otra rama) no aparece en el log aunque el contenido
+# de las rutas ya sea otro.
 #
 # Uso: scripts/check-main-tip.sh <sha> [remoto] [rama]
 # Variables: DEPLOY_PATHS (rutas separadas por espacio, desde la raíz del repositorio).
@@ -57,16 +65,30 @@ fi
 git merge-base --is-ancestor "${sha}" "${tip}" ||
   err 1 "El commit ${sha} no está en ${branch} (punta ${tip}): no se planea ni se aplica."
 
-changed="$(git log --format='%h %s' "${sha}..${tip}" -- "${paths[@]}")"
-if [ -n "${changed}" ]; then
+stale() { # stale <detalle>: la ejecución ya no aplica
   {
     echo "::error::${branch} avanzó desde ${sha} (punta ${tip}) con cambios en ${paths[*]}." \
       "Esta ejecución ya no aplica: la del commit más nuevo planea y aplica desde el principio" \
-      "(apply.yml se dispara con gcp-datacenter/**; si solo cambió .github/workflows/, lanzarla a" \
-      "mano con workflow_dispatch). Commits posteriores que tocan esas rutas:"
-    printf '%s\n' "${changed}"
+      "(apply.yml se dispara con cambios en esas rutas; si esa ejecución no aparece, lanzarla a" \
+      "mano con workflow_dispatch sobre ${branch}). $1"
   } >&2
   exit 1
+}
+
+changed="$(git log --format='%h %s' "${sha}..${tip}" -- "${paths[@]}")" ||
+  err 2 "No se pudo leer la historia entre ${sha} y ${tip}; no se puede comprobar."
+if [ -n "${changed}" ]; then
+  stale "Commits posteriores que tocan esas rutas:
+${changed}"
 fi
+
+# El log simplifica los merges (ver el encabezado): se compara además el contenido.
+git diff --quiet "${sha}" "${tip}" -- "${paths[@]}"
+case $? in
+  0) ;;
+  1) stale "Ningún commit posterior las toca por sí solo, pero su contenido en la punta es otro (un merge descartó o cambió algo). Archivos:
+$(git diff --name-only "${sha}" "${tip}" -- "${paths[@]}")" ;;
+  *) err 2 "No se pudo comparar ${sha} con ${tip}; no se puede comprobar." ;;
+esac
 
 echo "OK: ${branch} avanzó a ${tip}, pero ningún commit posterior a ${sha} toca ${paths[*]}."

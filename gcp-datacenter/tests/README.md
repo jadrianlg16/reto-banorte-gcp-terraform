@@ -290,7 +290,9 @@ nada:
    expresable o si alguna no da lo esperado.
 
 La corre `apply.yml` (trabajo `dev / prueba de humo`) después de aplicar dev y antes de qa, con
-la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`; sus permisos están en `docs/pipeline.md` §3. Local:
+la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`; sus permisos están en `docs/pipeline.md` §3. Las
+pruebas se crean en el proyecto host de dev, que tiene la API
+`networkmanagement.googleapis.com` habilitada por `stages/3-networks/envs/dev`. Local:
 
 ```bash
 TEST_SMOKE=true TEST_E2E_STATE_BUCKET=<bucket> go test -count=1 -v -timeout 25m -run '^TestDevSmoke$' ./e2e

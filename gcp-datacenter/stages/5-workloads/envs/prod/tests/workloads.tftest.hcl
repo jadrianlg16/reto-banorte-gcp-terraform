@@ -777,6 +777,86 @@ run "dev_solo_cloud_run_y_sql" {
   }
 }
 
+# Primera ejecución del pipeline (runbook 01, "Primera ejecución de apply.yml"): el repositorio
+# de imágenes lo crea la etapa 4 en esa misma ejecución, así que todavía no hay imagen que
+# desplegar. Con todo el cómputo apagado el plan sigue siendo válido: datos, observabilidad y
+# respaldo, sin balanceador (la salida lb_ip_address queda en null y la prueba de humo omite
+# esa comprobación).
+run "primera_ejecucion_sin_computo" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    enable_dr           = false
+    dr_active           = false
+    enable_gke          = false
+    enable_mig          = false
+    enable_cloud_run    = false
+    enable_filestore    = false
+    enable_memorystore  = false
+    enable_internal_lb  = false
+    deletion_protection = false
+    gke_node_pools      = {}
+    mig_image           = null
+    cloud_run_image     = null
+    sql_tier            = "db-custom-1-3840"
+    lb_backend_paths    = {}
+    domain_names        = ["app.dev.example.com"]
+    notification_emails = ["alertas-dev@example.com"]
+  }
+
+  assert {
+    condition     = length(module.gke) == 0 && length(module.mig) == 0 && length(module.cloud_run) == 0
+    error_message = "Con los tres interruptores apagados no debe haber cómputo."
+  }
+  assert {
+    condition     = length(module.external_lb) == 0 && length(module.internal_lb) == 0 && output.lb_ip_address == null
+    error_message = "Sin backends no debe haber balanceador y lb_ip_address debe ser null."
+  }
+  assert {
+    condition     = module.cloud_sql.instance_name == "bnt-dev-data-sql-usc1" && output.bucket_names == { data = "bnt-dev-data-app-usc1" }
+    error_message = "Sin cómputo se siguen creando Cloud SQL y el bucket."
+  }
+  assert {
+    condition     = keys(module.backup["this"].plan_ids) == ["sql"]
+    error_message = "Sin cómputo debe quedar solo el plan de respaldo de Cloud SQL."
+  }
+}
+
+# Lo mismo con los valores de prod (enable_dr, Memorystore y Filestore encendidos): el
+# balanceador interno también se apaga, porque exige un backend mig o run.
+run "prod_primera_ejecucion_sin_computo" {
+  command = plan
+
+  variables {
+    enable_gke         = false
+    enable_mig         = false
+    enable_cloud_run   = false
+    enable_internal_lb = false
+    gke_node_pools     = {}
+    mig_image          = null
+    cloud_run_image    = null
+    lb_backend_paths   = {}
+  }
+
+  assert {
+    condition     = length(module.gke) == 0 && length(module.mig) == 0 && length(module.cloud_run) == 0
+    error_message = "Con los tres interruptores apagados no debe haber cómputo."
+  }
+  assert {
+    condition     = length(module.external_lb) == 0 && length(module.internal_lb) == 0 && length(google_certificate_manager_certificate.internal) == 0
+    error_message = "Sin backends no debe haber balanceadores ni certificado interno."
+  }
+  assert {
+    condition     = module.cloud_sql.instance_name == "bnt-prod-data-sql-usc1" && module.cloud_sql.replica_name != null
+    error_message = "Sin cómputo se siguen creando Cloud SQL y su réplica de DR."
+  }
+  assert {
+    condition     = length(module.memorystore) == 1 && length(module.filestore) == 1
+    error_message = "Memorystore y Filestore no dependen del cómputo."
+  }
+}
+
 run "qa_mig_cloud_run_y_redis" {
   command = plan
 

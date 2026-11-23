@@ -218,7 +218,7 @@ tip_run "$r/run" "$sha_a"
 check "check-main-tip: re-run de un commit viejo tras un cambio de Terraform falla" 1 $?
 tip_run "$r/run" "$sha_b"
 check "check-main-tip: el commit B también queda viejo tras C" 1 $?
-tip_commit .github/workflows/x.yml D >/dev/null
+sha_d="$(tip_commit .github/workflows/x.yml D)"
 tip_run "$r/run" "$sha_c"
 check "check-main-tip: un cambio posterior en .github/workflows/ también deja viejo el commit" 1 $?
 gitc "$r/dev" checkout -q -b lado "$sha_a"
@@ -239,6 +239,23 @@ tip_run "$r/shallow2" "$(git -C "$r/shallow2" rev-parse HEAD)"
 check "check-main-tip: clon superficial con el remoto ilegible falla cerrado (2)" 2 $?
 tip_run "$r/run" "0123456789012345678901234567890123456789"
 check "check-main-tip: un sha desconocido es error (2)" 2 $?
+# Merge que descarta los cambios C y D (resuelto a favor de una rama vieja que salió de B): el
+# contenido de las rutas en la punta es igual al de esa rama, `git log -- <rutas>` simplifica la
+# historia siguiendo solo a ese padre y no lista ningún commit posterior a D, pero lo que se
+# desplegaría ya es otro. Lo detecta la comparación de árboles (git diff).
+gitc "$r/dev" checkout -q -b vieja "$sha_b" 2>/dev/null
+echo vieja >"$r/dev/otro.txt"
+gitc "$r/dev" add -A 2>/dev/null && gitc "$r/dev" commit -q -m vieja-fuera-de-las-rutas
+gitc "$r/dev" checkout -q main 2>/dev/null
+gitc "$r/dev" merge -q --no-ff --no-commit vieja >/dev/null 2>&1
+gitc "$r/dev" checkout -q vieja -- gcp-datacenter 2>/dev/null
+gitc "$r/dev" rm -r -q .github/workflows >/dev/null 2>&1
+gitc "$r/dev" commit -q -m "merge que descarta C y D" && git -C "$r/dev" push -q origin HEAD:main 2>/dev/null
+[ "$(git -C "$r/dev" rev-list --count "$sha_d..HEAD")" -ge 2 ] &&
+  [ -z "$(git -C "$r/dev" log --format=%h "$sha_d..HEAD" -- gcp-datacenter .github/workflows)" ]
+check "check-main-tip: (preparación) el log de las rutas no lista el merge que descarta C y D" 0 $?
+tip_run "$r/run" "$sha_d"
+check "check-main-tip: un merge que descarta cambios de las rutas deja viejo el commit (diff de árboles)" 1 $?
 # apply.yml se dispara con las mismas rutas que el script considera del despliegue: si no, un
 # commit que deja vieja a una ejecución no traería otra que la retome.
 "$PY" -c '

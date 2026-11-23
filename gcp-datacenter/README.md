@@ -76,7 +76,7 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 
 | Herramienta | Versión | Uso |
 |---|---|---|
-| Terraform | `>= 1.9` para aplicar; **`>= 1.11` para `terraform test`** (las pruebas usan `override_during = plan`, ADR [0021](docs/adr/0021-pruebas-con-terraform-1-11-y-codigo-con-1-9.md)). El equipo usa 1.16.5; `pr.yml` corre 1.9.8 sin pruebas (`check.sh --skip test`) y 1.16.5 con todo | todas las raíces y módulos |
+| Terraform | `>= 1.9` para aplicar; **`>= 1.11` para `terraform test`** (las pruebas usan `override_during = plan`, ADR [0021](docs/adr/0021-pruebas-con-terraform-1-11-y-codigo-con-1-9.md)). El equipo usa 1.16.5; `pr.yml` corre 1.9.8 sin pruebas (`check.sh --skip test`) y 1.16.5 con todo. Con una versión anterior a 1.11, `terraform init` a mano falla en `stages/0-bootstrap` y en las raíces `envs` al leer sus pruebas: agregar `-test-directory=.sin-pruebas` (un directorio que no existe) al `init`, o usar la versión del pipeline (recomendado: las raíces 1 a 5 guardan su estado con ella) | todas las raíces y módulos |
 | TFLint | 0.65 (0.65.0 en CI) | `scripts/check.sh` |
 | checkov | 3.4 (3.4.6 en CI) | `scripts/check.sh` |
 | Conftest | 0.71.1 en CI | `scripts/policy-check.sh` y Conftest sobre el plan |
@@ -205,7 +205,7 @@ Los números de los comentarios salen de correr estos comandos el 23 nov 2026 de
 - `bash scripts/policy-check.sh` → "83 tests, 83 passed, 0 warnings, 0 failures" y
   "RESULTADO: 27 planes con el resultado esperado." (15 con resultado `pasa` y 12 con
   `rechaza`; 13 de los 27 son recortes de planes reales sin GCP, `ls policies/fixtures | grep -c _real_` → 13).
-- `bash scripts/selftest.sh` → 58 líneas `OK`, 0 `FALLA` y "RESULTADO: todas las comprobaciones
+- `bash scripts/selftest.sh` → 60 líneas `OK`, 0 `FALLA` y "RESULTADO: todas las comprobaciones
   pasaron."
 - `bash scripts/docs.sh --check` → "Resultado: PASS (37)".
 - `ls modules/*/tests/*.tftest.hcl | wc -l` → 24.
@@ -260,5 +260,5 @@ apply. Los números de pendientes remiten a [`docs/pendientes-apply.md`](docs/pe
 | Una VM de prod alcanza on-premises y resuelve su DNS | Dos HA VPN con BGP, anuncios del hub, peering con exportación de rutas, zona de reenvío en el hub y de peering DNS en el spoke; en modo simulado, firewall de `onprem-sim` y delegación del rango de DNS ya construidos | **Pendiente del primer apply** (pendientes 6, 7, 36 y 37). En modo simulado falta crear a mano la VM DNS en `onprem-sim` |
 | Sin hallazgos críticos ni altos en Security Command Center | Políticas de organización, checkov en cada PR, notificación de hallazgos altos y críticos a Pub/Sub | **Pendiente del primer apply** y de activar SCC (pendiente 2). checkov sin GCP no equivale a SCC |
 | Simulacro de DR dentro del RTO | Réplica de Cloud SQL, bucket de doble región, `dr_active`; estado multirregional, VPN de DR y balanceador interno por región (ADR 0022); [runbook 04](docs/runbooks/04-conmutacion-a-dr.md) con tabla de tiempos | **Pendiente del primer apply.** RTO ≤ 4 h y RPO ≤ 15 min son objetivos sin medir |
-| Cero recursos creados a mano | Trabajo de recursos no administrados en `drift.yml` (Cloud Asset Inventory frente a los estados) | **Construido y probado con datos de ejemplo** (`bash scripts/selftest.sh`, 23 nov 2026 → 58 OK, 0 FALLA); **pendiente** correrlo contra una carpeta real (pendiente 49) |
+| Cero recursos creados a mano | Trabajo de recursos no administrados en `drift.yml` (Cloud Asset Inventory frente a los estados) | **Construido y probado con datos de ejemplo** (`bash scripts/selftest.sh`, 23 nov 2026 → 60 OK, 0 FALLA); **pendiente** correrlo contra una carpeta real (pendiente 49) |
 | Cada módulo tiene README, ejemplo y prueba | Estructura de §4.5 del contrato | **Demostrado sin GCP:** los 24 módulos tienen `README.md`, `examples/basic/main.tf` y `tests/*.tftest.hcl` (`ls modules/*/tests/*.tftest.hcl \| wc -l` → 24, 23 nov 2026); `bash scripts/docs.sh --check` → `PASS (37)` (23 nov 2026). Las pruebas exigen Terraform 1.11 o mayor |

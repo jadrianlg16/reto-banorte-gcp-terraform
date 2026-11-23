@@ -71,4 +71,15 @@ y 5.
   pasan) y con 1.9.8; "1.11 o mayor" sale de `override_during`, y algunas aserciones además
   dependen de que `&&` no evalúe su lado derecho, que es de una versión posterior. Tampoco hay
   evidencia de `pr.yml` en GitHub: su primera ejecución lo demuestra o lo tumba.
-- Primer apply: nada específico.
+- Primer apply (agregado el 2026-11-23): con Terraform anterior a 1.11, un `terraform init` a
+  mano falla en las raíces cuyas pruebas usan `override_during` (`stages/0-bootstrap` y las
+  raíces `envs` de las etapas 3, 4 y 5), porque `init` también lee `tests/*.tftest.hcl`.
+  Comprobado sin GCP el 2026-11-23 con el binario 1.9.8 sobre una copia de
+  `stages/0-bootstrap` (backend local, `terraform.tfvars.example`, token ficticio): `terraform
+  init` termina con `Error: Unsupported argument … override_during`; `terraform init
+  -test-directory=.sin-pruebas` (un directorio que no existe) termina bien y `terraform plan
+  -refresh=false` da "Plan: 71 to add, 0 to change, 0 to destroy". Con 1.10 no se probó
+  (HIPÓTESIS: falla igual, `override_during` es de 1.11.0). El pipeline no se ve afectado (usa
+  1.16.5). Para quien aplica a mano (etapa 0, runbooks 01 y 04): usar la versión del pipeline
+  o agregar `-test-directory=.sin-pruebas` a cada `terraform init`; queda dicho en el README y
+  en esos runbooks.

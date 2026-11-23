@@ -9,8 +9,9 @@ por variables (`environment`, `spoke_supernet`, `subnet_cidrs`, `enable_dr`).
 
 - Proyecto `<prefix>-<env>-net-spoke[-<project_suffix>]` en la carpeta del entorno
   (`folder_ids[env]` de `1-org`), habilitado como host de Shared VPC (módulo
-  `project-factory`), con las APIs de Compute, DNS, Service Networking y GKE (un clúster de un
-  proyecto de servicio sobre Shared VPC exige la API también en el host).
+  `project-factory`), con las APIs de Compute, DNS, Service Networking, GKE (un clúster de un
+  proyecto de servicio sobre Shared VPC exige la API también en el host) y Network Management
+  (las Connectivity Tests de la prueba de humo de dev se crean en este proyecto).
 - VPC `<prefix>-<env>-net-spoke` (módulo `network-spoke`): subredes `app` (rangos secundarios
   `pods` y `services`), `run` y `proxy` (proxy-only) en la región primaria, y sus `*_dr` en la
   región de DR solo con `enable_dr = true`; Private Google Access y flow logs al 50 %

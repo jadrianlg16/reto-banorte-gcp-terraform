@@ -15,7 +15,9 @@ Contenido:
 3. [Otros pendientes detectados al documentar](#3-otros-pendientes-detectados-al-documentar),
    puntos 19 a 30; y
    [3.5 Agregados por la ronda de correcciones del 21 nov 2026](#35-agregados-por-la-ronda-de-correcciones-del-21-nov-2026),
-   puntos 31 a 54.
+   puntos 31 a 54; y
+   [3.6 Agregados por la revisión del 23 nov 2026](#36-agregados-por-la-revisión-del-23-nov-2026),
+   punto 55.
 4. [Marcadores `VERIFICAR-EN-APPLY` del código](#4-marcadores-verificar-en-apply-del-código),
    por etapa y módulo.
 5. [Alcance no cubierto y limitaciones conocidas](#5-alcance-no-cubierto-y-limitaciones-conocidas).
@@ -224,7 +226,9 @@ Qué: la etapa 0 usa las credenciales de aplicación de una persona sin proyecto
 rechazar llamadas con credenciales de usuario sin proyecto de cuota.
 Dónde: `stages/0-bootstrap/providers.tf`.
 Si falla: `gcloud auth application-default set-quota-project <proyecto-existente>` con un
-proyecto donde la persona tenga `serviceusage.services.use` (propuesta).
+proyecto donde la persona tenga `serviceusage.services.use` (propuesta). En una organización
+nueva puede no haber ninguno: si el apply ya creó el proyecto semilla y habilitó sus APIs,
+sirve ese, y se repite el apply (runbook 01, paso 3).
 
 **23. SCC activo antes de la etapa 1 (HYPOTHESIS).**
 Qué: `google_scc_v2_organization_notification_config` probablemente falla si SCC no está
@@ -477,6 +481,24 @@ Qué: que la cuenta `GCP_AUDIT_SERVICE_ACCOUNT` (creada a mano) tenga los roles 
 de [`pipeline.md`](pipeline.md) §3 y que `TestDevSmoke` pase después del apply de dev.
 Dónde: [`pipeline.md`](pipeline.md) §1.2 y §3; `tests/e2e/smoke_test.go`.
 Si falla: ajustar los roles de la cuenta; si la prueba falla, qa no se aplica.
+Agregado el 23 nov 2026 (revisión sin GCP; todo HYPOTHESIS salvo lo que dice "comprobado"):
+- Comprobado en el código: ninguna etapa habilitaba `networkmanagement.googleapis.com` y las
+  Connectivity Tests se crean en el proyecto host de dev. Ahora la habilita
+  `stages/3-networks/envs/*/main.tf` (lista `apis` del proyecto). Falta verificar que con la
+  API en el host baste (y no haga falta también en el proyecto de la cuenta de auditoría).
+- Comprobado en el código: los roles de la cuenta sobre carpetas, hub, host de dev y proyectos
+  de servicio de dev no se pueden asignar antes de la primera ejecución, porque esos recursos
+  los crea el pipeline. Orden en `pipeline.md` §3 y runbook 01, "Primera ejecución".
+- La comprobación dev → on-premises exige un túnel VPN en cada traza y, después de él, solo
+  admite el descarte `FIREWALL_RULE` (`routedThroughVPN`, `tests/e2e/connectivity_test.go`).
+  `onprem-sim` no tiene ninguna VM en `192.168.0.10` (§5): si la API termina la traza con otra
+  causa (por ejemplo, una de dirección interna desconocida), la prueba falla aunque la ruta
+  exista. Si pasa: revisar la traza, seguir con `omitir_prueba_de_humo = true` y ajustar la
+  lista de causas admitidas con un PR revisado por seguridad (`tests/e2e/` es suyo).
+- Un paso `VIEWER_PERMISSION_MISSING` falla la prueba: indica que a la cuenta le falta lectura
+  sobre el proyecto de ese paso. La comprobación Internet → balanceador recorre recursos del
+  proyecto de servicio de dev, donde la lista de `pipeline.md` §3 solo da `cloudsql.viewer`;
+  si aparece ese paso, agregar `roles/compute.viewer` ahí (propuesta).
 
 **51. Primera corrida de `pr.yml` (ADR 0021 y 0025).**
 Qué: que la pata `estático (terraform 1.9.8)` pase con `--skip test` y que `plan-gate` dé verde
@@ -534,6 +556,32 @@ paso 7 del runbook 04 vuelve a contar su emisión dentro del RTO.
 
 ---
 
+## 3.6 Agregados por la revisión del 23 nov 2026
+
+**55. Primera ejecución de `apply.yml` con los valores de ejemplo (HYPOTHESIS).**
+Qué: lo que no trae `GCP_TFVARS_JSON` se toma de los `terraform.tfvars.example`, y varios
+marcadores de ejemplo nombran cosas que no existen. Se espera, sin haberlo visto en GCP, que:
+- `5-workloads` falle al crear el servicio de Cloud Run (`enable_cloud_run = true` en los tres
+  ejemplos) porque `cloud_run_image` apunta a un repositorio de ejemplo y, aun con el nombre
+  real, el repositorio lo crea la etapa 4 en esa misma ejecución y está vacío; lo mismo la
+  plantilla del MIG de qa y prod con `mig_image = projects/example-images/...`;
+- `4-projects` falle al asignar `roles/artifactregistry.writer` al publicador de ejemplo
+  (`bnt-ci-app@example-cicd…`, cuenta inexistente);
+- `1-org` falle al asignar roles a los grupos `@example.com`, y que un
+  `directory_customer_id` de ejemplo deje `iam.allowedPolicyMemberDomains` apuntando a otro
+  cliente;
+- el clúster de GKE de prod rechace un `gke_authenticator_security_group` que no existe.
+Comprobado sin GCP (proveedores simulados, 23 nov 2026): con `enable_gke`, `enable_mig` y
+`enable_cloud_run` en `false` (y `enable_internal_lb = false` en prod) la raíz de `5-workloads`
+planea sin errores (`primera_ejecucion_sin_computo` y `prod_primera_ejecucion_sin_computo`).
+Dónde: [`pipeline.md`](pipeline.md) §2, "Marcadores de los ejemplos" y "Primera ejecución";
+runbook [01](runbooks/01-arranque-etapa-0.md), "Primera ejecución de `apply.yml`";
+`stages/*/terraform.tfvars.example`.
+Si falla: corregir el valor en `GCP_TFVARS_JSON` y lanzar `apply.yml` de nuevo (las raíces ya
+aplicadas dan "sin cambios"). Un apply que falla a medias deja en el estado lo que sí creó.
+
+---
+
 ## 4. Marcadores `VERIFICAR-EN-APPLY` del código
 
 Conteo al 21 nov 2026, desde `gcp-datacenter/`:
@@ -565,7 +613,7 @@ indicación".
 | `service_accounts.tf:91` | `init`/`plan`/`apply` del backend con las condiciones de §6.2 (punto 1) | Carpetas administradas con IAM propio por prefijo |
 | `service_accounts.tf:211` | Permisos del rol personalizado `<prefix>TfKmsSecretIamGranter` admitidos en roles personalizados (punto 33) | Ver punto 33 |
 | `service_accounts.tf:237` | Permisos del rol personalizado `<prefix>TfSecretContainerAdmin` admitidos en roles personalizados (punto 33) | Ver punto 33 |
-| `wif.tf:36` | Que el mapeo de `attribute.environment` no falle en trabajos sin entorno de GitHub | Sin indicación |
+| `wif.tf:36` | Que el mapeo de `attribute.environment` no falle en trabajos sin entorno de GitHub | Sin indicación en el código. Se notaría en el primer trabajo `plan 1-org` (sin entorno): falla el paso de autenticación. Propuesta: quitar del mapeo `attribute.environment` (ningún `principalSet` ni condición lo usa hoy) y volver a aplicar la etapa 0 a mano (runbook 01, "Cambios posteriores") |
 
 ### Etapa 1 (`stages/1-org`)
 

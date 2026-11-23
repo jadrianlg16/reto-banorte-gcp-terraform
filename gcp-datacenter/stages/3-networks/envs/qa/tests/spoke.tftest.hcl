@@ -197,6 +197,12 @@ run "spoke_dev_sin_dr" {
     error_message = "El proyecto debe ser host (no servicio) de Shared VPC y tener Service Networking."
   }
 
+  # Las Connectivity Tests de la prueba de humo de dev se crean en el proyecto host.
+  assert {
+    condition     = contains(module.project.enabled_apis, "networkmanagement.googleapis.com")
+    error_message = "El proyecto host debe tener la API de Network Management (Connectivity Tests de la prueba de humo)."
+  }
+
   # Reglas leídas de los recursos de la política de red (salida rules del módulo firewall).
   assert {
     condition = (

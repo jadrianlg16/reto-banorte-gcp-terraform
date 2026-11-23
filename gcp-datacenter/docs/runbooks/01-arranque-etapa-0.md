@@ -10,7 +10,7 @@ Command Center y dejar GitHub listo para aplicar las etapas 1 a 5.
 
 Nada de esto se ha ejecutado todavía: los pasos son el procedimiento diseñado, pendiente de
 verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2, 13, 22, 23,
-27, 31, 32, 33 y 50).
+27, 31, 32, 33, 50 y 55).
 
 ## Cuándo usarlo
 
@@ -21,8 +21,14 @@ verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2,
 
 ## Prerrequisitos
 
-- Herramientas del [README](../../README.md#herramientas): Terraform `>= 1.9`, `gcloud`, `gh`
-  (GitHub CLI) con sesión en el repositorio.
+- Herramientas del [README](../../README.md#herramientas): Terraform, `gcloud`, `gh`
+  (GitHub CLI) con sesión en el repositorio. Terraform: la versión del pipeline (1.16.5) o, como
+  mínimo, 1.11. El código declara `>= 1.9`, pero con una versión anterior a 1.11 `terraform
+  init` falla en esta raíz al leer `tests/0-bootstrap.tftest.hcl` (`Unsupported argument …
+  override_during`; comprobado con 1.9.8, ADR 0021); en ese caso, agregar
+  `-test-directory=.sin-pruebas` (un directorio que no existe) a **cada** `terraform init` de
+  este runbook. Usar siempre la misma versión para la etapa 0: Terraform no abre un estado
+  escrito por una versión más nueva.
 - Organización, cuenta de facturación y los siete grupos de Cloud Identity
   ([README](../../README.md#google-cloud)).
 - Persona administradora con, en la organización, `roles/resourcemanager.organizationAdmin`,
@@ -105,7 +111,10 @@ Todas las rutas son relativas a `gcp-datacenter/`.
    lectura ocurra en el apply y no en el plan, cuando el proyecto aún no existe; que la API lo
    acepte está por verificar (`main.tf:116`, pendiente 27). Si una API rechaza la llamada por
    falta de proyecto de cuota (HYPOTHESIS, pendiente 22; la API de políticas de denegación es
-   el punto 32): `gcloud auth application-default set-quota-project <proyecto-existente>`.
+   el punto 32): `gcloud auth application-default set-quota-project <proyecto-existente>`. En
+   una organización nueva puede no haber ningún proyecto: si el apply ya creó el proyecto
+   semilla y habilitó sus APIs, sirve ese (`<prefix>-bootstrap-seed[-<sufijo>]`); después,
+   repetir `terraform plan` y `terraform apply` (el apply continúa con lo que falta).
 
 4. Migrar el estado al bucket. El nombre del bucket se toma **antes** de borrar el override:
    después, `terraform output` falla con `Backend initialization required` (comprobado sin GCP,
@@ -169,17 +178,23 @@ Todas las rutas son relativas a `gcp-datacenter/`.
 
    `GCP_TFVARS_JSON` lleva `{"common": {...}, "stages/1-org": {...}, ...}` con todos los valores
    reales de cada raíz (incluido `state_bucket` en `common` y `workloads_service_account` en las
-   raíces de `4-projects`). Crear los entornos `common`, `dev`, `qa` y `prod` (`common` y `prod`
-   con revisores obligatorios), la protección de `main` con las comprobaciones obligatorias
-   (incluida `plan-gate`) de `pipeline.md` §4, y la cuenta de auditoría
-   `GCP_AUDIT_SERVICE_ACCOUNT` con sus roles de solo lectura y su `principalSet` por
-   `attribute.repository_id` (`pipeline.md` §3, paso 4; la etapa 0 no la crea):
+   raíces de `4-projects`). Lo que no traiga se toma de los `terraform.tfvars.example`: la tabla
+   de marcadores que hay que reemplazar y los interruptores de la primera ejecución
+   (`enable_cloud_run = false` y `enable_mig = false` en `5-workloads`, porque todavía no hay
+   imágenes publicadas) están en `pipeline.md` §2. Crear los entornos `common`, `dev`, `qa` y
+   `prod` (`common` y `prod` con revisores obligatorios), la protección de `main` con las
+   comprobaciones obligatorias (incluida `plan-gate`) de `pipeline.md` §4, y la cuenta de
+   auditoría `GCP_AUDIT_SERVICE_ACCOUNT` con su `principalSet` por `attribute.repository_id`
+   (`pipeline.md` §3, paso 4; la etapa 0 no la crea):
 
    ```bash
    gh variable set GCP_AUDIT_SERVICE_ACCOUNT --body "<cuenta>@<proyecto>.iam.gserviceaccount.com"
    ```
 
-   Sin esa cuenta, la prueba de humo de dev falla y qa y prod no se aplican.
+   De sus roles de solo lectura, en este momento solo se puede asignar el del bucket de estado:
+   las carpetas, el hub, el host de dev y los proyectos de servicio de dev todavía no existen
+   (los crean las etapas 1, 3 y 4). El resto se asigna durante la primera ejecución (abajo).
+   Sin esos roles, la prueba de humo de dev falla y qa y prod no se aplican.
 
 10. Encender el pipeline, al final y solo con lo anterior listo.
 
@@ -187,6 +202,46 @@ Todas las rutas son relativas a `gcp-datacenter/`.
     gh variable set GCP_ENABLED --body "true"
     gh workflow run apply.yml --ref main
     ```
+
+### Primera ejecución de `apply.yml`
+
+Lo que la primera ejecución tiene de distinto (nada de esto se ha ejecutado; pendientes 50 y 55):
+
+- **Aprobaciones.** `1-org`, `2-security` y `3-networks` (hub) piden una aprobación cada una en
+  el entorno `common`, con el resumen del plan a la vista. Si el plan de GitHub del repositorio
+  no admite revisores obligatorios en entornos (repositorio privado, `pipeline.md` §4, punto 3),
+  **no hay pausa**: la ejecución aplica de `1-org` a prod sin detenerse. Decidirlo antes del
+  paso 10 (pendiente 12).
+- **Roles de la cuenta de auditoría.** Asignarlos a medida que existan los recursos
+  (`pipeline.md` §3, "Orden"): `roles/cloudasset.viewer` en las carpetas y
+  `roles/compute.networkViewer` en el hub después de `1-org`; los roles sobre el host de dev
+  después de `dev / 3-networks`; `roles/cloudsql.viewer` en los proyectos de servicio de dev
+  después de `dev / 4-projects`. Si `dev / prueba de humo` falla por permisos, asignar lo que
+  falte y usar "Re-run failed jobs".
+- **Sin imágenes.** `5-workloads` corre con `enable_cloud_run = false` y `enable_mig = false`
+  hasta publicar las imágenes en los repositorios que crea la etapa 4 (runbook
+  [02](02-alta-proyecto-aplicacion.md), pasos 3 y 4). Sin cómputo no hay balanceador externo y
+  la prueba de humo omite esa comprobación; las de Cloud SQL y on-premises simulado sí corren.
+- **Prueba de humo hacia on-premises simulado.** Exige que cada traza pase por un túnel VPN y,
+  después de él, no admite otro descarte que `FIREWALL_RULE`. En `onprem-sim` no hay ninguna VM
+  en `192.168.0.10`: si Connectivity Tests termina la traza con otra causa (HIPÓTESIS, pendiente
+  50), la prueba falla aunque la ruta exista. Revisar la traza en el registro del trabajo y, si
+  la ruta por la VPN está, seguir con una ejecución manual con `omitir_prueba_de_humo = true`
+  y abrir un PR que ajuste `routedThroughVPN` (`tests/e2e/connectivity_test.go`).
+- **Otros flujos.** Con `GCP_ENABLED = true`, `drift.yml` (diario) y los `plan` de `pr.yml`
+  fallan en las raíces que leen el estado de una etapa que todavía no se aplicó
+  (`terraform_remote_state` sin estado). Es esperado hasta que la primera ejecución termine en
+  prod.
+- **Si un trabajo falla.** Depende de cuál (leído de `_terraform-root.yml`, sin ejecutar):
+  - `plan <raíz>` o `dev / prueba de humo`: no cambiaron nada. Corregir la causa (un permiso,
+    por ejemplo) y usar "Re-run failed jobs".
+  - `apply <raíz>` a medias: lo que sí se creó queda en el estado. "Re-run failed jobs" no
+    sirve: vuelve a correr solo el `apply`, que compara su plan nuevo (ya sin lo creado) y las
+    variables con las huellas que guardó el `plan` de la ejecución original, y falla sin
+    aplicar. Corregir la causa y lanzar `apply.yml` de nuevo (`gh workflow run apply.yml --ref
+    main`): planea todo otra vez, las raíces al día dan "sin cambios" y la que quedó a medias
+    muestra solo lo que falta. Lo mismo si la corrección es un cambio de `GCP_TFVARS_JSON`.
+  - Si la corrección es un cambio de código, el merge trae su propia ejecución desde `1-org`.
 
 ## Verificación
 

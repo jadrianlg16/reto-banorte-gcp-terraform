@@ -13,7 +13,7 @@ real puede probar está marcado **VERIFICAR**.
 | Flujo | Disparo | Sin GCP (siempre) | Con `GCP_ENABLED = true` |
 |---|---|---|---|
 | `pr.yml` | Pull request | `scripts/check.sh` con Terraform 1.9.8 (fmt, validate, tflint, checkov; sin `terraform test`) y con 1.16.5 (todo, incluido `terraform test`); `scripts/policy-check.sh`; `scripts/selftest.sh`; `scripts/docs.sh --check`; `plan-gate` | Plan por raíz afectada (`scripts/affected-roots.sh`), Conftest sobre el plan, comentario en el PR con resumen y costo (Infracost); `plan-gate` resume los planes |
-| `apply.yml` | Push a `main` con cambios en `gcp-datacenter/**`, o manual | Solo el trabajo `GCP habilitado`, que avisa que no se aplica nada | Por raíz, de 1 a 5: plan sin entorno y apply aprobado en su entorno (abajo); prueba de humo de dev antes de qa |
+| `apply.yml` | Push a `main` con cambios en `gcp-datacenter/**` o `.github/workflows/**`, o manual | Solo el trabajo `GCP habilitado`, que avisa que no se aplica nada | Por raíz, de 1 a 5: plan sin entorno y apply aprobado en su entorno (abajo); prueba de humo de dev antes de qa |
 | `drift.yml` | Diario (12:17 UTC) y manual | Nada | `plan -detailed-exitcode -lock=false` por raíz con incidencia `drift`; recursos no administrados por entorno (Cloud Asset Inventory) |
 | `terratest.yml` | Nocturno (06:41 UTC), manual y etiquetas `modules/<módulo>/vX.Y.Z` | `go vet ./...` y `go test -run XXX ./...` (solo compila) en `tests/`; si no hay `tests/go.mod`, avisa y termina en verde | Pruebas reales de Terratest sin `tests/e2e` (con una etiqueta, solo las del módulo); falla si se omiten más pruebas que `TERRATEST_MAX_SKIPS` |
 | `_terraform-root.yml` | Solo `workflow_call` | — | Trabajos `plan` y `apply` de una raíz; lo llama `apply.yml` |
@@ -104,7 +104,14 @@ código de ese commit encima de lo que ya aplicó una ejecución más nueva. Reg
 - `github.sha` está en `main` (si no, falla);
 - ningún commit posterior de `main` cambia `gcp-datacenter/` ni `.github/workflows/` (si
   alguno lo hace, falla y lista esos commits). Un merge que no toca esas rutas (README de la
-  raíz, `labs/`, `.github/dependabot.yml`) no detiene la ejecución en curso.
+  raíz, `labs/`, `.github/dependabot.yml`) no detiene la ejecución en curso;
+- el contenido de esas rutas en la punta de `main` es igual al de `github.sha` (`git diff`
+  entre los dos árboles; si no, falla y lista los archivos). Cubre lo que el `git log` por rutas
+  no ve: en un merge cuyo resultado en esas rutas es igual al de uno de sus padres, `git log`
+  sigue solo a ese padre, así que un merge que descarta un cambio (resuelto a favor de la otra
+  rama) no aparece en el listado aunque lo que se desplegaría ya es otro. Reproducido sin
+  GitHub el 23 nov 2026 (`scripts/selftest.sh`, caso "un merge que descarta cambios de las
+  rutas").
 
 Son las mismas rutas con las que se dispara `apply.yml` (`paths` del `push`; `selftest.sh`
 comprueba que coinciden). Por eso un commit que deja vieja a una ejecución siempre encola otra:
@@ -129,8 +136,8 @@ el clon es superficial, el script intenta `git fetch --unshallow` y, si no lo lo
 (falla cerrado), igual que con un remoto ilegible o un commit desconocido. Usa la credencial que
 deja `actions/checkout` (no se pone `persist-credentials: false`). Probado sin GitHub en
 `scripts/selftest.sh` con un remoto local: punta, merge ajeno a las rutas, cambio de Terraform,
-cambio de flujo, commit fuera de `main`, clon superficial y remoto ilegible. **VERIFICAR** en la
-primera ejecución real.
+cambio de flujo, commit fuera de `main`, clon superficial, remoto ilegible y merge que descarta
+cambios de las rutas. **VERIFICAR** en la primera ejecución real.
 
 Por qué se vuelve a planear en vez de pasar `tfplan` entre trabajos: el archivo del plan y su
 JSON llevan los valores sensibles en claro, y un artefacto de Actions lo descarga cualquiera con
@@ -264,6 +271,37 @@ en ningún lado.
 `GCP_TFVARS_JSON` tiene que llevar todos los valores reales: lo que no traiga se toma de
 `terraform.tfvars.example`, que solo tiene valores de ejemplo.
 
+**Marcadores de los ejemplos que hay que reemplazar antes de la primera ejecución.** Lista
+sacada de los `terraform.tfvars.example` el 23 nov 2026. La columna "Si queda el ejemplo" dice
+lo que valida Terraform; lo que diga la API de GCP es HIPÓTESIS hasta el primer apply
+(pendiente 55).
+
+| Llave de `GCP_TFVARS_JSON` | Variables | Si queda el ejemplo |
+|---|---|---|
+| `common` | `org_id`, `billing_account`, `state_bucket`; `prefix` si la etapa 0 usó otro; `project_suffix` si los IDs de proyecto lo necesitan para ser únicos | `000000000000` y `000000-000000-000000` no existen; `state_bucket` de ejemplo solo coincide con `prefix = "bnt"` sin sufijo |
+| `stages/1-org` | `directory_customer_id`, `groups` (los siete grupos reales), `budget_amount` | `directory_customer_id` es el único cliente que admite `iam.allowedPolicyMemberDomains`: con el marcador `C00000000` la política rechazaría a los grupos y cuentas propios. Los grupos `@example.com` no existen |
+| `stages/2-security` | `access_policy_id` (si la organización ya tiene política, runbook 01 paso 8), `secret_names` | Con una política existente y `access_policy_id = null`, la etapa intenta crear otra |
+| `stages/3-networks` y `stages/3-networks/envs/<env>` | Ninguna obligatoria con on-premises simulado; `labels` | Etiquetas `example-team` y `example-cc` en los recursos |
+| `stages/4-projects/envs/<env>` | `workloads_service_account` (salida `stage_service_accounts["5-workloads"]` de la etapa 0), `artifact_registry_publishers` | El correo de ejemplo solo coincide con `prefix = "bnt"` sin `project_suffix` en la etapa 0 (con otro proyecto la validación pasa y la etapa 5 falla por permisos). El publicador de ejemplo (`bnt-ci-app@example-cicd…`) no existe: `{}` o identidades reales |
+| `stages/5-workloads/envs/<env>` | `cloud_run_image`, `mig_image` (qa y prod), `gke_authenticator_security_group` y `gke_master_authorized_networks` (prod), `domain_names`, `internal_domain_names` (prod), `notification_emails` | Las imágenes de ejemplo apuntan a proyectos `example-*` que no son del equipo (ver abajo); con dominios de ejemplo los certificados no se emiten; las alertas irían a `@example.com` |
+
+No poner `labels` en `common`: cada raíz valida las suyas (en `5-workloads`, `labels.app` tiene
+que ser igual a `application`) y `common` las pisaría en todas.
+
+**Primera ejecución: sin imágenes todavía.** El repositorio de Artifact Registry de cada
+aplicación lo crea `4-projects/envs/<env>` en la misma ejecución que después aplica
+`5-workloads/envs/<env>`, así que en la primera ejecución no puede haber una imagen publicada.
+Los ejemplos de dev, qa y prod traen `enable_cloud_run = true` (y qa y prod, `enable_mig = true`
+con una imagen de ejemplo). Para la primera ejecución, en la llave de cada raíz de
+`5-workloads`: `enable_cloud_run = false` y `enable_mig = false`; en prod, además,
+`enable_internal_lb = false` (el balanceador interno exige un backend `mig` o `run`) y
+`enable_gke = false` mientras no exista el grupo `gke-security-groups@<dominio>`. Con todo el
+cómputo apagado la raíz sigue planeando: datos, observabilidad y respaldo, sin balanceadores
+(pruebas `primera_ejecucion_sin_computo` y `prod_primera_ejecucion_sin_computo` de
+`stages/5-workloads/envs/*/tests/`, con proveedores simulados). Después, el runbook
+[02](runbooks/02-alta-proyecto-aplicacion.md), pasos 3 y 4: publicar la imagen, cambiar la
+variable y lanzar `apply.yml` otra vez.
+
 **Solo variables de repositorio, nunca de entorno.** `GCP_TFVARS_JSON`,
 `GCP_STAGE_SERVICE_ACCOUNTS` y `GCP_STATE_BUCKET` (y en general todas las de esta tabla) se
 definen solo a nivel de repositorio. El trabajo `apply` corre en un entorno de GitHub y el de
@@ -308,7 +346,22 @@ Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se 
    - `roles/networkmanagement.admin` en el proyecto host de dev (crear y borrar las
      Connectivity Tests), `roles/compute.networkViewer` en los proyectos host de dev y del hub,
      y `roles/cloudsql.viewer` en los proyectos de servicio de dev;
-   - la API `cloudasset.googleapis.com` habilitada en el proyecto de cuota de la cuenta.
+   - la API `cloudasset.googleapis.com` habilitada en el proyecto de cuota de la cuenta. La API
+     `networkmanagement.googleapis.com` del proyecto host (donde se crean las Connectivity
+     Tests) la habilita `3-networks/envs/<env>`; no se habilita a mano.
+
+   **Orden.** Solo el bucket de estado y el proyecto semilla existen después de la etapa 0. Las
+   carpetas y el proyecto del hub existen después del apply de `1-org`; el host de dev, después
+   de `dev / 3-networks`; los proyectos de servicio de dev, después de `dev / 4-projects`. Por
+   eso, antes de encender el pipeline solo se pueden crear la cuenta, su
+   `workloadIdentityUser` y el rol sobre el bucket; el resto se asigna durante la primera
+   ejecución, a medida que existen los recursos (los da una persona con
+   `resourcemanager.projectIamAdmin` o administración de la organización; las personas de los
+   grupos solo tienen lectura). Si `dev / prueba de humo` corre antes de que estén, falla y qa
+   no empieza: asignar los roles y usar "Re-run failed jobs" en esa ejecución
+   (`check-main-tip.sh` lo permite mientras `main` no cambie el despliegue). El trabajo de
+   recursos no administrados de `drift.yml` falla igual hasta que la cuenta tenga
+   `cloudasset.viewer` en las cuatro carpetas.
 5. Pone `GCP_ENABLED = true`. Desde ese momento:
    - `pr.yml` planea las raíces afectadas por cada PR y comenta el resultado;
    - el siguiente push a `main` (o una ejecución manual de `apply`) planea y aplica 1 → 5,

@@ -59,7 +59,9 @@ No conmutar ante:
   estado; la etapa 5 solo lee `2-security`, `3-networks/<env>` y `4-projects/<env>`) y ver los
   túneles y el router del hub (`roles/compute.viewer` en el proyecto `net-hub`; la etapa 5 solo
   tiene `networkViewer` en el host del spoke).
-- `gcloud`, `gh`, `jq` y Terraform `>= 1.9` en la máquina de quien ejecuta.
+- `gcloud`, `gh`, `jq` y Terraform en la máquina de quien ejecuta, en la versión del pipeline
+  (`TERRAFORM_VERSION` de los flujos, hoy 1.16.5) o mayor: el estado de estas raíces lo escribe
+  el pipeline y Terraform no abre un estado escrito por una versión más nueva que la suya.
 - Las variables de la raíz armadas igual que el pipeline (`_terraform-root.yml`): el ejemplo como
   `terraform.tfvars` y, encima, la llave `common` de `GCP_TFVARS_JSON` combinada con la llave
   `stages/5-workloads/envs/prod` (`common` trae, entre otros, `state_bucket`):

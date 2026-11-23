@@ -74,7 +74,7 @@ Detalle de cada paso y de la configuración de GitHub en [`pipeline.md`](../pipe
   bloquea el merge.
 - Esta documentación no tiene evidencia de que los flujos corregidos hayan corrido en GitHub, y
   nada ha corrido contra GCP. Comprobado sin GCP el 23 nov 2026: `actionlint
-  .github/workflows/*.yml` sale con 0 y `bash scripts/selftest.sh` da 58 OK y 0 FALLA.
+  .github/workflows/*.yml` sale con 0 y `bash scripts/selftest.sh` da 60 OK y 0 FALLA.
 - Primer apply: protección de rama, entornos y plan de GitHub (punto 12), estabilidad de la
   huella entre plan y apply (punto 48), cuenta de auditoría y prueba de humo (punto 50) y la
   primera ejecución de `pr.yml` con `plan-gate` (punto 51) de

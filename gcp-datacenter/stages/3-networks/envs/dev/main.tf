@@ -22,8 +22,12 @@ locals {
 }
 
 # Proyecto <prefix>-<env>-net-spoke en la carpeta del entorno, habilitado como host de
-# Shared VPC. APIs: Compute (red), DNS, Service Networking (Private Service Access) y GKE
-# (un clúster de un proyecto de servicio sobre Shared VPC exige la API también en el host).
+# Shared VPC. APIs: Compute (red), DNS, Service Networking (Private Service Access), GKE
+# (un clúster de un proyecto de servicio sobre Shared VPC exige la API también en el host) y
+# Network Management: las Connectivity Tests de la prueba de humo de dev (apply.yml, trabajo
+# "dev / prueba de humo", tests/e2e) se crean en este proyecto, y la API tiene que estar
+# habilitada en el proyecto donde se crean. Se declara aquí y no a mano: una API habilitada a
+# mano la reporta el trabajo de recursos no administrados de drift.yml (pendiente 50).
 module "project" {
   source = "../../../../modules/project-factory"
 
@@ -41,6 +45,7 @@ module "project" {
     "compute.googleapis.com",
     "container.googleapis.com",
     "dns.googleapis.com",
+    "networkmanagement.googleapis.com",
     "servicenetworking.googleapis.com",
   ]
 }
