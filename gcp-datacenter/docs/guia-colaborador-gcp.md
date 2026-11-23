@@ -195,6 +195,7 @@ del despliegue mínimo (cambia cada `<...>`; guárdalo fuera del repositorio):
     }
   },
   "stages/3-networks": { "enable_vpn_dr": false },
+  "stages/3-networks/envs/dev": { "project_deletion_policy": "DELETE" },
   "stages/3-networks/envs/prod": { "enable_dr": false },
   "stages/4-projects/envs/dev": {
     "workloads_service_account": "<stage_service_accounts[\"5-workloads\"] de la etapa 0>",
@@ -209,7 +210,7 @@ del despliegue mínimo (cambia cada `<...>`; guárdalo fuera del repositorio):
     "artifact_registry_publishers": {}
   },
   "stages/5-workloads/envs/dev": {
-    "enable_cloud_run": false, "enable_mig": false,
+    "enable_cloud_run": false, "enable_mig": false, "enable_backup": false,
     "notification_emails": ["gcp-platform-devops@<dominio>"]
   },
   "stages/5-workloads/envs/qa": {
@@ -225,6 +226,8 @@ del despliegue mínimo (cambia cada `<...>`; guárdalo fuera del repositorio):
 }
 ```
 
+- Dev va sin respaldos y con sus proyectos borrables desde el inicio para que el destroy del
+  criterio de aceptación no se bloquee (sección H). Los respaldos se prueban en prod.
 - No pongas `labels` dentro de `common`: cada raíz valida las suyas.
 - Si la organización ya tenía una política de Access Context Manager (runbook 01, paso 8), agrega
   `"stages/2-security": { "access_policy_id": "<número>" }`.

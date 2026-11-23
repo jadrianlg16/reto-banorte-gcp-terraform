@@ -435,8 +435,10 @@ variables, se marcan así: son propuestas, no cambios hechos.
 - **Cloud NAT.** Pesa poco (13.70 USD/mes en el escenario A): 0.0014 USD/h por VM y 3.65 USD/mes
   por IP. Crece con las VM de GKE y el MIG, no con los gateways vacíos
   ([ADR 0004](adr/0004-cloud-nat-en-cada-spoke.md)).
-- **Apagar después de la prueba.** `terraform destroy` de la etapa 5 a la 0 detiene casi todos
-  los cargos por hora. Lo que sigue cobrando:
+- **Apagar después de la prueba.** Destruir los entornos detiene casi todos los cargos por hora:
+  dev y qa con `destroy.yml` ([`pipeline.md`](pipeline.md) §1.5); para una organización de
+  prueba, borrar los proyectos (sección H de la
+  [guía del colaborador](guia-colaborador-gcp.md)). Lo que sigue cobrando:
   - Las versiones de KMS programadas para destrucción siguen activas 30 días
     (`modules/kms/variables.tf:67`): hasta 72 × 0.06 = 4.32 USD. Las llaves y los llaveros no se
     borran en Cloud KMS; solo se destruyen sus versiones.
