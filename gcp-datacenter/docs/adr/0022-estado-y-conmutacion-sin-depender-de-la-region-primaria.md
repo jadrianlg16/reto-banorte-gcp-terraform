@@ -65,10 +65,13 @@ ejecutar tal como estaba escrita:
 - **Vuelta a la región primaria (etapa 5).** En prod los módulos `gke` y `cloud-run` fijan
   `deletion_protection = true` y el proveedor se niega a destruir un clúster o un servicio
   protegido, así que `dr_active = false` sola no puede retirar el cómputo de DR. `dr_teardown`
-  (exige `enable_dr`) pasa `teardown = true` solo a las instancias `dr` de esos módulos: un
-  primer apply con `dr_active = true` quita la protección en el lugar y el segundo, con
-  `dr_active = false`, destruye el cómputo y el balanceador interno de DR. La región primaria
-  nunca pierde la protección. El MIG y el balanceador interno no tienen protección contra
+  (solo se admite con `dr_active = true`, validado) pasa `teardown = true` solo a las
+  instancias `dr` de esos módulos: un primer apply con `dr_active = true` y
+  `dr_teardown = true` quita la protección en el lugar, y el segundo, con `dr_active = false` y
+  `dr_teardown = false` juntos, destruye el cómputo y el balanceador interno de DR (el proveedor
+  6.50.0 lee la protección del estado al borrar). La validación impide que `dr_teardown` quede
+  encendido y desproteja el cómputo de DR de la siguiente conmutación. La región primaria nunca
+  pierde la protección. El MIG y el balanceador interno no tienen protección contra
   borrado; la réplica de Cloud SQL, el certificado interno de DR y los planes de respaldo
   dependen de `enable_dr`/`enable_backup` y la vuelta no los toca.
 - **GKE durante la conmutación (etapa 5).** `dr_active = true` planea con los `tfvars` normales:

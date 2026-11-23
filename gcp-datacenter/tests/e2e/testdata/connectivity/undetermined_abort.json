@@ -7,8 +7,8 @@
     "traces": [
       {
         "steps": [
-          {"state": "START_FROM_PRIVATE_NETWORK", "network": {"displayName": "bnt-dev-vpc"}},
-          {"state": "ABORT", "abort": {"cause": "PERMISSION_DENIED", "resourceUri": "projects/example-prod-host"}, "isFinal": true}
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host", "network": {"displayName": "bnt-dev-vpc"}},
+          {"state": "ABORT", "abort": {"cause": "PERMISSION_DENIED", "resourceUri": "projects/example-prod-host", "projectsMissingPermission": ["example-prod-host"]}}
         ]
       }
     ]

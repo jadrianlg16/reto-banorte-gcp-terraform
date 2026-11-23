@@ -27,7 +27,8 @@ locals {
   # "<app>/<miembro>" → quién publica imágenes en el repositorio de la aplicación.
   artifact_writers = merge([
     for app, members in var.artifact_registry_publishers : {
-      for m in members : "${app}/${m}" => { app = app, member = m }
+      # distinct: un miembro repetido en la lista no debe duplicar la llave del mapa.
+      for m in distinct(members) : "${app}/${m}" => { app = app, member = m }
     }
   ]...)
 

@@ -384,6 +384,16 @@ run "prod_conmutacion_a_dr" {
   }
 
   override_resource {
+    target          = google_certificate_manager_certificate.internal["primary"]
+    override_during = plan
+    values          = { id = "projects/example-svc-app/locations/us-central1/certificates/ilb-usc1" }
+  }
+  override_resource {
+    target          = google_certificate_manager_certificate.internal["dr"]
+    override_during = plan
+    values          = { id = "projects/example-svc-app/locations/us-east4/certificates/ilb-use4" }
+  }
+  override_resource {
     target          = module.cloud_run["primary"].google_compute_region_network_endpoint_group.this
     override_during = plan
     values          = { id = "projects/example-svc-app/regions/us-central1/networkEndpointGroups/neg-usc1" }
@@ -483,6 +493,14 @@ run "prod_conmutacion_a_dr" {
     )
     error_message = "Cada balanceador interno debe usar los grupos de su propia región."
   }
+  # Un proxy regional solo acepta un certificado de su región: cada interno recibe el suyo.
+  assert {
+    condition = (
+      module.internal_lb["primary"].internal_certificate_ids == tolist(["projects/example-svc-app/locations/us-central1/certificates/ilb-usc1"]) &&
+      module.internal_lb["dr"].internal_certificate_ids == tolist(["projects/example-svc-app/locations/us-east4/certificates/ilb-use4"])
+    )
+    error_message = "Cada balanceador interno debe recibir el certificado de su propia región."
+  }
   # Los datos no se mueven: la primaria de Cloud SQL sigue igual (la réplica se promueve por runbook).
   assert {
     condition     = module.cloud_sql.instance_name == "bnt-prod-data-sql-usc1"
@@ -552,12 +570,18 @@ run "prod_conmutacion_solo_gke_sin_neg_de_dr" {
 # Vuelta a la región primaria (runbook 04, reversión), paso 1: con dr_active todavía en true,
 # dr_teardown quita la protección contra borrado solo del cómputo de DR (cambio en el lugar). El
 # proveedor solo destruye un clúster o un servicio cuya protección ya está en false en el estado.
+# Con los NEG de DR del paso 6 de la conmutación (el mismo -var-file): el backend gke sigue en
+# el externo, así que el plan no lo quita.
 run "prod_vuelta_paso_1_retiro_del_computo_de_dr" {
   command = plan
 
   variables {
     dr_active   = true
     dr_teardown = true
+    gke_lb_negs = {
+      primary = ["projects/example-svc-app/zones/us-central1-a/networkEndpointGroups/k8s1-web"]
+      dr      = ["projects/example-svc-app/zones/us-east4-a/networkEndpointGroups/k8s1-web"]
+    }
   }
 
   assert {
@@ -576,16 +600,21 @@ run "prod_vuelta_paso_1_retiro_del_computo_de_dr" {
     condition     = output.active_region == "us-east4"
     error_message = "El paso 1 no mueve el tráfico: sigue en la región de DR."
   }
+  assert {
+    condition     = join(",", sort(keys(module.external_lb["external"].backend_service_ids))) == "gke,mig,run"
+    error_message = "Con los NEG de DR el paso 1 conserva el backend gke del externo."
+  }
 }
 
-# Paso 2: dr_active = false (dr_teardown puede seguir en true). Planea destruir solo el cómputo
-# de DR y su balanceador interno; la primaria queda protegida y los datos de DR no se tocan.
+# Paso 2: dr_active = false y dr_teardown = false en el mismo apply (el proveedor lee la
+# protección del estado al borrar). Planea destruir solo el cómputo de DR y su balanceador
+# interno; la primaria queda protegida y los datos de DR no se tocan.
 run "prod_vuelta_paso_2_sin_dr_active" {
   command = plan
 
   variables {
     dr_active   = false
-    dr_teardown = true
+    dr_teardown = false
   }
 
   assert {
@@ -659,6 +688,19 @@ run "sin_dr_solo_certificado_interno_primario" {
     condition     = keys(google_certificate_manager_certificate.internal) == ["primary"] && keys(google_certificate_manager_dns_authorization.internal) == ["primary/app-prod-example-com"]
     error_message = "Sin enable_dr no se crea el certificado interno de la región de DR."
   }
+}
+
+# dr_teardown no puede quedar encendido después de la vuelta: desprotegería el cómputo de DR de
+# la siguiente conmutación.
+run "rechaza_dr_teardown_sin_dr_active" {
+  command = plan
+
+  variables {
+    dr_active   = false
+    dr_teardown = true
+  }
+
+  expect_failures = [var.dr_teardown]
 }
 
 run "rechaza_dr_teardown_sin_enable_dr" {

@@ -7,9 +7,9 @@
     "traces": [
       {
         "steps": [
-          {"state": "START_FROM_PRIVATE_NETWORK", "network": {"displayName": "bnt-dev-vpc"}},
-          {"state": "APPLY_EGRESS_FIREWALL_RULE", "firewall": {"action": "ALLOW"}},
-          {"state": "DROP", "drop": {"cause": "NO_ROUTE", "resourceUri": "projects/example-dev-host/global/networks/bnt-dev-vpc"}, "isFinal": true}
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host", "network": {"displayName": "bnt-dev-vpc"}},
+          {"state": "APPLY_EGRESS_FIREWALL_RULE", "projectId": "example-dev-host", "firewall": {"direction": "EGRESS", "action": "ALLOW"}},
+          {"state": "DROP", "causesDrop": true, "drop": {"cause": "NO_ROUTE", "resourceUri": "projects/example-dev-host/global/networks/bnt-dev-vpc"}}
         ]
       }
     ]

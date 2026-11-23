@@ -14,7 +14,8 @@ dr_region      = "us-east4"
 # solo durante una conmutación (runbook de DR).
 enable_dr = true
 dr_active = false
-# Solo en la vuelta a la región primaria (runbook 04): quita la protección del cómputo de DR.
+# Solo en el primer apply de la vuelta a la región primaria (runbook 04), con dr_active = true:
+# quita la protección del cómputo de DR. Exige dr_active = true.
 dr_teardown = false
 
 enable_gke         = true

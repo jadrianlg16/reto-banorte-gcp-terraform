@@ -266,6 +266,9 @@ jobs:
 
       - name: Comparar con los estados
         run: |
+          # Con --folder, el script exige que todos los proyectos del entorno (los de los estados
+          # en esa carpeta) estén en el listado; si no, sale con 2 (docs/pipeline.md §1.3).
+          folder="$(jq -r --arg e "${ENV_NAME}" '.outputs.folder_ids.value[$e] // empty' "${RUNNER_TEMP}/states/1-org_default.tfstate")"
           args=()
           for s in "${RUNNER_TEMP}"/states/*; do
             args+=(--state "${s}")
@@ -274,5 +277,5 @@ jobs:
             echo "### Recursos no administrados: ${ENV_NAME}"
             echo
           } >> "${GITHUB_STEP_SUMMARY}"
-          python3 scripts/unmanaged-resources.py --assets "${RUNNER_TEMP}/assets.json" "${args[@]}" \
+          python3 scripts/unmanaged-resources.py --folder "${folder}" --assets "${RUNNER_TEMP}/assets.json" "${args[@]}" \
             --summary "${GITHUB_STEP_SUMMARY}"

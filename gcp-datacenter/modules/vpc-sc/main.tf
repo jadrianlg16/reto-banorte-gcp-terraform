@@ -20,6 +20,13 @@ locals {
   # Regla de entrada de las cuentas del pipeline: una sola, en status (forzado) o en spec
   # (dry-run), según el modo.
   pipeline_ingress = length(var.ingress_identities) > 0 ? { pipeline = sort(var.ingress_identities) } : {}
+
+  # Título de la regla: único dentro del perímetro (lo exige la API) y distinto para cada
+  # conjunto de identidades. Todos los campos de la regla fuerzan reemplazo y la regla usa
+  # create_before_destroy: con un título fijo, el reemplazo agregaría una segunda regla con el
+  # mismo título antes de quitar la vieja. Con el hash, la nueva convive un momento con la
+  # vieja y después se quita la vieja (el proveedor la busca por título y contenido).
+  pipeline_ingress_title = "${local.short_name}-pipeline-${substr(sha256(join(",", sort(var.ingress_identities))), 0, 8)}"
 }
 
 # Solo puede haber una política de organización. Si ya existe, se pasa access_policy_id.
@@ -130,13 +137,19 @@ resource "google_access_context_manager_service_perimeter" "this" {
 # Regla de entrada de las cuentas del pipeline: desde cualquier origen (el pipeline corre fuera
 # de GCP), a todos los servicios y proyectos del perímetro. Forzado → status; dry-run → spec.
 # create_before_destroy: el proveedor quita y vuelve a agregar la regla al cambiarla; así la
-# nueva entra antes de quitar la vieja (recomendación de la documentación del proveedor).
+# nueva entra antes de quitar la vieja (recomendación de la documentación del proveedor) y el
+# título lleva un hash de las identidades para que las dos no choquen (local.pipeline_ingress_title).
+# Se prefiere a quitar create_before_destroy: si la creación de la regla nueva falla, la vieja
+# sigue y el pipeline conserva su acceso; sin create_before_destroy, un fallo dejaría el
+# perímetro forzado sin la regla del pipeline y las etapas 4 y 5 no podrían usar los servicios
+# restringidos de los proyectos de prod hasta un apply correcto de esta etapa (la API de Access
+# Context Manager es de organización y el perímetro no la restringe).
 # VERIFICAR-EN-APPLY: regla de entrada de las cuentas del pipeline (pendiente 5).
 resource "google_access_context_manager_service_perimeter_ingress_policy" "pipeline" {
   for_each = var.enforced ? local.pipeline_ingress : {}
 
   perimeter = google_access_context_manager_service_perimeter.this.name
-  title     = "${local.short_name}-pipeline"
+  title     = local.pipeline_ingress_title
 
   ingress_from {
     identities = each.value
@@ -161,7 +174,7 @@ resource "google_access_context_manager_service_perimeter_dry_run_ingress_policy
   for_each = var.enforced ? {} : local.pipeline_ingress
 
   perimeter = google_access_context_manager_service_perimeter.this.name
-  title     = "${local.short_name}-pipeline"
+  title     = local.pipeline_ingress_title
 
   ingress_from {
     identities = each.value

@@ -156,7 +156,7 @@ variable "artifact_registry_location" {
 }
 
 variable "binary_authorization_allowlist_patterns" {
-  description = "Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta, con * o ** solo al final y después de una /). Vacío por defecto: ningún registro público."
+  description = "Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta; comodines solo al final: * al final del nombre o después de una /, ** solo después de una /). Vacío por defecto: ningún registro público."
   type        = list(string)
   default     = []
   nullable    = false
@@ -168,7 +168,7 @@ variable "binary_authorization_allowlist_patterns" {
       for p in var.binary_authorization_allowlist_patterns :
       can(regex("^[a-z0-9.-]+\\.[a-z]{2,}(:[0-9]+)?/[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*(/\\*\\*|/\\*|\\*)?$", p))
     ])
-    error_message = "Cada patrón debe ser <registro>/<ruta>[/*|/**|*]: con al menos un segmento de ruta, sin comodines en medio y con ** solo después de /."
+    error_message = "Cada patrón debe ser <registro>/<ruta>[/*|/**|*]: con al menos un segmento de ruta, sin comodines en medio, * al final del nombre o después de / y ** solo después de /."
   }
 }
 

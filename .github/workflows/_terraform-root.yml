@@ -73,10 +73,13 @@ jobs:
       ROOT: ${{ inputs.root }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # check-main-tip.sh necesita la historia de main
 
       # Una ejecución vieja que se vuelve a correr ("Re-run") trae su github.sha original: si
-      # main ya avanzó, no se planea código viejo (ver docs/pipeline.md §4).
-      - name: El commit sigue siendo la punta de main
+      # main avanzó con cambios en gcp-datacenter/ o .github/workflows/, no se planea código
+      # viejo (ver docs/pipeline.md §1.2, "Ejecuciones viejas").
+      - name: main no cambió el despliegue desde este commit
         run: bash scripts/check-main-tip.sh "${GITHUB_SHA}"
 
       # Este trabajo no tiene entorno y el de apply sí: si una de estas variables se redefine en
@@ -206,6 +209,8 @@ jobs:
     steps:
       # Mismo commit que el trabajo plan (github.sha es fijo en la ejecución).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # check-main-tip.sh necesita la historia de main
 
       - name: Variables iguales a las del plan (de repositorio, no del entorno)
         env:
@@ -286,7 +291,7 @@ jobs:
         run: conftest test "${ROOT}/plan.json" --policy policies --no-color
 
       # Otra vez justo antes del apply: main pudo avanzar mientras se esperaba la aprobación.
-      - name: El commit sigue siendo la punta de main (antes del apply)
+      - name: main no cambió el despliegue desde este commit (antes del apply)
         run: bash scripts/check-main-tip.sh "${GITHUB_SHA}"
 
       - name: terraform apply del plan guardado

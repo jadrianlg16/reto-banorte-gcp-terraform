@@ -57,6 +57,27 @@ declarara sus reglas en línea, el siguiente apply de la etapa 2 las quitaría. 
   creándolo directamente en modo forzado.
 - Las reglas de salida (`egress_policies`) siguen en línea: ninguna otra etapa agrega reglas de
   salida al perímetro.
+- El título de la regla del pipeline es `<nombre corto>-pipeline-<hash>`, con los 8 primeros
+  caracteres del SHA-256 de las identidades ordenadas. La API exige títulos únicos dentro del
+  perímetro y todos los campos de la regla fuerzan reemplazo: con un título fijo, el reemplazo
+  con `create_before_destroy` agregaría una segunda regla con el mismo título antes de quitar
+  la vieja. Se conserva `create_before_destroy` porque es el fallo más seguro: si la regla nueva
+  no se crea, la vieja sigue y el pipeline no pierde acceso a los proyectos de prod.
+
+### Carrera entre el plan y el apply (regla de operación)
+
+`ignore_changes` evita que el plan *muestre* cambios por las altas y reglas de la etapa 4, pero
+no que el apply las pise. Cuando el perímetro cambia por otra razón (por ejemplo
+`restricted_services` o el paso a forzado), el proveedor manda `status` o `spec` completos
+(`updateMask` `status`/`spec`), y para los campos ignorados manda lo que leyó al planear. Con
+el plan y el apply separados (ADR 0025), si la etapa 4 de prod aplica altas o reglas nuevas
+entre el plan y el apply de la etapa 2, ese apply las quita.
+
+Regla de operación: **un plan guardado de la etapa 2 que cambia el perímetro solo se aplica si
+ningún apply de `4-projects/envs/prod` ocurrió después de crearlo**; si ocurrió, se vuelve a
+planear la etapa 2. Si ya se aplicó un plan viejo, se vuelve a aplicar `4-projects/envs/prod`,
+que recrea sus altas y reglas (su plan las mostrará como faltantes). Un plan de la etapa 2 que
+no cambia el perímetro no lo toca.
 
 Nombre (§4.2 del contrato, adaptado): los perímetros no admiten guiones, así que el nombre
 corto por defecto es `<prefix>_<environment>_sec_perimeter`.

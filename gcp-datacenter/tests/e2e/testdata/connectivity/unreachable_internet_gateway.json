@@ -1,0 +1,18 @@
+{
+  "name": "projects/example-dev-host/locations/global/connectivityTests/e2e-x-dev-onprem",
+  "protocol": "TCP",
+  "reachabilityDetails": {
+    "result": "UNREACHABLE",
+    "verifyTime": "2026-11-21T10:00:00Z",
+    "traces": [
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host", "network": {"displayName": "bnt-dev-vpc"}},
+          {"state": "APPLY_EGRESS_FIREWALL_RULE", "projectId": "example-dev-host", "firewall": {"direction": "EGRESS", "action": "ALLOW"}},
+          {"state": "APPLY_ROUTE", "projectId": "example-dev-host", "route": {"routeType": "STATIC", "nextHopType": "NEXT_HOP_INTERNET_GATEWAY", "destIpRange": "0.0.0.0/0"}},
+          {"state": "DROP", "causesDrop": true, "drop": {"cause": "PRIVATE_TRAFFIC_TO_INTERNET", "destinationIp": "192.168.0.10"}}
+        ]
+      }
+    ]
+  }
+}

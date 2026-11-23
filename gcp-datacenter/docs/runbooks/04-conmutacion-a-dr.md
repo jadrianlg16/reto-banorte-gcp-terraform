@@ -54,11 +54,25 @@ No conmutar ante:
   sobre el proyecto de servicio, que da la etapa 4; incluyen `roles/cloudsql.admin`). Las personas
   solo tienen lectura y el pipeline no admite `-target`: hace falta el acceso de emergencia, que
   **no está construido** ([pendientes](../pendientes-apply.md), §5). Definirlo antes del primer
-  simulacro.
+  simulacro. Para el paso 1 necesita además lo que la cuenta de la etapa 5 no tiene: leer el
+  estado del hub (`roles/storage.objectViewer` sobre el prefijo `3-networks/hub/` del bucket de
+  estado; la etapa 5 solo lee `2-security`, `3-networks/<env>` y `4-projects/<env>`) y ver los
+  túneles y el router del hub (`roles/compute.viewer` en el proyecto `net-hub`; la etapa 5 solo
+  tiene `networkViewer` en el host del spoke).
 - `gcloud`, `gh`, `jq` y Terraform `>= 1.9` en la máquina de quien ejecuta.
-- `stages/5-workloads/envs/prod/terraform.tfvars` con los valores reales de la raíz (los de la
-  llave `stages/5-workloads/envs/prod` de `GCP_TFVARS_JSON`), con `dr_active = false`: los
-  comandos de abajo solo agregan `-var="dr_active=true"`.
+- Las variables de la raíz armadas igual que el pipeline (`_terraform-root.yml`): el ejemplo como
+  `terraform.tfvars` y, encima, la llave `common` de `GCP_TFVARS_JSON` combinada con la llave
+  `stages/5-workloads/envs/prod` (`common` trae, entre otros, `state_bucket`):
+
+  ```bash
+  cp stages/5-workloads/envs/prod/terraform.tfvars.example stages/5-workloads/envs/prod/terraform.tfvars
+  gh variable get GCP_TFVARS_JSON |
+    jq --arg r stages/5-workloads/envs/prod '(.common // {}) + (.[$r] // {})' \
+    > stages/5-workloads/envs/prod/zz-ci.auto.tfvars.json
+  ```
+
+  Con `dr_active = false` y `dr_teardown = false`: los comandos de abajo pasan `-var`, que
+  tiene precedencia sobre los dos archivos.
 - Variables de la sesión, desde `gcp-datacenter/`:
 
   ```bash
@@ -86,10 +100,13 @@ Anotar la hora UTC de cada paso en la tabla del simulacro.
 
    ```bash
    terraform -chdir=stages/3-networks init -backend-config="bucket=<state_bucket>"
-   terraform -chdir=stages/3-networks output -json vpn_dr_tunnel_names
    ROUTER_DR="$(terraform -chdir=stages/3-networks output -json hub_routers | jq -r '.["us-east4"]')"
-   gcloud compute vpn-tunnels list --project="$HUB" --filter="region:us-east4" \
-     --format="table(name,status,detailedStatus)"
+   # Solo los túneles del hub hacia on-premises (vpn_dr_tunnel_names): en modo simulado el
+   # proyecto hub también tiene los túneles de onprem-sim en us-east4.
+   for t in $(terraform -chdir=stages/3-networks output -json vpn_dr_tunnel_names | jq -r '.[]'); do
+     gcloud compute vpn-tunnels describe "$t" --region=us-east4 --project="$HUB" \
+       --format="value(name,status,detailedStatus)"
+   done
    gcloud compute routers get-status "$ROUTER_DR" --region=us-east4 --project="$HUB" \
      --format="table(result.bgpPeerStatus[].name,result.bgpPeerStatus[].status)"
    ```
@@ -211,8 +228,11 @@ Anotar la hora UTC de cada paso en la tabla del simulacro.
 
 ```bash
 curl -sS -o /dev/null -w "%{http_code}\n" https://<dominio>/<ruta-de-salud>
-gcloud compute backend-services get-health <prefix>-prod-app-<application>-xlb-be-<run|mig|gke> \
+# Solo mig y gke: los backends sin servidor (run) no admiten verificaciones de salud.
+gcloud compute backend-services get-health <prefix>-prod-app-<application>-xlb-be-<mig|gke> \
   --global --project="$P"
+gcloud run services describe <prefix>-prod-app-run-use4 --region=us-east4 --project="$P" \
+  --format="value(status.conditions[0].type,status.conditions[0].status)"
 terraform -chdir="$R" output active_region            # us-east4
 terraform -chdir="$R" output -json gke_cluster_names  # incluye us-east4 si enable_gke
 terraform -chdir="$R" output internal_lb_ip_address    # la IP del interno de us-east4
@@ -220,8 +240,10 @@ gcloud storage buckets describe "gs://<prefix>-prod-data-<application>-usc1-use4
   --format="value(location,rpo)"
 ```
 
-- Los backends de la región de DR están `HEALTHY`; la verificación de disponibilidad del módulo
-  `observability` vuelve a verde.
+- Los backends `mig` y `gke` de la región de DR están `HEALTHY`. El balanceador no verifica la
+  salud de Cloud Run (NEG sin servidor, según la documentación de Google): su servicio de DR
+  debe estar `Ready True` y la ruta de Cloud Run debe responder por el `curl`. La verificación
+  de disponibilidad del módulo `observability` vuelve a verde.
 - Desde on-premises, el nombre de `internal_domain_names` resuelve a la IP de `us-east4` y
   responde por HTTPS.
 - La aplicación escribe y lee en la base promovida.
@@ -244,34 +266,42 @@ Esbozo; se detalla después del primer simulacro.
    (que nunca se destruyó): `terraform -chdir="$R" output -json internal_lb_ip_addresses`,
    clave `us-central1`.
 5. **Quitar la protección del cómputo de DR** (`dr_teardown`). En prod el clúster de GKE y el
-   servicio de Cloud Run tienen la protección contra borrado fija y el proveedor se niega a
-   destruirlos mientras el estado la tenga en `true` (pendiente 52). Primer apply, todavía con
-   `dr_active = true`:
+   servicio de Cloud Run tienen la protección contra borrado fija y el proveedor 6.50.0 se niega
+   a destruirlos mientras el estado la tenga en `true` (lee la del estado al borrar; pendiente
+   52). Primer apply, todavía con `dr_active = true` y con el mismo archivo de NEG de DR del paso
+   6 de la conmutación (si `enable_gke`; sin él, `gke_lb_negs.dr` queda vacío y el plan quita el
+   backend `gke` del externo):
 
    ```bash
-   terraform -chdir="$R" plan -var="dr_active=true" -var="dr_teardown=true" -out=tfplan
+   terraform -chdir="$R" plan -var="dr_active=true" -var="dr_teardown=true" \
+     -var-file=<negs-dr.tfvars.json> -out=tfplan
    terraform -chdir="$R" apply tfplan
    ```
 
    El plan solo debe cambiar en el lugar `deletion_protection` a `false` en
-   `module.gke["dr"]` y `module.cloud_run["dr"]` (los habilitados). Si toca algo de
-   `us-central1` o destruye algo, **no aplicar**.
-6. **Retirar el cómputo de DR.** Segundo apply, con `dr_active = false` y `gke_lb_negs.dr = []`:
+   `module.gke["dr"]` y `module.cloud_run["dr"]` (los habilitados). En Cloud Run el cambio es un
+   PATCH del servicio de DR vivo: en este apply no se cambia ninguna otra variable (imagen,
+   escalado). Si toca algo de `us-central1`, destruye algo o cambia otra cosa, **no aplicar**.
+   `dr_teardown = true` solo se admite con `dr_active = true` (validación).
+6. **Retirar el cómputo de DR.** Segundo apply, con `dr_active = false` y `dr_teardown = false`
+   juntos (los valores de los archivos de variables), sin el archivo de NEG de DR:
 
    ```bash
-   terraform -chdir="$R" plan -var="dr_active=false" -var="dr_teardown=true" -out=tfplan
+   terraform -chdir="$R" plan -var="dr_active=false" -var="dr_teardown=false" -out=tfplan
    terraform -chdir="$R" apply tfplan
    ```
 
    El plan vuelve los backends del externo a la región primaria (con GKE si
    `gke_lb_negs.primary` tiene NEG) y destruye el cómputo de DR (`module.gke["dr"]`,
-   `module.mig["dr"]`, `module.cloud_run["dr"]`) y solo `module.internal_lb["dr"]`. No destruye
-   la réplica de Cloud SQL, el certificado interno de DR ni los planes de respaldo: dependen de
-   `enable_dr` y `enable_backup`, no de `dr_active` (la reconciliación de Cloud SQL es el punto
-   3). Las pruebas de la etapa planean estos dos pasos con proveedores simulados
-   (`prod_vuelta_paso_1_retiro_del_computo_de_dr`, `prod_vuelta_paso_2_sin_dr_active`).
-7. Dejar `dr_teardown = false` (el valor de `terraform.tfvars`), reactivar el pipeline
-   (`gh workflow enable apply.yml`) y confirmar un `plan` sin cambios.
+   `module.mig["dr"]`, `module.cloud_run["dr"]`) y solo `module.internal_lb["dr"]`; el borrado
+   usa la protección `false` que dejó el paso 5 en el estado. No destruye la réplica de Cloud
+   SQL, el certificado interno de DR ni los planes de respaldo: dependen de `enable_dr` y
+   `enable_backup`, no de `dr_active`. Si el plan cambia o reemplaza recursos de `cloud_sql`, la
+   reconciliación del punto 3 no está hecha: **no aplicar**. Las pruebas de la etapa planean
+   estos dos pasos con proveedores simulados (`prod_vuelta_paso_1_retiro_del_computo_de_dr`,
+   `prod_vuelta_paso_2_sin_dr_active`) y que `dr_teardown` sin `dr_active` se rechace
+   (`rechaza_dr_teardown_sin_dr_active`).
+7. Reactivar el pipeline (`gh workflow enable apply.yml`) y confirmar un `plan` sin cambios.
 
 ## Objetivos y lo que aporta cada paso
 

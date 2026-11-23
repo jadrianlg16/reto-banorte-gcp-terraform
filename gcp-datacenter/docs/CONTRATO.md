@@ -340,7 +340,9 @@ actualizar este documento. Cada raíz puede tener más variables internas, todas
 Crea: carpeta `bootstrap`; proyecto semilla; llavero (`<prefix>-bootstrap-sec-keyring-us` por
 defecto) y llave KMS del estado (rotación 90 días); bucket de estado en
 `state_bucket_location`; cuentas de servicio de las etapas 1 a 5 con sus roles de organización,
-facturación y carpeta (mínimo privilegio, listados en el README de la etapa); roles
+facturación y proyecto semilla, más su acceso condicionado al bucket de estado y su
+suplantación por WIF (mínimo privilegio, listados en el README de la etapa; los roles de
+carpeta y de proyecto de `common` los da la etapa 1); roles
 personalizados de organización `<prefix>TfKmsSecretIamGranter` (IAM de llaves y secretos, para
 la etapa 4) y `<prefix>TfSecretContainerAdmin` (contenedores de secretos sin acceso a valores,
 para la etapa 2); política de denegación de la carpeta `bootstrap` (§6.3); pool y proveedor de
@@ -424,11 +426,14 @@ defecto.
 
 Entradas: `org_id`, `prefix`, `primary_region`, `dr_region`, `environments`, `secret_names`
 (map entorno → lista), `key_rotation_period`, `access_policy_id` (opcional: si la organización
-ya tiene política), `vpc_sc_enforced`, `vpc_sc_restricted_services`, `labels`, `state_bucket`.
+ya tiene política), `vpc_sc_enforced`, `vpc_sc_restricted_services`, `labels`, `state_bucket`
+(más `location_short_codes`, ubicación → código corto de los nombres de llaveros, con valor por
+defecto).
 
 | Salida | Tipo | Contenido |
 |---|---|---|
 | `kms_key_ids` | map(map(map(string))) | `[entorno][ubicación][uso]` → ID de llave |
+| `keyring_ids` | map(map(string)) | `[entorno][ubicación]` → ID del llavero |
 | `secret_ids` | map(map(string)) | `[entorno][nombre]` → ID del secreto |
 | `access_policy_id` | string | política de Access Context Manager |
 | `perimeter_name` | string | nombre completo del perímetro de prod |
@@ -452,12 +457,15 @@ DNS: zona de reenvío hacia on-premises y política de servidor entrante; con
 esa VPC y su propia política de red (`module.firewall_onprem_sim`: DNS desde el reenvío de Cloud
 DNS y SSH por IAP) (ADR 0006); Interconnect solo si `enable_interconnect = true`.
 
-Entradas: `org_id`, `prefix`, `primary_region`, `dr_region`, `hub_cidrs`, `spoke_supernets`
+Entradas: `org_id`, `prefix`, `primary_region`, `dr_region`, `hub_supernet` (/16 del hub que
+se anuncia por BGP; contiene `hub_cidrs`), `hub_cidrs`, `spoke_supernets`
 (map entorno → /16), `onprem_cidrs`, `hub_asn`, `onprem_asn` (privado en modo simulado; en modo
 real admite un ASN público de 2 o 4 bytes), `vpn_bgp_ranges`, `enable_vpn_dr`,
 `vpn_dr_bgp_ranges`, `vpn_dr_route_priority`, `simulate_onprem`, `onprem_vpn_gateway_ips`,
 `onprem_vpn_secret_id`, `onprem_vpn_secret_version`, `onprem_vpn_secret_version_overrides`,
-`onprem_dns_domain`, `onprem_dns_servers`, `enable_interconnect`, `labels`, `state_bucket`.
+`onprem_dns_domain`, `onprem_dns_servers`, `enable_interconnect`, `labels`, `state_bucket`
+(más `onprem_sim_cidr`, `interconnect_attachments` y `region_short_names`, con valor por
+defecto).
 
 El secreto compartido de la VPN nunca va en variables: con on-premises real se lee de Secret
 Manager en una versión numérica (`onprem_vpn_secret_version`, sin `latest`; por túnel con
@@ -492,10 +500,12 @@ balanceador 35.191.0.0/16 y 130.211.0.0/22, e IAP 35.235.240.0/20) y, con
 `psa` hacia los puertos de `filestore_nfs_lock_ports`.
 
 Entradas: `billing_account`, `prefix`, `project_suffix`, `environment`,
-`primary_region`, `dr_region`, `enable_dr`, `subnet_cidrs`, `onprem_cidrs`,
-`onprem_dns_domain`, `flow_log_sampling` (por defecto 0.5), `lb_backend_ports`,
+`primary_region`, `dr_region`, `enable_dr`, `spoke_supernet` (/16 del entorno; contiene
+`subnet_cidrs` y coincide con `spoke_supernets[environment]` del hub), `subnet_cidrs`,
+`onprem_cidrs`, `onprem_dns_domain`, `flow_log_sampling` (por defecto 0.5), `lb_backend_ports`,
 `enable_filestore_nfs_lock_callbacks`, `filestore_nfs_lock_ports`, `google_apis_vip`, `labels`,
-`state_bucket`.
+`state_bucket` (más `dns_domain_base`, `project_deletion_policy` y `region_short_names`, con
+valor por defecto).
 
 | Salida | Tipo | Contenido |
 |---|---|---|

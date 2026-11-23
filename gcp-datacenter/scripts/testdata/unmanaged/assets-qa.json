@@ -1,0 +1,4 @@
+[
+  {"name": "//cloudresourcemanager.googleapis.com/projects/333333333331", "assetType": "cloudresourcemanager.googleapis.com/Project", "displayName": "example-qa-app", "state": "ACTIVE"},
+  {"name": "//logging.googleapis.com/projects/example-qa-app/locations/global/buckets/_Default", "assetType": "logging.googleapis.com/LogBucket", "displayName": "_Default"}
+]

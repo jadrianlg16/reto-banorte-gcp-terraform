@@ -13,7 +13,7 @@ override.tf.json
 # Archivos que generan los laboratorios al hacer apply
 labs/**/*.txt
 
-# Documentación local (plan y documento de Banorte): no se versiona
+# Documentación local (plan y documento del cliente): no se versiona
 /docs/
 /labs/README.md
 

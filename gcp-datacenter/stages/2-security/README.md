@@ -87,6 +87,16 @@ Para forzar el perímetro, `vpc_sc_enforced = true` después de revisar las viol
 registró el modo dry-run. Si la organización ya tiene política de Access Context Manager, se
 pasa su número en `access_policy_id` (solo puede haber una por organización).
 
+**Regla de operación con la etapa 4 de prod.** El perímetro ignora en el plan las altas de
+proyectos y las reglas de entrada que agrega `4-projects/envs/prod`, pero cuando el perímetro
+cambia (por ejemplo `vpc_sc_restricted_services` o `vpc_sc_enforced`) el proveedor reescribe
+`status` o `spec` completos con lo que leyó al planear. Si `4-projects/envs/prod` aplicó entre
+el plan y el apply de esta etapa (plan y apply separados, ADR 0025), el apply quita esas altas
+y reglas. Por eso: un plan guardado de esta etapa que cambia el perímetro solo se aplica si no
+hubo un apply de `4-projects/envs/prod` después de crearlo; si lo hubo, se vuelve a planear. Si
+ya ocurrió, se vuelve a aplicar `4-projects/envs/prod`, que recrea lo que falte (detalle en el
+README del módulo `vpc-sc`).
+
 ## Pendientes del primer apply (VERIFICAR-EN-APPLY)
 
 - Uso de las llaves CMEK del proyecto `security` desde los proyectos de prod con el perímetro

@@ -47,9 +47,12 @@ resource "google_access_context_manager_service_perimeter_dry_run_resource" "thi
 # fuera de GCP), solo hacia el proyecto de servicio de esa aplicación y solo Artifact Registry.
 # Mismo patrón de modo que las altas: forzado → ..._ingress_policy (status); dry-run →
 # ..._dry_run_ingress_policy (spec).
-# Requiere que el perímetro de la etapa 2 ignore sus ingress_policies (lifecycle del módulo
-# vpc-sc) y que la regla de las cuentas de etapa pase a un recurso de política aparte; sin eso,
-# el siguiente apply de la etapa 2 quitaría estas reglas (pendientes-apply).
+# Conviven con la regla de las cuentas de etapa: el perímetro de la etapa 2 ignora sus
+# ingress_policies (lifecycle del módulo vpc-sc) y esa regla es un recurso de política aparte.
+# Operación: el update del perímetro manda status/spec completos; si un apply de la etapa 2
+# cambia el perímetro (por ejemplo restricted_services) con un plan hecho antes del último apply
+# de esta etapa, puede quitar estas reglas y las altas. Después de todo apply de la etapa 2 que
+# cambie el perímetro, volver a aplicar esta etapa en prod (README).
 # VERIFICAR-EN-APPLY: docker push de una cuenta publicadora al repositorio de prod con el
 # perímetro forzado (y su entrada en el registro de infracciones en dry-run), y que un grupo en
 # identities se acepte (VPC-SC tiene límites para grupos en reglas de entrada).

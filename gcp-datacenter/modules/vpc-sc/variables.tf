@@ -110,7 +110,7 @@ variable "egress_policies" {
 
   validation {
     condition = alltrue([
-      for p in var.egress_policies : contains(["ANY_IDENTITY", "ANY_USER_ACCOUNT", "ANY_SERVICE_ACCOUNT"], coalesce(p.identity_type, "ANY_IDENTITY"))
+      for p in var.egress_policies : p.identity_type == null ? true : contains(["ANY_IDENTITY", "ANY_USER_ACCOUNT", "ANY_SERVICE_ACCOUNT"], p.identity_type)
     ])
     error_message = "identity_type debe ser ANY_IDENTITY, ANY_USER_ACCOUNT, ANY_SERVICE_ACCOUNT o null."
   }

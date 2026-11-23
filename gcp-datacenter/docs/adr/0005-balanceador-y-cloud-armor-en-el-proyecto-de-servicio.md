@@ -50,8 +50,10 @@ desde on-premises sí entra solo por el hub (HA VPN y peering, ADR 0003 y 0006).
   (`dr_active`) cambia los backends del externo y agrega el interno de DR dentro del mismo
   estado de la etapa 5, sin destruir nada en la región primaria.
 - El balanceador interno de DR tiene otra IP (`internal_lb_ip_addresses`) y su propio
-  certificado: al conmutar hay que crear sus registros de autorización
-  (`internal_lb_dns_authorization_records_by_region`) y mover el registro DNS interno.
+  certificado regional, que existe con `enable_dr` antes de cualquier incidente: sus registros
+  de autorización (`internal_lb_dns_authorization_records_by_region`) se crean al dar de alta el
+  entorno (ADR 0022); al conmutar solo se mueve el registro DNS interno
+  (`internal_lb_dns_records`).
 - Negativas: no hay un único punto de entrada para reglas comunes de Cloud Armor; las reglas
   base (OWASP y límite de tasa) se repiten por entorno desde el módulo, no se heredan.
 - El certificado administrado solo se activa cuando los registros DNS A de `domain_names`

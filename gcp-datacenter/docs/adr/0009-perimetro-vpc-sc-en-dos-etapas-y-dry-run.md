@@ -2,7 +2,11 @@
 
 ## Estado
 
-Aceptado, 2026-11-20.
+Aceptado, 2026-11-20. Enmendado el 2026-11-21: las reglas de entrada son recursos aparte y el
+perímetro las ignora, para que convivan las de la etapa 2 y las de la etapa 4 (ADR 0024).
+Enmendado el 2026-11-23: el título de la regla del pipeline lleva un hash de sus identidades
+(títulos únicos dentro del perímetro con `create_before_destroy`) y regla de operación para la
+carrera entre el plan y el apply de la etapa 2 y los applies de la etapa 4 de prod (ADR 0025).
 
 Tipo: Aclaración.
 
@@ -36,7 +40,11 @@ estén probadas.
   documentación del proveedor de `google_access_context_manager_service_perimeter_ingress_policy`
   y de su variante de dry-run). La regla de las cuentas del pipeline la crea el módulo con
   `..._dry_run_ingress_policy` (dry-run) o `..._ingress_policy` (forzado), con
-  `create_before_destroy`, y la etapa 4 agrega las suyas (publicadores de Artifact Registry,
+  `create_before_destroy` y título `<nombre corto>-pipeline-<hash>` (8 caracteres del SHA-256
+  de las identidades ordenadas): la API exige títulos únicos dentro del perímetro y todos los
+  campos de la regla fuerzan reemplazo, así que con un título fijo la regla nueva chocaría con
+  la vieja. Se conserva `create_before_destroy` porque, si la regla nueva no se crea, la vieja
+  sigue y el pipeline no pierde acceso a los proyectos de prod. La etapa 4 agrega las suyas (publicadores de Artifact Registry,
   ADR 0024) sin que el apply de la etapa 2 las quite. Las altas de proyectos del módulo
   dependen de la regla del pipeline: el perímetro nace vacío (no restringe nada), luego entra
   la regla y después los proyectos, así que no hay ventana en que el pipeline quede fuera.
@@ -58,6 +66,13 @@ estén probadas.
   un recurso al otro (mientras tanto la etapa 4 muestra el cambio pendiente).
 - Negativas: en dry-run el perímetro no protege nada; solo registra. Debe haber una fecha y un
   responsable para forzarlo.
+- Negativa: `ignore_changes` solo evita que el plan muestre las altas y reglas de la etapa 4.
+  Cuando el perímetro cambia por otra razón, el proveedor manda `status` o `spec` completos con
+  lo que leyó al planear; con plan y apply separados (ADR 0025), un apply de la etapa 4 de prod
+  entre el plan y el apply de la etapa 2 se perdería. Regla de operación: un plan guardado de la
+  etapa 2 que cambia el perímetro solo se aplica si ningún apply de `4-projects/envs/prod` ocurrió
+  después de crearlo; si ocurrió, se vuelve a planear, y si ya se aplicó un plan viejo, se vuelve
+  a aplicar `4-projects/envs/prod` (README del módulo `vpc-sc` y de la etapa 2).
 - La documentación de VPC-SC (consultada el 2026-11-21) pide que, con Shared VPC, el proyecto
   host esté en el mismo perímetro que los proyectos de la Shared VPC. Por eso la etapa 4 de
   prod da de alta, además de cada proyecto de servicio, el proyecto host

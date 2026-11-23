@@ -142,17 +142,20 @@ variable "dr_teardown" {
   description = <<-EOT
     Vuelta a la región primaria (runbook 04): quita la protección contra borrado solo del clúster
     de GKE y del servicio de Cloud Run de la región de DR (llave "dr"), también en prod; los de
-    la región primaria siguen protegidos. Se aplica primero con dr_active = true (cambio en el
-    lugar) y después dr_active = false destruye el cómputo de DR. Sin este paso el proveedor se
-    niega a destruirlos. Volver a false al terminar.
+    la región primaria siguen protegidos. Primer apply: dr_active = true y dr_teardown = true
+    (cambio en el lugar). Segundo apply: dr_active = false y dr_teardown = false juntos; el
+    proveedor lee la protección del estado al borrar, así que destruye el cómputo de DR. Solo se
+    admite con dr_active = true: no puede quedar encendido y desproteger el cómputo de DR de la
+    siguiente conmutación.
   EOT
   type        = bool
   default     = false
   nullable    = false
 
   validation {
-    condition     = !var.dr_teardown || var.enable_dr
-    error_message = "dr_teardown = true exige enable_dr = true (solo hay cómputo de DR con enable_dr)."
+    # dr_active ya exige enable_dr, así que esta validación también cubre ese caso.
+    condition     = !var.dr_teardown || var.dr_active
+    error_message = "dr_teardown = true exige dr_active = true: se usa solo en el primer apply de la vuelta; el segundo pasa dr_active = false y dr_teardown = false juntos."
   }
 }
 

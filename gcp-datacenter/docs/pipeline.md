@@ -61,9 +61,10 @@ Cada raíz llama a `_terraform-root.yml`, que tiene dos trabajos:
 
 **`plan <raíz>`** (sin entorno de GitHub):
 
-0. `scripts/check-main-tip.sh "$GITHUB_SHA"`: el commit de la ejecución tiene que seguir siendo
-   la punta de `main` (`git ls-remote origin refs/heads/main`). Si no lo es, falla sin planear.
-   Ver "Ejecuciones viejas" abajo. Además guarda la huella (SHA-256) de `GCP_TFVARS_JSON`,
+0. `scripts/check-main-tip.sh "$GITHUB_SHA"` (checkout con `fetch-depth: 0`): el commit de la
+   ejecución tiene que estar en `main` y ningún commit posterior de `main` puede cambiar
+   `gcp-datacenter/` ni `.github/workflows/`. Si no, falla sin planear. Ver "Ejecuciones
+   viejas" abajo. Además guarda la huella (SHA-256) de `GCP_TFVARS_JSON`,
    `GCP_STAGE_SERVICE_ACCOUNTS` y `GCP_STATE_BUCKET` para compararla en el apply (§2).
 1. Autenticación por Workload Identity Federation con la cuenta de la etapa
    (`GCP_STAGE_SERVICE_ACCOUNTS[<etapa>]`). Los spokes usan la de `3-networks`.
@@ -91,21 +92,45 @@ Cada raíz llama a `_terraform-root.yml`, que tiene dos trabajos:
    a correr el flujo y revisar el plan nuevo.
 4. Conftest sobre ese plan.
 5. Otra vez `scripts/check-main-tip.sh "$GITHUB_SHA"`, justo antes del apply: `main` pudo
-   avanzar mientras se esperaba la aprobación.
+   cambiar el despliegue mientras se esperaba la aprobación.
 6. `terraform apply tfplan`: el archivo que revisó Conftest en este mismo trabajo, cuyo
    contenido es el que se aprobó.
 
 **Ejecuciones viejas.** `github.sha` queda fijo en una ejecución: un "Re-run jobs" de una
 ejecución anterior, o una aprobación que llega después de otro merge, planearía y aplicaría el
-código de ese commit encima de lo que ya aplicó una ejecución más nueva. Por eso el trabajo
-`plan` y el `apply` (justo antes de `terraform apply`) exigen que `github.sha` sea la punta de
-`origin/main`; si no, fallan sin tocar nada. Se aplica igual a un push y a `workflow_dispatch`:
-la ejecución manual sobre `main` toma la punta del momento en que se lanza, así que pasa salvo
-que `main` avance antes de su apply; en ese caso hay que lanzarla de nuevo (o dejar correr la
-ejecución del push nuevo, que la `concurrency` pone en cola). `check-main-tip.sh` usa
-`git ls-remote` con la credencial que deja `actions/checkout` (no se pone
-`persist-credentials: false` en esos trabajos). Probado sin GitHub en `scripts/selftest.sh` con
-un remoto local; **VERIFICAR** en la primera ejecución real.
+código de ese commit encima de lo que ya aplicó una ejecución más nueva. Regla de
+`scripts/check-main-tip.sh`, en el trabajo `plan` y otra vez justo antes de `terraform apply`:
+
+- `github.sha` está en `main` (si no, falla);
+- ningún commit posterior de `main` cambia `gcp-datacenter/` ni `.github/workflows/` (si
+  alguno lo hace, falla y lista esos commits). Un merge que no toca esas rutas (README de la
+  raíz, `labs/`, `.github/dependabot.yml`) no detiene la ejecución en curso.
+
+Son las mismas rutas con las que se dispara `apply.yml` (`paths` del `push`; `selftest.sh`
+comprueba que coinciden). Por eso un commit que deja vieja a una ejecución siempre encola otra:
+la `concurrency` `apply-gcp-datacenter` la deja esperando hasta que la vieja termine (o falle
+por esta regla) y entonces planea y aplica desde `1-org` con el código nuevo.
+
+**Estado a medias.** Si la ejecución vieja falla por esta regla después de aplicar algunas
+raíces (por ejemplo `common` y `dev` con el commit A, y la de `qa` se detiene porque se fusionó
+el commit C), las raíces de `qa` y `prod` quedan con lo que tenían de la última ejecución que
+las aplicó, y `dev` ya tiene A. No hay que deshacer nada: la ejecución de C vuelve a planear
+todas las raíces; las que ya están al día dan "sin cambios" y no piden aprobación, y las demás
+se aplican en orden. Si esa ejecución no aparece (por ejemplo, alguien la canceló), lanzar
+`apply.yml` a mano con `workflow_dispatch` sobre `main`. Mientras tanto, `drift.yml` puede
+reportar diferencias en las raíces pendientes.
+
+`workflow_dispatch`: la ejecución manual sobre `main` toma la punta del momento en que se
+lanza; queda vieja solo si después se fusiona un cambio en esas rutas, que trae su propia
+ejecución.
+
+Clones superficiales: los checkouts de `_terraform-root.yml` usan `fetch-depth: 0`; si aun así
+el clon es superficial, el script intenta `git fetch --unshallow` y, si no lo logra, sale con 2
+(falla cerrado), igual que con un remoto ilegible o un commit desconocido. Usa la credencial que
+deja `actions/checkout` (no se pone `persist-credentials: false`). Probado sin GitHub en
+`scripts/selftest.sh` con un remoto local: punta, merge ajeno a las rutas, cambio de Terraform,
+cambio de flujo, commit fuera de `main`, clon superficial y remoto ilegible. **VERIFICAR** en la
+primera ejecución real.
 
 Por qué se vuelve a planear en vez de pasar `tfplan` entre trabajos: el archivo del plan y su
 JSON llevan los valores sensibles en claro, y un artefacto de Actions lo descarga cualquiera con
@@ -177,10 +202,14 @@ registros y respaldo): objetivo "cero recursos manuales, verificado con Cloud As
    regla de `scripts/unmanaged-allowlist.txt` (recursos que crean Google o GKE; de las APIs
    habilitadas, solo una lista cerrada de dependencias que ninguna raíz declara). Lo que queda
    se lista en el resumen y el trabajo falla.
-4. Un listado que no permite concluir nada es error (código 2, el trabajo falla): vacío, mal
-   formado (`[]`, `{}`, `{"results": []}`, elementos sin `name`) o sin ninguno de los proyectos
-   de los estados (otra carpeta, listado incompleto, permisos que faltan). Así "0 no
-   administrados" solo sale de un listado que cubre la carpeta.
+4. Cobertura: el script recibe la carpeta (`--folder`) y toma como proyectos del entorno los
+   `google_project` de los estados cuyo `folder_id` es esa carpeta. Es error (código 2, el
+   trabajo falla) un listado vacío o mal formado (`[]`, `{}`, `{"results": []}`, elementos sin
+   `name`), que ningún proyecto de los estados esté en esa carpeta, o que falte en el listado
+   cualquiera de los proyectos del entorno (listado de otra carpeta, truncado o hecho sin
+   permisos sobre un proyecto); el error nombra los que faltan. Así "0 no administrados" solo
+   sale de un listado que trae todos los proyectos del entorno. HIPÓTESIS: que `folder_id` del
+   estado guarde el número de la carpeta (se acepta también `folders/<N>`).
 
 Un recurso creado a mano no aparece en ningún plan, así que el drift no lo ve: por eso es un
 trabajo aparte. Probado sin GCP con `scripts/testdata/unmanaged/` (`scripts/selftest.sh`).
@@ -312,6 +341,30 @@ repositorio.
 
    Estos nombres no dependen del PR; si se cambia uno en el flujo, hay que cambiarlo también
    aquí y en la regla de GitHub.
+
+   En la misma regla, además:
+   - **"Dismiss stale pull request approvals when new commits are pushed"**;
+   - **"Require approval of the most recent reviewable push"** (con la anterior, una
+     aprobación vale solo para el código que se revisó);
+   - **"Do not allow bypassing the above settings"** (en rulesets: sin "bypass list"; en la
+     protección clásica: incluir a los administradores), para que nadie fusione sin las
+     comprobaciones ni las aprobaciones.
+
+   Las tres vienen apagadas por defecto. **Por qué importan:** en un `pull_request`, GitHub
+   corre los flujos y los scripts del merge commit del PR (`GITHUB_SHA` es ese commit), no los
+   de `main`. `pr.yml`, `scripts/plan-gate.sh`, `scripts/affected-roots.sh`,
+   `scripts/policy-check.sh`, `scripts/check.sh`, las políticas de `policies/` y la
+   configuración de checkov y tflint son los del PR: un PR puede debilitar su propia compuerta
+   (por ejemplo, `exit 0` en `plan-gate.sh` o una exclusión en `.checkov.yaml`) y las
+   comprobaciones obligatorias pasarían. Lo único que lo impide es la revisión de Code Owners
+   (GitHub lee `CODEOWNERS` de la rama base): seguridad es dueña de `/.github/`,
+   `scripts/`, `policies/`, `stages/0-bootstrap/`, `.checkov.yaml`, `.tflint.hcl` y
+   `tests/e2e/` (la prueba de humo antes de qa). Sin las dos opciones de aprobación de arriba,
+   un commit subido después de la aprobación de seguridad entraría sin revisión nueva.
+
+   **Guía de revisión:** quien revisa un PR mira también los `#checkov:skip=` y
+   `# tflint-ignore` en línea de los `.tf` (no pasan por un archivo con dueño de seguridad):
+   cada uno con su motivo, y uno nuevo es motivo para pedir la revisión de seguridad.
 2. **Revisores de los entornos `common` y `prod`** (Settings → Environments → Required
    reviewers). Según la documentación de GitHub, basta con que **uno** de los revisores listados
    apruebe; la regla no cuenta aprobaciones. La aprobación de dos personas la da la protección
@@ -341,8 +394,8 @@ lo impiden: una rama puede traer su propio flujo modificado. Lo mismo vale para 
 Mitigación prevista (no construida): restringir las cuentas que aplican a `main` o a un entorno
 con `attribute.ref` o `attribute.environment` en el `principalSet`, y separar cuentas de solo
 lectura para los `plan`. Mientras tanto, limitar quién tiene permiso de escritura en el
-repositorio; `CODEOWNERS` pone `.github/`, `stages/0-bootstrap/` y `scripts/` a cargo de
-seguridad.
+repositorio; `CODEOWNERS` pone `.github/`, `stages/0-bootstrap/`, `scripts/`, `policies/`,
+`.checkov.yaml`, `.tflint.hcl` y `tests/e2e/` a cargo de seguridad.
 
 ## 6. Acciones fijadas por SHA
 

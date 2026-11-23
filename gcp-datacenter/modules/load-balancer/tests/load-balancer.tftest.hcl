@@ -230,6 +230,11 @@ run "interno_con_certificado_propio" {
   }
 
   assert {
+    condition     = output.internal_certificate_ids == tolist(["projects/example-prod-app/locations/us-east4/certificates/core-internal"])
+    error_message = "La salida internal_certificate_ids debe publicar los certificados del proxy."
+  }
+
+  assert {
     condition     = google_compute_address.this["this"].name == "bnt-prod-app-web-ilb-use4-ip"
     error_message = "El nombre debe llevar el código de la región de DR."
   }
@@ -285,6 +290,25 @@ run "rechaza_backend_sin_verificacion_de_salud" {
     backends = {
       web = {
         groups = [{ group = "projects/example-prod-app/regions/us-central1/instanceGroups/mig-usc1" }]
+      }
+    }
+  }
+
+  expect_failures = [var.backends]
+}
+
+# "" no es un modo válido (coalesce lo trataría como null y lo dejaría pasar).
+run "rechaza_modo_de_balanceo_vacio" {
+  command = plan
+
+  variables {
+    type            = "external"
+    domain_names    = ["app.example.com"]
+    security_policy = "projects/example-prod-app/global/securityPolicies/armor"
+    backends = {
+      web = {
+        groups          = [{ group = "projects/example-prod-app/regions/us-central1/instanceGroups/mig-usc1", balancing_mode = "" }]
+        health_check_id = "projects/example-prod-app/global/healthChecks/hc"
       }
     }
   }

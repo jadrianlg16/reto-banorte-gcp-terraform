@@ -63,3 +63,8 @@ output "dns_authorization_records" {
     }
   }
 }
+
+output "internal_certificate_ids" {
+  description = "Solo \"internal\": certificados de Certificate Manager que usa el proxy HTTPS regional (los recibidos en certificate_manager_certificates o el que crea el módulo). Vacía en \"external\"."
+  value       = try(google_compute_region_target_https_proxy.this["this"].certificate_manager_certificates, [])
+}

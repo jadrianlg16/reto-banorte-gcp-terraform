@@ -242,15 +242,21 @@ Compuerta `TEST_E2E=true`. Variables:
 5. **Conectividad** con Connectivity Tests (análisis de configuración, sin tráfico ni VM):
    - dev → IP privada de Cloud SQL:5432: REACHABLE;
    - Internet → IP del balanceador de dev:443: REACHABLE;
-   - dev → on-premises simulado (192.168.0.10:22 en `onprem-sim`): sin descarte por ruta (el
+   - dev → on-premises simulado (192.168.0.10:22 en `onprem-sim`): ruta por la HA VPN (el
      firewall puede descartar; lo exigido es la propagación de rutas, pendiente 6);
    - dev → prod (si se aplicó prod): UNREACHABLE (sin peering entre spokes, ADR 0003).
 
-   Solo cuentan resultados definidos: UNDETERMINED, AMBIGUOUS o un paso `abort` en una traza
-   fallan siempre, y "sin descarte por ruta" exige al menos una traza y, si el resultado es
-   UNREACHABLE, un paso `drop` cuya causa no sea de ruta. La evaluación
-   (`evaluateConnectivity`) se prueba sin GCP con respuestas de la API escritas a mano en
-   `e2e/testdata/connectivity/` (`go test -run TestEvaluateConnectivity ./e2e/`). Un error al
+   Solo cuentan resultados definidos: UNDETERMINED, AMBIGUOUS, un paso `ABORT` o
+   `VIEWER_PERMISSION_MISSING` fallan siempre. "Ruta por la HA VPN" exige evidencia positiva en
+   cada traza: un paso `ARRIVE_AT_VPN_TUNNEL` o un `APPLY_ROUTE` con
+   `route.nextHopType = NEXT_HOP_VPN_TUNNEL`; antes de ese paso no se admite ningún descarte y
+   después solo `FIREWALL_RULE`. Así no pasa, por ejemplo, un paquete que sale por la ruta por
+   defecto a Internet del spoke (`PRIVATE_TRAFFIC_TO_INTERNET`) ni un `ROUTING_LOOP`. La
+   evaluación (`evaluateConnectivity`) se prueba sin GCP con respuestas escritas a mano en
+   `e2e/testdata/connectivity/`, solo con estados y campos de la referencia v1 de la API de
+   Network Management (la prueba rechaza un estado o campo que no exista)
+   (`go test -run TestEvaluateConnectivity ./e2e/`). HIPÓTESIS: que la API devuelva esas trazas
+   para la VPN hacia `onprem-sim`; VERIFICAR-EN-APPLY. Un error al
    leer una salida o al describir la instancia de Cloud SQL falla la prueba; una salida en null
    por un recurso deshabilitado (balanceador sin backend, `simulate_onprem = false`) solo omite
    su prueba y queda en el registro.

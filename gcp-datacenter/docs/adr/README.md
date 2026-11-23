@@ -55,4 +55,5 @@ verificar". Un ADR aceptado no se edita para cambiar la decisión de fondo: se e
 que lo reemplace y se cambia el estado del anterior a `Reemplazado por NNNN`. Sí se enmienda
 cuando el código cambia un detalle sin revertir la decisión: la línea de `Estado` agrega
 `Enmendado el <fecha>` con un resumen del cambio y, si aplica, el ADR que lo explica (así se
-enmendaron el 2026-11-21 los ADR 0001, 0002, 0005 a 0008, 0010, 0012, 0013, 0015 y 0018).
+enmendaron el 2026-11-21 los ADR 0001, 0002, 0005 a 0010, 0012, 0013, 0015 y 0018, y el
+2026-11-23 otra vez el 0009).

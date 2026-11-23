@@ -12,7 +12,17 @@
       "name": "this",
       "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
       "instances": [
-        {"schema_version": 1, "attributes": {"id": "projects/example-dev-app", "project_id": "example-dev-app", "number": "111111111111", "name": "example-dev-app"}}
+        {"schema_version": 1, "attributes": {"id": "projects/example-dev-app", "project_id": "example-dev-app", "number": "111111111111", "name": "example-dev-app", "folder_id": "222222222222"}}
+      ]
+    },
+    {
+      "module": "module.projects[\"data\"]",
+      "mode": "managed",
+      "type": "google_project",
+      "name": "this",
+      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [
+        {"schema_version": 1, "attributes": {"id": "projects/example-dev-data", "project_id": "example-dev-data", "number": "111111111112", "name": "example-dev-data", "folder_id": "222222222222"}}
       ]
     },
     {

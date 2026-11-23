@@ -82,9 +82,13 @@ fija el `Service` de Kubernetes, fuera de Terraform.
   región activa, y moverlos es el único paso manual de DNS de la conmutación (runbook 04).
 - Vuelta a la región primaria: en prod el clúster de GKE y el servicio de Cloud Run tienen la
   protección contra borrado fija y el proveedor se niega a destruirlos. `dr_teardown = true`
-  (exige `enable_dr`) la quita solo de la instancia `dr`: primero un apply con
-  `dr_active = true` y `dr_teardown = true` (cambio en el lugar), después `dr_active = false`
-  (destruye el cómputo y el balanceador interno de DR) y al final `dr_teardown = false`. El MIG
+  (solo con `dr_active = true`, validado) la quita solo de la instancia `dr`: primero un apply
+  con `dr_active = true` y `dr_teardown = true` (cambio en el lugar; en Cloud Run es un PATCH
+  del servicio vivo, así que en ese apply no se cambia nada más), después uno con
+  `dr_active = false` y `dr_teardown = false` juntos, que destruye el cómputo y el balanceador
+  interno de DR (el proveedor 6.50.0 lee la protección del estado al borrar). La validación
+  impide que `dr_teardown` quede encendido y desproteja el cómputo de DR de la siguiente
+  conmutación. El MIG
   y el balanceador interno no tienen protección contra borrado; la réplica de Cloud SQL, el
   certificado interno de DR y los planes de respaldo dependen de `enable_dr`/`enable_backup`,
   no de `dr_active`, y la vuelta no los toca.
@@ -212,7 +216,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado de Cloud SQL, Filestore, GKE y Cloud Run fuera de prod. En prod debe ser true (los módulos además la fijan). | `bool` | `true` | no |
 | <a name="input_dr_active"></a> [dr\_active](#input\_dr\_active) | Conmutación a DR: crea el cómputo (GKE, MIG, Cloud Run) también en dr\_region y apunta los backends de los balanceadores a esa región. Exige enable\_dr. La promoción de la réplica de Cloud SQL es un paso del runbook, no de Terraform. | `bool` | `false` | no |
 | <a name="input_dr_region"></a> [dr\_region](#input\_dr\_region) | Región de DR (ADR 0002). Siempre se declara: la bóveda de respaldos vive ahí aunque enable\_dr = false. | `string` | `"us-east4"` | no |
-| <a name="input_dr_teardown"></a> [dr\_teardown](#input\_dr\_teardown) | Vuelta a la región primaria (runbook 04): quita la protección contra borrado solo del clúster<br/>de GKE y del servicio de Cloud Run de la región de DR (llave "dr"), también en prod; los de<br/>la región primaria siguen protegidos. Se aplica primero con dr\_active = true (cambio en el<br/>lugar) y después dr\_active = false destruye el cómputo de DR. Sin este paso el proveedor se<br/>niega a destruirlos. Volver a false al terminar. | `bool` | `false` | no |
+| <a name="input_dr_teardown"></a> [dr\_teardown](#input\_dr\_teardown) | Vuelta a la región primaria (runbook 04): quita la protección contra borrado solo del clúster<br/>de GKE y del servicio de Cloud Run de la región de DR (llave "dr"), también en prod; los de<br/>la región primaria siguen protegidos. Primer apply: dr\_active = true y dr\_teardown = true<br/>(cambio en el lugar). Segundo apply: dr\_active = false y dr\_teardown = false juntos; el<br/>proveedor lee la protección del estado al borrar, así que destruye el cómputo de DR. Solo se<br/>admite con dr\_active = true: no puede quedar encendido y desproteger el cómputo de DR de la<br/>siguiente conmutación. | `bool` | `false` | no |
 | <a name="input_enable_backup"></a> [enable\_backup](#input\_enable\_backup) | Crea la bóveda de Backup and DR en dr\_region y los planes diarios (retención de 30 días). | `bool` | `true` | no |
 | <a name="input_enable_cloud_run"></a> [enable\_cloud\_run](#input\_enable\_cloud\_run) | Crea el servicio de Cloud Run (ADR 0012) en la región primaria (y en la de DR con dr\_active). | `bool` | `false` | no |
 | <a name="input_enable_dr"></a> [enable\_dr](#input\_enable\_dr) | DR de datos (prod): réplica de Cloud SQL en dr\_region, bucket de doble región con turbo replication y plan de Backup for GKE. Exige que el spoke de la etapa 3 tenga enable\_dr = true. | `bool` | `false` | no |

@@ -57,6 +57,12 @@ run "dry_run_por_defecto" {
     condition     = length(output.spec_ingress_policies) == 1 && length(output.status_ingress_policies) == 0
     error_message = "Las salidas de reglas de entrada deben reflejar spec (dry-run) y status vacío."
   }
+  # Título único dentro del perímetro: nombre corto + "-pipeline-" + hash de las identidades
+  # (con create_before_destroy, la regla nueva y la vieja conviven un momento).
+  assert {
+    condition     = can(regex("^bnt_prod_sec_perimeter-pipeline-[0-9a-f]{8}$", google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].title))
+    error_message = "El título de la regla del pipeline debe llevar un hash de sus identidades."
+  }
   assert {
     condition     = length(google_access_context_manager_service_perimeter_dry_run_resource.this) == 1 && length(google_access_context_manager_service_perimeter_resource.this) == 0
     error_message = "En dry-run los proyectos entran con el recurso de dry-run."
@@ -128,6 +134,72 @@ run "forzado" {
     condition     = output.enforced == true
     error_message = "La salida enforced debe reflejar el modo."
   }
+}
+
+# Cambiar las identidades cambia el título: el reemplazo con create_before_destroy no crea dos
+# reglas con el mismo título (la API exige títulos únicos dentro del perímetro).
+run "identidades_distintas_cambian_el_titulo" {
+  command = plan
+
+  variables {
+    ingress_identities = [
+      "serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com",
+      "serviceAccount:bnt-tf-5-workloads@example-seed-project.iam.gserviceaccount.com",
+    ]
+  }
+
+  assert {
+    condition     = output.spec_ingress_policies[0].title != run.dry_run_por_defecto.spec_ingress_policies[0].title
+    error_message = "Otro conjunto de identidades debe dar otro título de regla."
+  }
+}
+
+# El orden de las identidades no cambia el título (no hay reemplazo por reordenar).
+run "orden_de_identidades_no_cambia_el_titulo" {
+  command = plan
+
+  variables {
+    ingress_identities = [
+      "serviceAccount:bnt-tf-5-workloads@example-seed-project.iam.gserviceaccount.com",
+      "serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com",
+    ]
+  }
+
+  assert {
+    condition     = output.spec_ingress_policies[0].title == run.identidades_distintas_cambian_el_titulo.spec_ingress_policies[0].title
+    error_message = "El título no debe depender del orden de las identidades."
+  }
+}
+
+run "acepta_salida_con_identidades_sin_tipo" {
+  command = plan
+
+  variables {
+    egress_policies = [{
+      identities = ["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]
+      resources  = ["projects/222222222222"]
+      operations = { "storage.googleapis.com" = [] }
+    }]
+  }
+
+  assert {
+    condition     = length(google_access_context_manager_service_perimeter.this.spec[0].egress_policies) == 1
+    error_message = "Una regla de salida con identities e identity_type null es válida."
+  }
+}
+
+run "rechaza_identity_type_vacio" {
+  command = plan
+
+  variables {
+    egress_policies = [{
+      identity_type = ""
+      resources     = ["projects/222222222222"]
+      operations    = { "storage.googleapis.com" = [] }
+    }]
+  }
+
+  expect_failures = [var.egress_policies]
 }
 
 run "sin_identidades_no_hay_regla" {

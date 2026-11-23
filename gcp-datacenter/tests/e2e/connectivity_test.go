@@ -221,12 +221,17 @@ func summarizeConnectivity(result map[string]any) connectivitySummary {
 			if cause := helpers.PathString(step, "drop.cause"); cause != "" {
 				s.drops = append(s.drops, cause)
 			}
-			if _, isAbort := helpers.Path(step, "abort"); isAbort || helpers.PathString(step, "state") == "ABORT" {
+			state := helpers.PathString(step, "state")
+			if _, isAbort := helpers.Path(step, "abort"); isAbort || state == "ABORT" {
 				cause := helpers.PathString(step, "abort.cause")
 				if cause == "" {
 					cause = "ABORT"
 				}
 				s.aborts = append(s.aborts, cause)
+			}
+			// Sin permiso de lectura sobre un proyecto del camino: el análisis es parcial.
+			if state == "VIEWER_PERMISSION_MISSING" {
+				s.aborts = append(s.aborts, state)
 			}
 		}
 	}
@@ -257,16 +262,45 @@ func evaluateConnectivity(expect string, result map[string]any) error {
 		if s.traces == 0 {
 			return fmt.Errorf("resultado %s sin trazas: no se puede comprobar la ruta", s.result)
 		}
-		if s.result == "UNREACHABLE" && len(s.drops) == 0 {
-			return fmt.Errorf("UNREACHABLE sin paso drop: no se sabe si el descarte es por ruta")
-		}
-		for _, d := range s.drops {
-			if strings.Contains(d, "ROUTE") {
-				return fmt.Errorf("descarte por ruta (%s)", d)
+		for i, trace := range helpers.PathList(result, "reachabilityDetails.traces") {
+			if err := routedThroughVPN(helpers.PathList(trace, "steps")); err != nil {
+				return fmt.Errorf("traza %d: %w", i, err)
 			}
 		}
 	default:
 		return fmt.Errorf("expectativa desconocida %q", expect)
+	}
+	return nil
+}
+
+// routedThroughVPN exige evidencia positiva de que la traza sale hacia on-premises por la HA
+// VPN: un paso ARRIVE_AT_VPN_TUNNEL o un APPLY_ROUTE con route.nextHopType NEXT_HOP_VPN_TUNNEL
+// (Step.State y RouteInfo.NextHopType de la referencia v1 de la API de Network Management).
+// Antes de ese paso no se admite ningún descarte; después, solo FIREWALL_RULE (el firewall de
+// onprem-sim puede descartar; lo que se prueba es la ruta). Sin esa evidencia la ruta no existe
+// aunque ningún descarte diga "ROUTE": por ejemplo, la ruta por defecto a Internet del spoke
+// termina en PRIVATE_TRAFFIC_TO_INTERNET.
+func routedThroughVPN(steps []any) error {
+	viaVPN := false
+	for _, step := range steps {
+		state := helpers.PathString(step, "state")
+		if state == "ARRIVE_AT_VPN_TUNNEL" ||
+			(state == "APPLY_ROUTE" && helpers.PathString(step, "route.nextHopType") == "NEXT_HOP_VPN_TUNNEL") {
+			viaVPN = true
+		}
+		cause := helpers.PathString(step, "drop.cause")
+		if state != "DROP" && cause == "" {
+			continue
+		}
+		if !viaVPN {
+			return fmt.Errorf("descarte %s antes de llegar a un túnel VPN: no hay ruta a on-premises", cause)
+		}
+		if cause != "FIREWALL_RULE" {
+			return fmt.Errorf("descarte %s después del túnel VPN: solo se admite FIREWALL_RULE", cause)
+		}
+	}
+	if !viaVPN {
+		return fmt.Errorf("la traza no pasa por un túnel VPN (ni ARRIVE_AT_VPN_TUNNEL ni ruta NEXT_HOP_VPN_TUNNEL)")
 	}
 	return nil
 }

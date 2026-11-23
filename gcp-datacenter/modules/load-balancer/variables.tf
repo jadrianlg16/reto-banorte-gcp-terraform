@@ -144,7 +144,7 @@ variable "backends" {
   validation {
     condition = alltrue(flatten([
       for b in values(var.backends) : [
-        for g in concat(b.groups, b.dr_groups) : contains(["UTILIZATION", "RATE", "CONNECTION"], coalesce(g.balancing_mode, "UTILIZATION"))
+        for g in concat(b.groups, b.dr_groups) : contains(["UTILIZATION", "RATE", "CONNECTION"], g.balancing_mode == null ? "UTILIZATION" : g.balancing_mode)
       ]
     ]))
     error_message = "balancing_mode debe ser UTILIZATION, RATE o CONNECTION."

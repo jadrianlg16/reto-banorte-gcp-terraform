@@ -627,6 +627,25 @@ run "dev_publicadores_sin_perimetro" {
   }
 }
 
+# Un miembro repetido no rompe el plan (llave duplicada en el mapa de writers).
+run "publicador_repetido_no_rompe_el_plan" {
+  command = plan
+
+  variables {
+    artifact_registry_publishers = {
+      app = [
+        "serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com",
+        "serviceAccount:bnt-ci-app@bnt-common-cicd.iam.gserviceaccount.com",
+      ]
+    }
+  }
+
+  assert {
+    condition     = length(google_artifact_registry_repository_iam_member.writer) == 1
+    error_message = "Un publicador repetido debe dar un solo writer."
+  }
+}
+
 run "rechaza_publicador_persona" {
   command = plan
 

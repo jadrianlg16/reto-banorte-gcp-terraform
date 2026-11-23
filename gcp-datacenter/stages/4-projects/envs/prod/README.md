@@ -35,7 +35,8 @@ Por cada aplicación de `applications` (por defecto una, `app`):
 - **Política de Binary Authorization** del proyecto: `global_policy_evaluation_mode = ENABLE`,
   regla por defecto `ALWAYS_DENY` con `ENFORCED_BLOCK_AND_AUDIT_LOG` y lista de permitidos =
   `<repositorio>/**` más `binary_authorization_allowlist_patterns` (validada: sin `*` solo, sin
-  registros enteros, `**` solo después de `/`). Con `binary_authorization_attestors` la regla
+  registros enteros, comodines solo al final: `*` al final del nombre o después de `/`, `**`
+  solo después de `/`). Con `binary_authorization_attestors` la regla
   pasa a `REQUIRE_ATTESTATION`. La usan GKE (`PROJECT_SINGLETON_POLICY_ENFORCE`) y Cloud Run
   (`use_default`).
 - **Permisos** (todos aditivos, por el módulo `iam` salvo los de etiquetas seguras, que el
@@ -49,10 +50,9 @@ Por cada aplicación de `applications` (por defecto una, `app`):
   por aplicación con publicadores (`..._ingress_policy` o `..._dry_run_ingress_policy`,
   título `<prefix>-prod-<app>-artifact-push`): sus identidades, desde cualquier origen de red,
   solo hacia el proyecto de servicio de esa aplicación y solo `artifactregistry.googleapis.com`
-  (servicio restringido en el perímetro). **Depende de un cambio fuera de esta etapa**: el
-  perímetro de 2-security (módulo `vpc-sc`) debe ignorar sus `ingress_policies` y su regla de
-  las cuentas de etapa debe pasar a un recurso de política aparte; sin eso, el siguiente apply
-  de 2-security quita estas reglas (pendientes-apply).
+  (servicio restringido en el perímetro). Conviven con la regla de las cuentas de etapa de
+  2-security: el perímetro (módulo `vpc-sc`) ignora sus `ingress_policies` y esa regla es un
+  recurso de política aparte (pendiente 53).
 
 ### APIs base
 
@@ -152,6 +152,14 @@ terraform apply tfplan
 
 Orden: después de `3-networks/<env>` y antes de `5-workloads/<env>`. En prod, al pasar el
 perímetro de dry-run a forzado: aplicar 2-security y luego esta etapa.
+
+En prod, después de todo apply de 2-security que cambie el perímetro (por ejemplo
+`vpc_sc_restricted_services`), volver a aplicar esta etapa. El update del perímetro manda
+`status`/`spec` completos con los `resources` e `ingress_policies` que tenía al planear (los
+ignora en el plan, no en el envío): si esta etapa aplicó entre el plan y el apply de 2-security,
+ese apply quita sus altas y las reglas de los publicadores, y el apply siguiente de esta etapa
+las vuelve a crear. La causa es la fuente del proveedor 6.50.0 (revisión del 22 nov 2026); que
+ocurra en GCP es HYPOTHESIS.
 
 Prueba sin GCP: `terraform test` (o `bash scripts/check.sh stages/4-projects/envs/<env>`).
 
@@ -258,7 +266,7 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 | <a name="input_applications"></a> [applications](#input\_applications) | Aplicaciones del entorno: un proyecto de servicio por llave (<prefix>-<environment>-<llave>).<br/>- apis: APIs adicionales a las base que la raíz siempre habilita (ver README).<br/>- secrets: nombres cortos de secretos de 2-security (secret\_ids[environment]) que leen las<br/>  cuentas workload y run de la aplicación.<br/>La llave forma también las cuentas de servicio <prefix>-<environment>-<llave>-<uso>, que no<br/>pueden pasar de 30 caracteres (ADR 0017). | <pre>map(object({<br/>    apis    = optional(set(string), [])<br/>    secrets = optional(set(string), [])<br/>  }))</pre> | <pre>{<br/>  "app": {}<br/>}</pre> | no |
 | <a name="input_artifact_registry_location"></a> [artifact\_registry\_location](#input\_artifact\_registry\_location) | Multirregión del repositorio Docker de cada aplicación (us, eu o asia). Debe existir kms\_key\_ids[environment][<ubicación>]["artifacts"] en el estado de 2-security. | `string` | `"us"` | no |
 | <a name="input_artifact_registry_publishers"></a> [artifact\_registry\_publishers](#input\_artifact\_registry\_publishers) | Identidades que publican imágenes en el repositorio de cada aplicación: llave de<br/>applications → miembros con roles/artifactregistry.writer sobre ese repositorio. Solo<br/>serviceAccount:<cuenta>@<...>.gserviceaccount.com o group:<correo>; nunca user:, allUsers ni<br/>allAuthenticatedUsers (la publicación es del pipeline de la aplicación, no de personas). En<br/>prod las mismas identidades entran por una regla de entrada del perímetro de VPC-SC limitada a<br/>artifactregistry.googleapis.com en el proyecto de servicio de la aplicación (vpc\_sc.tf). | `map(list(string))` | `{}` | no |
-| <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta, con * o ** solo al final y después de una /). Vacío por defecto: ningún registro público. | `list(string)` | `[]` | no |
+| <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta; comodines solo al final: * al final del nombre o después de una /, ** solo después de una /). Vacío por defecto: ningún registro público. | `list(string)` | `[]` | no |
 | <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<nombre>) que la política exige a las imágenes fuera de la lista de permitidos. Vacío: la regla por defecto niega todo (ALWAYS\_DENY); con atestadores pasa a REQUIRE\_ATTESTATION. | `list(string)` | `[]` | no |
 | <a name="input_deletion_policy"></a> [deletion\_policy](#input\_deletion\_policy) | deletion\_policy de los proyectos de servicio: PREVENT (falla al destruir), ABANDON o DELETE. En prod solo PREVENT (lo exige project-factory); en dev se puede usar DELETE para el destroy de prueba. | `string` | `"PREVENT"` | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional para que los IDs de proyecto sean únicos a nivel mundial; se agrega al final con un guion. Vacío: sin sufijo. | `string` | `""` | no |

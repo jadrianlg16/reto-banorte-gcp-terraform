@@ -114,6 +114,7 @@ No modules.
 | <a name="output_dns_authorization_records"></a> [dns\_authorization\_records](#output\_dns\_authorization\_records) | Solo "internal" con certificado creado por el módulo: dominio → registro DNS (name, type, data) que hay que crear para emitir el certificado. |
 | <a name="output_forwarding_rule_names"></a> [forwarding\_rule\_names](#output\_forwarding\_rule\_names) | Nombres de las reglas de reenvío, llaves https y http. |
 | <a name="output_health_check_ids"></a> [health\_check\_ids](#output\_health\_check\_ids) | Mapa llave de backends → ID de la verificación de salud usada (null en backends serverless). |
+| <a name="output_internal_certificate_ids"></a> [internal\_certificate\_ids](#output\_internal\_certificate\_ids) | Solo "internal": certificados de Certificate Manager que usa el proxy HTTPS regional (los recibidos en certificate\_manager\_certificates o el que crea el módulo). Vacía en "external". |
 | <a name="output_ip_address"></a> [ip\_address](#output\_ip\_address) | IP del balanceador: pública global en "external" (para los registros DNS A de domain\_names), interna regional en "internal". |
 | <a name="output_url_map_id"></a> [url\_map\_id](#output\_url\_map\_id) | ID del mapa de URL principal (HTTPS). |
 | <a name="output_url_map_name"></a> [url\_map\_name](#output\_url\_map\_name) | Nombre del mapa de URL principal; sirve para filtrar métricas del balanceador (resource.label.url\_map\_name). |

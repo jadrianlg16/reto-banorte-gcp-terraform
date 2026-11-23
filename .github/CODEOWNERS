@@ -40,3 +40,8 @@
 /.github/                                           @PENDIENTE-seguridad
 /gcp-datacenter/stages/0-bootstrap/                 @PENDIENTE-seguridad
 /gcp-datacenter/scripts/                            @PENDIENTE-seguridad
+# Configuración de los análisis estáticos (una exclusión global aquí apaga una comprobación en
+# todos los PR) y la prueba de humo de dev, que es la compuerta antes de qa.
+/gcp-datacenter/.checkov.yaml                       @PENDIENTE-seguridad
+/gcp-datacenter/.tflint.hcl                         @PENDIENTE-seguridad
+/gcp-datacenter/tests/e2e/                          @PENDIENTE-seguridad

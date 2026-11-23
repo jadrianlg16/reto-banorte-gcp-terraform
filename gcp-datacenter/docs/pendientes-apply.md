@@ -95,7 +95,7 @@ Si falla: en modo simulado ya hay camino: la política jerárquica delega `35.19
 **8. Rango del plano de control de GKE.**
 Qué: si el clúster se crea con Private Service Connect, `gke_master` (`10.X.38.0/28`) queda
 reservado sin uso.
-Dónde: `modules/gke/main.tf:46`.
+Dónde: `modules/gke/main.tf:47`.
 Si falla: no es una falla; anotar que el rango queda libre y quitar la regla
 `allow-gke-control-plane` del spoke si sobra (propuesta).
 
@@ -114,7 +114,7 @@ Si falla: medir por raíz y documentar cuál domina (propuesta).
 Qué: `terraform plan -detailed-exitcode` sale con 0 en todas las raíces después del primer
 apply; `terraform destroy` de `5-workloads/envs/dev`, `4-projects/envs/dev` y
 `3-networks/envs/dev` (en ese orden) no deja recursos.
-Dónde: todas las raíces; marcadores de `modules/gke/main.tf:143`, `modules/backup-dr/main.tf:21`,
+Dónde: todas las raíces; marcadores de `modules/gke/main.tf:144`, `modules/backup-dr/main.tf:21`,
 `modules/network-spoke/main.tf:158`.
 Si falla: cada diferencia perpetua se corrige en el módulo (no con `ignore_changes` a ciegas);
 para el destroy, `deletion_policy = "DELETE"` y `deletion_protection = false` en dev.
@@ -166,7 +166,7 @@ con `log_retention_locked = false`.
 **16. Cloud Run público detrás del balanceador (ADR 0020).**
 Qué: que `invoker_iam_disabled = true` no choque con `iam.allowedPolicyMemberDomains` y que la
 URL `run.app` no sea alcanzable desde internet.
-Dónde: `modules/cloud-run/main.tf:32`.
+Dónde: `modules/cloud-run/main.tf:34`.
 Si falla: dejar `public_via_load_balancer = false` y servir por IAP o con tokens de identidad
 (alternativas del ADR 0020).
 
@@ -400,7 +400,7 @@ Si falla: sin indicación en el código; en dev y qa se puede probar `google_api
 Qué: que el agente de Artifact Registry tenga `cryptoKeyEncrypterDecrypter` sobre la llave
 `artifacts` antes de crear el repositorio y que una llave de la multirregión `us` se acepte para
 un repositorio de esa multirregión.
-Dónde: `stages/4-projects/envs/*/artifacts.tf:32`.
+Dónde: `stages/4-projects/envs/*/artifacts.tf:40`.
 Si falla: repetir el apply si es propagación de IAM (propuesta).
 
 **42. Binary Authorization con la imagen de la aplicación (ADR 0024).**
@@ -411,7 +411,7 @@ perímetro forzado (`binaryauthorization.googleapis.com` no está en
 `vpc_sc_restricted_services`). La prueba de extremo a extremo y los ayudantes de Terratest usan
 por defecto la imagen pública `us-docker.pkg.dev/cloudrun/container/hello`, que esta política
 rechaza (§5).
-Dónde: `stages/4-projects/envs/*/artifacts.tf:68`.
+Dónde: `stages/4-projects/envs/*/artifacts.tf:88`.
 Si falla: revisar `binary_authorization_allowlist_patterns`; para las pruebas, copiar la imagen
 al repositorio de la aplicación con una identidad de `artifact_registry_publishers` (punto 53).
 
@@ -490,12 +490,17 @@ Si falla: corregir el flujo antes de marcar las comprobaciones como obligatorias
 **52. Vuelta de DR con `dr_teardown` (runbook 04).**
 Qué: que el apply con `dr_active = true` y `dr_teardown = true` cambie en el lugar
 `deletion_protection` a `false` en `module.gke["dr"]` y `module.cloud_run["dr"]` (y solo en
-ellos), y que el apply siguiente con `dr_active = false` destruya el cómputo y el balanceador
-interno de DR sin el error de protección del proveedor. El proveedor 6.50.0 trae los mensajes
-"Cannot destroy cluster because deletion_protection is set to true" y "cannot destroy service
-without setting deletion_protection=false and running `terraform apply`" (comprobado con `grep`
-sobre el binario, 21 nov 2026); que la comprobación lea el valor del estado es HYPOTHESIS. Las
-pruebas solo planean los dos pasos con proveedores simulados.
+ellos; en Cloud Run es un PATCH del servicio vivo), y que el apply siguiente con
+`dr_active = false` y `dr_teardown = false` juntos destruya el cómputo y el balanceador interno
+de DR sin el error de protección del proveedor. Que el proveedor lea la protección del estado
+al borrar está comprobado en su fuente, no en GCP: la revisión del 22 nov 2026 encontró
+`d.Get("deletion_protection")` en el Delete del clúster y del servicio de la versión 6.50.0
+(`resource_container_cluster.go:4859`, `resource_cloud_run_v2_service.go:1773`), y el binario
+trae los mensajes "Cannot destroy cluster because deletion_protection is set to true" y "cannot
+destroy service without setting deletion_protection=false and running `terraform apply`"
+(`grep`, 21 nov 2026). Ningún apply lo ha ejercido: las pruebas solo planean los dos pasos con
+proveedores simulados. `dr_teardown` solo se admite con `dr_active = true` (validación), así
+que no puede quedar encendido después de la vuelta.
 Dónde: `stages/5-workloads/envs/*/compute.tf` (`teardown`), `modules/gke/main.tf:16`,
 `modules/cloud-run/main.tf:18`; sin marcador en el código.
 Si falla: sin indicación en el código; el clúster o el servicio de DR quedan en el estado y el
@@ -513,7 +518,7 @@ anterior está resuelto en el código: el perímetro del módulo `vpc-sc` ignora
 no quita la regla de los publicadores. Falta comprobar en el apply que las reglas de las dos
 etapas convivan en el mismo perímetro (cada recurso modifica la lista con el etag del
 perímetro).
-Dónde: `stages/4-projects/envs/*/vpc_sc.tf:53`, `stages/4-projects/envs/*/artifacts.tf`
+Dónde: `stages/4-projects/envs/*/vpc_sc.tf:56`, `stages/4-projects/envs/*/artifacts.tf`
 (`writer`).
 Si falla: sin indicación en el código; con un grupo rechazado, usar cuentas de servicio.
 
@@ -599,15 +604,15 @@ indicación".
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
-| `artifacts.tf:39` (x3) | CMEK del repositorio de Artifact Registry (punto 41) | Ver punto 41 |
-| `artifacts.tf:87` (x3) | Binary Authorization: la imagen del repositorio pasa y otra se rechaza (punto 42) | Ver punto 42 |
+| `artifacts.tf:40` (x3) | CMEK del repositorio de Artifact Registry (punto 41) | Ver punto 41 |
+| `artifacts.tf:88` (x3) | Binary Authorization: la imagen del repositorio pasa y otra se rechaza (punto 42) | Ver punto 42 |
 | `iam.tf:213` (x3) | `networkViewer` en el host más `networkUser` por subred bastan a la etapa 5 para PSA (punto 43) | `networkUser` en el host, decidido en revisión |
 | `iam.tf:274` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
 | `service_agents.tf:10` (x3) | Que `generateServiceIdentity` acepte `sqladmin`, `file`, `redis` y `gkebackup` | Quitar el servicio de la lista (su agente existe al habilitar la API) |
 | `service_agents.tf:12` (x3) | Que los agentes de `container`, `compute` y `run` existan justo después de habilitar sus APIs | Agregar esos servicios a la lista |
 | `service_agents.tf:59` (x3) | Que la API de Cloud Storage acepte el número del proyecto de servicio al consultar su agente (punto 27) | Ver punto 27 |
 | `vpc_sc.tf:10` (x3) | CMEK de `security` con el perímetro forzado (punto 4) | Ver punto 4 |
-| `vpc_sc.tf:53` (x3) | `docker push` de un publicador por la regla de entrada de Artifact Registry; grupos en `identities` (punto 53) | Ver punto 53 |
+| `vpc_sc.tf:56` (x3) | `docker push` de un publicador por la regla de entrada de Artifact Registry; grupos en `identities` (punto 53) | Ver punto 53 |
 
 ### Etapa 5 (`stages/5-workloads/envs/*`)
 

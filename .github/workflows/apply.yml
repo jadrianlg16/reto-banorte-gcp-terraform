@@ -34,8 +34,12 @@ name: apply
 on:
   push:
     branches: [main]
+    # Las mismas rutas que scripts/check-main-tip.sh considera "del despliegue": un commit que
+    # deja vieja a una ejecución en curso siempre trae otra que la retoma (docs/pipeline.md
+    # §1.2, "Ejecuciones viejas").
     paths:
       - "gcp-datacenter/**"
+      - ".github/workflows/**"
   workflow_dispatch:
     inputs:
       omitir_prueba_de_humo:

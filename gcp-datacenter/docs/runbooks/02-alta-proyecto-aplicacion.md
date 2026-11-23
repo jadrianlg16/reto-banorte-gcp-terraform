@@ -126,7 +126,7 @@ Rutas relativas a `gcp-datacenter/`.
    `user:`): recibe `roles/artifactregistry.writer` solo sobre ese repositorio y, en prod, entra
    al perímetro de VPC-SC por la regla `<prefix>-prod-<app>-artifact-push`, limitada a
    `artifactregistry.googleapis.com` en el proyecto de servicio de la aplicación (pendiente 53:
-   depende de un cambio en 2-security). Sin publicadores declarados nadie puede escribir en el
+   falta comprobar en el apply que las reglas de las dos etapas convivan). Sin publicadores declarados nadie puede escribir en el
    repositorio. La etiqueta es una versión (o se usa el digest), nunca `latest`: el repositorio
    tiene etiquetas inmutables y una etiqueta publicada no se puede mover a otra imagen.
 

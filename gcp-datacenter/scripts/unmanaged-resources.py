@@ -4,8 +4,13 @@
 Objetivo de la especificación: "cero recursos manuales", verificado con Cloud Asset Inventory.
 
 Uso:
-    python3 scripts/unmanaged-resources.py --assets ASSETS.json --state S.tfstate [--state ...]
-        [--allowlist scripts/unmanaged-allowlist.txt] [--summary RESUMEN.md] [--report-only]
+    python3 scripts/unmanaged-resources.py --folder folders/<N> --assets ASSETS.json
+        --state S.tfstate [--state ...] [--allowlist scripts/unmanaged-allowlist.txt]
+        [--summary RESUMEN.md] [--report-only]
+
+    --folder     carpeta listada (la del entorno, salida folder_ids de 1-org). Los proyectos de
+                 los estados cuyo `folder_id` es esa carpeta son "los proyectos del entorno":
+                 todos tienen que aparecer en el listado.
 
     ASSETS.json  salida de
                  gcloud asset search-all-resources --scope=folders/<N> --format=json
@@ -37,10 +42,14 @@ Cómo decide que un recurso está administrado:
 
 Lo que queda es "no administrado": se lista y el script sale con 1.
 
-Sale con 2 (también con --report-only) si el listado no sirve para concluir nada: vacío, mal
-formado (`{}`, un objeto sin `results`, elementos sin `name`) o sin ninguno de los proyectos
-de los estados (otra carpeta, listado incompleto o estados de otro entorno). Así un "0 no
-administrados" solo sale de un listado que de verdad cubre el entorno.
+Sale con 2 (también con --report-only) si el listado no sirve para concluir nada:
+- vacío o mal formado (`[]`, `{}`, un objeto sin `results`, elementos sin `name`);
+- ningún proyecto de los estados está en --folder (carpeta equivocada o faltan estados);
+- falta en el listado alguno de los proyectos de los estados que están en --folder (listado
+  de otra carpeta, truncado o hecho sin permisos sobre algún proyecto).
+Así un "0 no administrados" solo sale de un listado que cubre todos los proyectos del entorno.
+HIPÓTESIS (esquema de google 6.50.0, sin estado real): `folder_id` de `google_project` guarda
+el número de la carpeta; se aceptan también `folders/<N>`.
 
 VERIFICAR-EN-APPLY: el formato de `name` de Cloud Asset para cada tipo (número o ID del
 proyecto, ID único de la cuenta de servicio) y que la lista de permitidos cubra los recursos que
@@ -221,9 +230,28 @@ def read_assets(path):
     return data, None
 
 
+def folder_number(value):
+    """`folders/123` o `123` -> "123"; None si no es una carpeta."""
+    m = re.fullmatch(r"(?:folders/)?([0-9]+)", str(value or "").strip())
+    return m.group(1) if m else None
+
+
+def env_projects(states, folder):
+    """(project_id, número) de los google_project de los estados que están en la carpeta."""
+    want = folder_number(folder)
+    out = set()
+    for state in states:
+        for rtype, attrs in state_instances(state):
+            if (rtype == "google_project" and want is not None
+                    and folder_number(attrs.get("folder_id")) == want and attrs.get("number")):
+                out.add((str(attrs.get("project_id")), str(attrs["number"])))
+    return out
+
+
 def main(argv=None):
     here = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(description="Recursos de Cloud Asset Inventory que no están en los estados de Terraform.")
+    parser.add_argument("--folder", required=True, help="folders/<N> o <N>: la carpeta listada")
     parser.add_argument("--assets", required=True)
     parser.add_argument("--state", action="append", default=[], required=True)
     parser.add_argument("--allowlist", default=os.path.join(here, "unmanaged-allowlist.txt"))
@@ -239,14 +267,23 @@ def main(argv=None):
     managed, parents, mig_patterns, aliases = build_managed(states)
     result = classify(assets, managed, parents, mig_patterns, aliases, load_allowlist(args.allowlist))
 
-    # Un listado de otra carpeta, truncado o de una identidad sin permisos no trae ninguno de
-    # los proyectos de los estados: sin esta comprobación daría "0 no administrados".
-    projects = [e for e in result["managed"] if e["assetType"] == PROJECT_ASSET_TYPE]
-    if not projects:
+    # Cobertura: todos los proyectos del entorno (los de los estados en --folder) tienen que
+    # estar en el listado. Un listado de otra carpeta, truncado o hecho sin permisos sobre algún
+    # proyecto daría si no "0 no administrados".
+    expected = env_projects(states, args.folder)
+    if not expected:
         sys.stderr.write(
-            "ERROR: %s: ningún proyecto de los estados aparece en el listado (%d recursos); "
-            "¿carpeta equivocada, listado incompleto o estados de otro entorno?\n"
-            % (args.assets, len(assets)))
+            "ERROR: ningún proyecto de los estados está en %s: ¿carpeta equivocada o faltan los "
+            "estados de 4-projects?\n" % args.folder)
+        return 2
+    listed = {canonical(normalize(a.get("name")), aliases)
+              for a in assets if a.get("assetType") == PROJECT_ASSET_TYPE}
+    missing = sorted(pid for pid, number in expected if "projects/" + number not in listed)
+    if missing:
+        sys.stderr.write(
+            "ERROR: %s: faltan en el listado %d de %d proyectos de %s según los estados: %s "
+            "(¿listado de otra carpeta, truncado o sin permisos?)\n"
+            % (args.assets, len(missing), len(expected), args.folder, ", ".join(missing)))
         return 2
 
     counts = {k: len(v) for k, v in result.items()}
