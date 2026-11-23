@@ -17,8 +17,8 @@ flowchart LR
       mig["MIG regional<br/>Shielded VM · OS Login · imagen endurecida<br/>etiquetas lb_backend e iap_ssh"]
       gke["GKE regional, nodos privados<br/>Workload Identity: KSA app/app → cuenta workload<br/>Binary Authorization · endpoint privado"]
     end
-    ilb["Balanceador interno, uno por región<br/>subred proxy-only · acceso global"]
-    ar[("Artifact Registry bnt-prod-app-app-images-us<br/>multirregión us · CMEK artifacts<br/>lectura: gke-nodes, mig y agente de Cloud Run")]
+    ilb["Balanceador interno, uno por región<br/>subred proxy-only · acceso global<br/>certificado de DR emitido con enable_dr, antes del incidente"]
+    ar[("Artifact Registry bnt-prod-app-app-images-us<br/>multirregión us · CMEK artifacts<br/>lectura: gke-nodes, mig y agente de Cloud Run<br/>escritura: artifact_registry_publishers")]
     binauthz{{"Binary Authorization del proyecto<br/>solo imágenes de ese repositorio (ADR 0024)"}}
     subgraph DATA["7 · Datos solo por IP privada"]
       sql[("Cloud SQL PostgreSQL · PSA<br/>HA regional · PITR · TLS obligatorio<br/>autenticación IAM, sin contraseñas")]
@@ -33,6 +33,7 @@ flowchart LR
   onprem(["On-premises, por el hub"]) --> ilb
   ilb --> run
   ilb --> mig
+  pub(["Publicadores de imágenes<br/>fuera de GCP"]) -- "push: regla de entrada del perímetro<br/>solo Artifact Registry de esa aplicación" --> ar
   ar -- "imágenes" --> run
   ar -- "imágenes" --> gke
   binauthz -. "admite o rechaza la imagen" .-> run
@@ -97,3 +98,6 @@ flowchart LR
 - Ronda de correcciones del 21 nov 2026: Artifact Registry y Binary Authorization por proyecto,
   enlace de Workload Identity, balanceador interno por región con acceso global y
   `artifactregistry` entre los servicios restringidos.
+- Rondas del 22 y 23 nov 2026: publicadores de imágenes (`artifact_registry_publishers`) con
+  permiso de escritura y, en prod, una regla de entrada al perímetro por aplicación; el
+  certificado interno de la región de DR se crea con `enable_dr`, antes de un incidente.

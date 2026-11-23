@@ -48,7 +48,7 @@ flowchart TB
   qaa -- "usa la red" --> qah
   proda -- "usa la red" --> prodh
 
-  perim{{"Perímetro VPC-SC bnt_prod_sec_perimeter<br/>creado en la etapa 2 · dry-run por defecto"}}
+  perim{{"Perímetro VPC-SC bnt_prod_sec_perimeter<br/>creado en la etapa 2 · dry-run por defecto<br/>reglas de entrada como recursos aparte:<br/>cuentas de etapa (etapa 2) y publicadores de imágenes (etapa 4)"}}
   perim -. "alta: etapa 2" .- secp
   perim -. "alta: etapa 4" .- proda
   perim -. "alta: etapa 4" .- prodh
@@ -114,3 +114,6 @@ flowchart TB
   política de denegación de la carpeta `bootstrap`, el estado en la multirregión `US`, WIF por
   `assertion.repository_id`, y Artifact Registry con Binary Authorization en los proyectos de
   servicio.
+- Rondas del 22 y 23 nov 2026: las reglas de entrada del perímetro son recursos separados, para
+  que convivan la de las cuentas de etapa (etapa 2) y las de los publicadores de imágenes
+  (etapa 4 de prod).

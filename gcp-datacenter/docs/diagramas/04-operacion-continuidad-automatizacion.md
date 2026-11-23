@@ -8,11 +8,11 @@ flowchart TB
   subgraph CHG["Cambios (GitHub Actions)"]
     pr["Pull request · pr.yml<br/>check.sh con Terraform 1.9.8 sin pruebas y con 1.16.5 con terraform test<br/>policy-check.sh · selftest.sh · docs.sh --check<br/>con GCP_ENABLED: plan por raíz, Conftest, Infracost<br/>plan-gate: resultado de los planes con nombre fijo"]
     merge["Merge a main<br/>protección de rama con plan-gate obligatorio<br/>(configuración manual en GitHub, depende del plan)"]
-    apply["apply.yml → _terraform-root.yml por raíz<br/>plan sin entorno: Conftest y huella del plan<br/>apply en el entorno: vuelve a planear y aplica si la huella coincide<br/>1-org → 2-security → hub → dev → dev-smoke → qa → prod"]
+    apply["apply.yml → _terraform-root.yml por raíz<br/>check-main-tip.sh: no planea ni aplica un commit viejo de main<br/>plan sin entorno: Conftest y huella del plan<br/>apply en el entorno: vuelve a planear y aplica si la huella coincide<br/>1-org → 2-security → hub → dev → dev-smoke → qa → prod"]
     commonenv["Entornos common y prod<br/>revisores obligatorios (ADR 0025)"]
     smoke["dev-smoke<br/>TestDevSmoke con GCP_AUDIT_SERVICE_ACCOUNT<br/>si falla, qa y prod no se aplican"]
     drift["drift.yml diario<br/>plan -detailed-exitcode<br/>incidencia con etiqueta drift"]
-    unmanaged["drift.yml · recursos no administrados por entorno<br/>Cloud Asset Inventory frente a los estados<br/>construido, sin correr contra GCP"]
+    unmanaged["drift.yml · recursos no administrados por carpeta<br/>common, dev, qa y prod<br/>Cloud Asset Inventory frente a los estados<br/>construido, sin correr contra GCP"]
     tt["terratest.yml nocturno, manual o por etiqueta de módulo"]
   end
   pr --> merge --> apply
@@ -42,7 +42,9 @@ flowchart TB
     backup[("Bóveda de Backup and DR en us-east4<br/>plan diario de Cloud SQL, 30 días<br/>Backup for GKE en us-east4")]
     vpndr["HA VPN de DR en us-east4<br/>on-premises sigue conectado"]
     failover["Conmutación (runbook 04)<br/>promote-replica con gcloud · dr_active = true<br/>cómputo en us-east4 · backends del externo a us-east4<br/>balanceador interno de DR agregado, el primario intacto<br/>objetivos RPO ≤ 15 min y RTO ≤ 4 h, sin medir"]
+    failback["Vuelta a us-central1 (runbook 04)<br/>apply 1: dr_active = true y dr_teardown = true<br/>apply 2: dr_active = false y dr_teardown = false<br/>retira el cómputo de DR; el primario sigue protegido"]
   end
+  failover --> failback
 
   mon -- "alerta" --> failover
   replica --> failover
@@ -95,3 +97,7 @@ flowchart TB
 - Ronda de correcciones del 21 nov 2026: plan y apply separados con huella del plan, `common`
   protegido como `prod`, `plan-gate`, prueba de humo de dev, estado multirregional y VPN de DR en
   la recuperación.
+- Rondas del 22 y 23 nov 2026: `check-main-tip.sh` detiene la ejecución si un commit posterior
+  de `main` cambia `gcp-datacenter/` o `.github/workflows/`; los recursos no administrados se
+  revisan por carpeta (`common`, `dev`, `qa` y `prod`); la vuelta a la región primaria se hace
+  con `dr_teardown` en dos applies.
