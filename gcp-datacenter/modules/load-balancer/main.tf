@@ -301,7 +301,7 @@ resource "google_compute_global_forwarding_rule" "http" {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Balanceador de aplicaciones interno regional (INTERNAL_MANAGED) en la Shared VPC.
+# Balanceador de aplicaciones interno regional (INTERNAL_MANAGED) en la VPC del spoke.
 # Precondición: la subred proxy-only (purpose REGIONAL_MANAGED_PROXY) de var.region existe en la
 # VPC (la crea network-spoke, llaves proxy y proxy_dr de §5). El módulo no la crea.
 # ---------------------------------------------------------------------------------------------

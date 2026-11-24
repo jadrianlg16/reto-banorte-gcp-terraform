@@ -38,7 +38,7 @@ variable "environment" {
 }
 
 variable "application" {
-  description = "Aplicación cuyas cargas crea esta raíz (por defecto app): llave de artifact_registry_repositories[environment] de 1-base y parte de los nombres de las cuentas de ejecución (<prefix>-<environment>-<application>-<uso>), del clúster de GKE, del balanceador, de la política de Cloud Armor y del bucket."
+  description = "La única aplicación del entorno (por defecto app): cada entorno tiene una sola raíz de 3-workloads y por eso una sola aplicación. Es la llave de artifact_registry_repositories[environment] y runtime_service_accounts[environment] de 1-base y parte de los nombres de las cuentas de ejecución (<prefix>-<environment>-<application>-<uso>), del clúster de GKE, del balanceador, de la política de Cloud Armor y del bucket. Otros nombres no la llevan (el servicio de Cloud Run <prefix>-<environment>-app-run-<código de región> y la instancia de Cloud SQL <prefix>-<environment>-data-<sql_instance_name>-<región>): una segunda aplicación en el mismo entorno chocaría con ellos."
   type        = string
   default     = "app"
 

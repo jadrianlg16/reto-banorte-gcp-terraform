@@ -16,7 +16,7 @@ locals {
 
 # La bóveda vive en dr_region (región secundaria) y fija la retención mínima forzada: ningún
 # respaldo se puede borrar antes de retention_days, ni siquiera por un administrador.
-# VERIFICAR-EN-APPLY: la API backupdr.googleapis.com habilitada en el proyecto (la etapa 4 la
+# VERIFICAR-EN-APPLY: la API backupdr.googleapis.com habilitada en el proyecto (0-bootstrap la
 # activa) y que la bóveda en otra región acepte respaldos de VM y Cloud SQL de region.
 # VERIFICAR-EN-APPLY: un destroy (dev) falla mientras la bóveda tenga respaldos dentro de la
 # retención forzada; el runbook de destroy debe contemplarlo.
@@ -34,7 +34,9 @@ resource "google_backup_dr_backup_vault" "this" {
 
 # VERIFICAR-EN-APPLY: el plan de Cloud SQL (sqladmin.googleapis.com/Instance) en provider 6.x y
 # que la cuenta de servicio de la bóveda (salida vault_service_account) tenga los roles que pide
-# Backup and DR sobre los recursos protegidos (se otorgan en la etapa 4 o 5).
+# Backup and DR sobre los recursos protegidos. Ninguna raíz los otorga todavía: la cuenta de la
+# bóveda solo se conoce después de crearla (3-workloads) y la cuenta de cargas del entorno no
+# asigna roles de proyecto.
 resource "google_backup_dr_backup_plan" "this" {
   for_each = var.backup_plans
 

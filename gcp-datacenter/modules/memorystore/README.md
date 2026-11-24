@@ -56,9 +56,9 @@ No modules.
 | <a name="input_environment"></a> [environment](#input\_environment) | Entorno: dev, qa o prod. | `string` | n/a | yes |
 | <a name="input_kms_key"></a> [kms\_key](#input\_kms\_key) | ID de la llave KMS (CMEK) de la instancia; debe estar en la misma región que region. | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
-| <a name="input_network"></a> [network](#input\_network) | VPC de la Shared VPC autorizada, como ID o self link (projects/<host>/global/networks/<red>). La conexión es por Private Service Access. | `string` | n/a | yes |
+| <a name="input_network"></a> [network](#input\_network) | VPC del spoke del entorno autorizada, como ID o self link (projects/<proyecto>/global/networks/<red>). La conexión es por Private Service Access. | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crea la instancia. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto (único, ADR 0029) donde se crea la instancia. | `string` | n/a | yes |
 | <a name="input_region"></a> [region](#input\_region) | Región de la instancia. | `string` | n/a | yes |
 | <a name="input_alternative_location_id"></a> [alternative\_location\_id](#input\_alternative\_location\_id) | Zona de la réplica en STANDARD\_HA; debe ser distinta de location\_id. Nulo: la elige GCP. | `string` | `null` | no |
 | <a name="input_location_id"></a> [location\_id](#input\_location\_id) | Zona principal (por ejemplo us-central1-a). Nulo: la elige GCP. | `string` | `null` | no |

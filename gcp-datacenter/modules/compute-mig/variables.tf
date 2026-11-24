@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde se crean la plantilla, el MIG y el autoescalador."
+  description = "ID del proyecto (único, ADR 0029) donde se crean la plantilla, el MIG y el autoescalador."
   type        = string
 
   validation {
@@ -65,7 +65,7 @@ variable "region_codes" {
 }
 
 variable "subnet" {
-  description = "Self link (o ruta projects/<host>/regions/<región>/subnetworks/<subred>) de la subred compartida del proyecto host."
+  description = "Self link (o ruta projects/<proyecto>/regions/<región>/subnetworks/<subred>) de la subred del spoke del entorno."
   type        = string
 
   validation {
@@ -176,7 +176,7 @@ variable "cooldown_period" {
 }
 
 variable "service_account" {
-  description = "Correo de la cuenta de servicio dedicada de las instancias (uso mig de la etapa 4). No se admite la cuenta de Compute por defecto."
+  description = "Correo de la cuenta de servicio dedicada de las instancias (uso mig, la crea 1-base). No se admite la cuenta de Compute por defecto."
   type        = string
 
   validation {

@@ -44,7 +44,7 @@ No modules.
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_environment"></a> [environment](#input\_environment) | Entorno: dev, qa o prod. | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo "bnt". | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto donde se crea la política de seguridad (proyecto de servicio del entorno, ADR 0005). | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto donde se crea la política de seguridad (el proyecto único, ADR 0029). | `string` | n/a | yes |
 | <a name="input_cve_canary_priority"></a> [cve\_canary\_priority](#input\_cve\_canary\_priority) | Prioridad de la regla fija cve-canary (CVE críticas, incluida Log4Shell). | `number` | `1090` | no |
 | <a name="input_default_rule_action"></a> [default\_rule\_action](#input\_default\_rule\_action) | Acción de la regla por defecto (prioridad 2147483647) para el tráfico que no coincide con otra regla. | `string` | `"allow"` | no |
 | <a name="input_enable_adaptive_protection"></a> [enable\_adaptive\_protection](#input\_enable\_adaptive\_protection) | Activa Adaptive Protection (detección de DDoS de capa 7). Recomendado en prod. | `bool` | `true` | no |

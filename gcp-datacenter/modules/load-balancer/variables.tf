@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde vive el balanceador (ADR 0005)."
+  description = "ID del proyecto (único, ADR 0029) donde vive el balanceador."
   type        = string
 
   validation {
@@ -40,7 +40,7 @@ variable "name" {
 }
 
 variable "type" {
-  description = "\"external\": balanceador de aplicaciones externo global (EXTERNAL_MANAGED). \"internal\": balanceador de aplicaciones interno regional (INTERNAL_MANAGED) en la Shared VPC."
+  description = "\"external\": balanceador de aplicaciones externo global (EXTERNAL_MANAGED). \"internal\": balanceador de aplicaciones interno regional (INTERNAL_MANAGED) en la VPC del spoke."
   type        = string
 
   validation {
@@ -268,7 +268,7 @@ variable "region_short_codes" {
 }
 
 variable "network" {
-  description = "self_link de la VPC de la Shared VPC (salida network_self_link de la etapa 3). Obligatoria en \"internal\"."
+  description = "self_link de la VPC del spoke (salida network_self_link de 2-networks/envs/<env>). Obligatoria en \"internal\"."
   type        = string
   default     = null
 
@@ -279,7 +279,7 @@ variable "network" {
 }
 
 variable "subnet" {
-  description = "self_link de la subred de la Shared VPC donde se reserva la IP interna (subred app de la región activa). Obligatoria en \"internal\". La subred proxy-only de esa región debe existir antes."
+  description = "self_link de la subred del spoke donde se reserva la IP interna (subred app de la región activa). Obligatoria en \"internal\". La subred proxy-only de esa región debe existir antes."
   type        = string
   default     = null
 

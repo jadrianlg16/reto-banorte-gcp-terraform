@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto donde se crea la política de seguridad (proyecto de servicio del entorno, ADR 0005)."
+  description = "ID del proyecto donde se crea la política de seguridad (el proyecto único, ADR 0029)."
   type        = string
 
   validation {

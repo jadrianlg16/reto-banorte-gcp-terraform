@@ -1,5 +1,5 @@
-# Clúster de GKE estándar, privado y VPC nativo sobre una VPC compartida, con pools de nodos
-# administrados aparte. Los valores que exige la especificación (nodos privados, Workload
+# Clúster de GKE estándar, privado y VPC nativo sobre la VPC del spoke del entorno, con pools de
+# nodos administrados aparte. Los valores que exige la especificación (nodos privados, Workload
 # Identity, Binary Authorization, Shielded nodes, CMEK) son fijos y no se exponen como opción.
 
 locals {
@@ -31,7 +31,7 @@ resource "google_container_cluster" "this" {
   location    = var.location
   description = "Clúster ${var.environment} de ${var.name} (administrado por Terraform)."
 
-  # Red: VPC compartida del proyecto host, VPC nativa con rangos secundarios con nombre.
+  # Red: VPC del spoke del entorno (proyecto único), VPC nativa con rangos secundarios con nombre.
   network         = var.network
   subnetwork      = var.subnet
   networking_mode = "VPC_NATIVE"
@@ -56,7 +56,7 @@ resource "google_container_cluster" "this" {
     }
   }
 
-  # VERIFICAR-EN-APPLY: que el endpoint privado sea alcanzable desde la VPC compartida y desde los rangos autorizados (el peering del plano de control no es transitivo hacia el hub ni on-premises).
+  # VERIFICAR-EN-APPLY: que el endpoint privado sea alcanzable desde la VPC del spoke y desde los rangos autorizados (el peering del plano de control no es transitivo hacia el hub ni on-premises).
   master_authorized_networks_config {
     gcp_public_cidrs_access_enabled = false
 
@@ -237,9 +237,9 @@ resource "google_container_node_pool" "this" {
     labels          = each.value.k8s_labels
     resource_labels = var.labels
 
-    # Etiquetas seguras de las VM de los nodos (por ejemplo lb_backend de la etapa 3, para que
-    # el firewall del spoke deje pasar al balanceador y sus verificaciones de salud hacia los NEG).
-    # VERIFICAR-EN-APPLY: que los nodos de un proyecto de servicio acepten etiquetas seguras del proyecto host (roles/resourcemanager.tagUser de la etapa 4 al agente de servicio de GKE).
+    # Etiquetas seguras de las VM de los nodos (por ejemplo lb_backend del spoke, para que el
+    # firewall del spoke deje pasar al balanceador y sus verificaciones de salud hacia los NEG).
+    # VERIFICAR-EN-APPLY: que los nodos acepten las etiquetas seguras del spoke (tagUser de proyecto del agente de GKE, de 0-bootstrap; tagHoldAdmin sobre lb_backend, del spoke; tagUser de la cuenta de cargas sobre el valor, del spoke).
     resource_manager_tags = var.node_resource_manager_tags
 
     dynamic "taint" {
@@ -277,7 +277,7 @@ resource "google_container_node_pool" "this" {
 }
 
 # VERIFICAR-EN-APPLY: que después de un apagado y un encendido de los trabajos de Cloud
-# Scheduler (setAutoscaling y setSize) el plan de la etapa 5 no muestre cambios en estos pools ni
+# Scheduler (setAutoscaling y setSize) el plan de 3-workloads no muestre cambios en estos pools ni
 # en el clúster, con el pool en 0 nodos y con el autoescalado reactivado.
 resource "google_container_node_pool" "scheduled" {
   for_each = var.scheduled_scaling ? var.gke_node_pools : {}

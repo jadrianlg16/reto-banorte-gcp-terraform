@@ -2,8 +2,8 @@ locals {
   region        = var.tier == "ZONAL" ? replace(var.location, "/-[a-z]$/", "") : var.location
   instance_name = "${var.prefix}-${var.environment}-data-${var.name}-${var.region_short_codes[local.region]}"
 
-  # Filestore espera la ruta projects/<host>/global/networks/<red> (Shared VPC); se quita el
-  # prefijo https://... si llega un self link.
+  # Filestore espera la ruta projects/<proyecto>/global/networks/<red>; se quita el prefijo
+  # https://... si llega un self link.
   network = regex("projects/[^/]+/global/networks/[^/]+$", var.network)
 }
 
@@ -37,7 +37,7 @@ resource "google_filestore_instance" "this" {
     }
   }
 
-  # Red por Private Service Access sobre la VPC del host de Shared VPC; solo IP privada.
+  # Red por Private Service Access sobre la VPC del spoke del entorno; solo IP privada.
   networks {
     network           = local.network
     modes             = ["MODE_IPV4"]
@@ -46,7 +46,7 @@ resource "google_filestore_instance" "this" {
   }
 
   # VERIFICAR-EN-APPLY: el agente de servicio de Filestore tiene
-  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga la etapa 4), la instancia
-  # se crea con PRIVATE_SERVICE_ACCESS desde el proyecto de servicio sobre la red del host, y
+  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga 1-base, kms.tf), la
+  # instancia se crea con PRIVATE_SERVICE_ACCESS sobre la red del spoke, y
   # deletion_protection_enabled se acepta en el tier elegido.
 }

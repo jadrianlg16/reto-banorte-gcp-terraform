@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde se crean el servicio y su NEG sin servidor."
+  description = "ID del proyecto (único, ADR 0029) donde se crean el servicio y su NEG sin servidor."
   type        = string
 
   validation {
@@ -79,7 +79,7 @@ variable "image" {
 }
 
 variable "network" {
-  description = "Self link (o ruta projects/<host>/global/networks/<red>) de la VPC compartida del proyecto host, para la salida directa a la VPC."
+  description = "Self link (o ruta projects/<proyecto>/global/networks/<red>) de la VPC del spoke del entorno, para la salida directa a la VPC."
   type        = string
 
   validation {
@@ -126,7 +126,7 @@ variable "network_tags" {
 }
 
 variable "service_account" {
-  description = "Correo de la cuenta de servicio propia del servicio (uso run de la etapa 4). No se admite la cuenta de Compute por defecto."
+  description = "Correo de la cuenta de servicio propia del servicio (uso run, la crea 1-base). No se admite la cuenta de Compute por defecto."
   type        = string
 
   validation {

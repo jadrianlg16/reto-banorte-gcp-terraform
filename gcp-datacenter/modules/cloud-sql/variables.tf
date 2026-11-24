@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde se crea la instancia."
+  description = "ID del proyecto (único, ADR 0029) donde se crea la instancia."
   type        = string
 
   validation {
@@ -158,7 +158,7 @@ variable "availability_type" {
 }
 
 variable "network" {
-  description = "VPC de la Shared VPC donde vive la IP privada, como ID o self link (projects/<host>/global/networks/<red>)."
+  description = "VPC del spoke del entorno donde vive la IP privada, como ID o self link (projects/<proyecto>/global/networks/<red>)."
   type        = string
 
   validation {

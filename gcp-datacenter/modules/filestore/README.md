@@ -50,9 +50,9 @@ No modules.
 | <a name="input_kms_key"></a> [kms\_key](#input\_kms\_key) | ID de la llave KMS (CMEK) de la instancia; debe estar en la región de location. | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
 | <a name="input_location"></a> [location](#input\_location) | Zona (us-central1-a) para ZONAL; región (us-central1) para REGIONAL y ENTERPRISE. | `string` | n/a | yes |
-| <a name="input_network"></a> [network](#input\_network) | VPC de la Shared VPC (host), como ID o self link: projects/<host>/global/networks/<red>. La conexión es por Private Service Access. | `string` | n/a | yes |
+| <a name="input_network"></a> [network](#input\_network) | VPC del spoke del entorno, como ID o self link: projects/<proyecto>/global/networks/<red>. La conexión es por Private Service Access. | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crea la instancia. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto (único, ADR 0029) donde se crea la instancia. | `string` | n/a | yes |
 | <a name="input_capacity_gb"></a> [capacity\_gb](#input\_capacity\_gb) | Capacidad del recurso compartido en GiB. ZONAL: 1024-9984 en pasos de 256 o 10240-102400 en pasos de 2560. REGIONAL: 100-10239 en pasos de 1 o 10240-102400 en pasos de 2560. ENTERPRISE: 1024-10240 en pasos de 256. | `number` | `1024` | no |
 | <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado de la instancia. En prod siempre debe ser true. | `bool` | `true` | no |
 | <a name="input_name"></a> [name](#input\_name) | Parte <recurso> del nombre (§4.2). El nombre final es <prefix>-<environment>-data-<name>-<código de región>. | `string` | `"nfs"` | no |

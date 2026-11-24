@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde se crea el clúster."
+  description = "ID del proyecto (único, ADR 0029) donde se crea el clúster."
   type        = string
 
   validation {
@@ -84,7 +84,7 @@ variable "region_codes" {
 }
 
 variable "network" {
-  description = "Self link (o ruta projects/<host>/global/networks/<red>) de la VPC compartida del proyecto host."
+  description = "Self link (o ruta projects/<proyecto>/global/networks/<red>) de la VPC del spoke del entorno."
   type        = string
 
   validation {
@@ -238,7 +238,7 @@ variable "gke_node_pools" {
 }
 
 variable "node_service_account" {
-  description = "Correo de la cuenta de servicio dedicada de los nodos (uso gke_nodes de la etapa 4). No se admite la cuenta de Compute por defecto."
+  description = "Correo de la cuenta de servicio dedicada de los nodos (uso gke_nodes, la crea 1-base). No se admite la cuenta de Compute por defecto."
   type        = string
 
   validation {

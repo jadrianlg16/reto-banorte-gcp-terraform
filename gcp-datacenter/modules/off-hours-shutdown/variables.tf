@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde viven los trabajos de Cloud Scheduler, la instancia de Cloud SQL y el clúster de GKE."
+  description = "ID del proyecto (único, ADR 0029) donde viven los trabajos de Cloud Scheduler, la instancia de Cloud SQL y el clúster de GKE."
   type        = string
 
   validation {
@@ -122,7 +122,7 @@ variable "gke_step_minutes" {
 }
 
 variable "service_account_email" {
-  description = "Correo de la cuenta de servicio dedicada cuyo token OAuth usan los trabajos (la crea la etapa 4 con un rol personalizado de permisos mínimos). No se admite la cuenta de Compute por defecto."
+  description = "Correo de la cuenta de servicio dedicada cuyo token OAuth usan los trabajos (la crea 1-base con el rol personalizado de permisos mínimos de 0-bootstrap). No se admite la cuenta de Compute por defecto."
   type        = string
 
   validation {

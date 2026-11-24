@@ -83,11 +83,11 @@ No modules.
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
 | <a name="input_location"></a> [location](#input\_location) | Ubicación del clúster: una región (clúster regional) o una zona (clúster zonal, solo fuera de prod). | `string` | n/a | yes |
 | <a name="input_master_cidr"></a> [master\_cidr](#input\_master\_cidr) | Rango /28 privado del plano de control (llave gke\_master de §5). | `string` | n/a | yes |
-| <a name="input_network"></a> [network](#input\_network) | Self link (o ruta projects/<host>/global/networks/<red>) de la VPC compartida del proyecto host. | `string` | n/a | yes |
-| <a name="input_node_service_account"></a> [node\_service\_account](#input\_node\_service\_account) | Correo de la cuenta de servicio dedicada de los nodos (uso gke\_nodes de la etapa 4). No se admite la cuenta de Compute por defecto. | `string` | n/a | yes |
+| <a name="input_network"></a> [network](#input\_network) | Self link (o ruta projects/<proyecto>/global/networks/<red>) de la VPC del spoke del entorno. | `string` | n/a | yes |
+| <a name="input_node_service_account"></a> [node\_service\_account](#input\_node\_service\_account) | Correo de la cuenta de servicio dedicada de los nodos (uso gke\_nodes, la crea 1-base). No se admite la cuenta de Compute por defecto. | `string` | n/a | yes |
 | <a name="input_pods_range"></a> [pods\_range](#input\_pods\_range) | Nombre del rango secundario de la subred para los pods (VPC nativa). | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (por ejemplo, bnt). | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crea el clúster. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto (único, ADR 0029) donde se crea el clúster. | `string` | n/a | yes |
 | <a name="input_services_range"></a> [services\_range](#input\_services\_range) | Nombre del rango secundario de la subred para los servicios (VPC nativa). | `string` | n/a | yes |
 | <a name="input_subnet"></a> [subnet](#input\_subnet) | Self link (o ruta projects/<host>/regions/<región>/subnetworks/<subred>) de la subred compartida donde viven los nodos. | `string` | n/a | yes |
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Nombre completo del clúster, en lugar del que se arma con name y la región. Sirve cuando otra etapa necesita conocer el nombre por convención (en el proyecto único, la regla por clúster de Binary Authorization de 1-base usa <prefix>-<env>-<app>-gke[-dr], ADR 0029 §4). Debe empezar con <prefix>-<environment>-. null: <prefix>-<environment>-app-<name>-<código de región>. | `string` | `null` | no |

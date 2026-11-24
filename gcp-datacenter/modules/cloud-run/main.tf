@@ -1,12 +1,13 @@
-# Servicio de Cloud Run v2 con salida directa a la VPC compartida, entrada solo interna y del
-# balanceador, cuenta de servicio propia y CMEK; más el NEG sin servidor que usa el balanceador.
+# Servicio de Cloud Run v2 con salida directa a la VPC del spoke del entorno, entrada solo interna
+# y del balanceador, cuenta de servicio propia y CMEK; más el NEG sin servidor que usa el
+# balanceador.
 
 locals {
   region_code = lookup(var.region_codes, var.region, "")
   base_name   = "${var.prefix}-${var.environment}-app-${var.name}-${local.region_code}"
 
   # Cloud Run espera rutas de recurso (projects/...), no URL de la API de Compute.
-  # VERIFICAR-EN-APPLY: que la salida directa a la VPC acepte la red y la subred del proyecto host como rutas projects/<host>/... (VPC compartida).
+  # VERIFICAR-EN-APPLY: que la salida directa a la VPC acepte la red y la subred del spoke como rutas projects/<proyecto>/... (proyecto único, sin VPC compartida).
   network_path = trimprefix(var.network, "https://www.googleapis.com/compute/v1/")
   subnet_path  = trimprefix(var.subnet, "https://www.googleapis.com/compute/v1/")
 
