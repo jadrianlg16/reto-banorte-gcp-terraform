@@ -86,8 +86,8 @@ module "run" {
   # Binary Authorization queda activa (valor por defecto del módulo); la política por defecto
   # de un proyecto nuevo admite la imagen de muestra.
   # VERIFICAR-EN-APPLY: que la política del proyecto de pruebas (TERRATEST_PROJECT_ID, o el
-  # efímero con TEST_EPHEMERAL_PROJECTS) no bloquee la imagen. Si es el mismo proyecto de la
-  # landing zone, manda la política única de 1-base (tests/README.md).
+  # efímero con TEST_EPHEMERAL_PROJECTS) no bloquee la imagen. No es el proyecto de la landing
+  # zone: RequireProjectEnv detiene la prueba si coinciden (tests/README.md).
 
   labels = var.labels
 }

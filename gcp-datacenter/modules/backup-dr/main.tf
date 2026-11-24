@@ -20,6 +20,17 @@ locals {
 # activa) y que la bóveda en otra región acepte respaldos de VM y Cloud SQL de region.
 # VERIFICAR-EN-APPLY: un destroy (dev) falla mientras la bóveda tenga respaldos dentro de la
 # retención forzada; el runbook de destroy debe contemplarlo.
+#
+# Restricción de acceso (var.access_restriction, WITHIN_PROJECT por defecto): la bóveda, sus
+# planes y los recursos que respalda están en el mismo proyecto (ADR 0029), así que respaldar y
+# restaurar dentro del proyecto basta. La API usa WITHIN_ORGANIZATION si no se indica nada, y ese
+# valor supone una organización que el proyecto puede no tener (enum AccessRestriction de
+# https://docs.cloud.google.com/backup-disaster-recovery/docs/reference/rest/v1/projects.locations.backupVaults;
+# sección "Backup vault access restriction" de
+# https://docs.cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault, que además
+# dice que el valor es permanente: cambiarlo después de crear la bóveda no está previsto).
+# VERIFICAR-EN-APPLY: que la bóveda se cree con WITHIN_PROJECT en un proyecto sin organización y
+# que los respaldos de VM y Cloud SQL del mismo proyecto entren en ella.
 resource "google_backup_dr_backup_vault" "this" {
   project         = var.project_id
   location        = var.dr_region
@@ -29,7 +40,7 @@ resource "google_backup_dr_backup_vault" "this" {
 
   backup_minimum_enforced_retention_duration = "${local.retention_seconds}s"
   backup_retention_inheritance               = "INHERIT_VAULT_RETENTION"
-  access_restriction                         = "WITHIN_ORGANIZATION"
+  access_restriction                         = var.access_restriction
 }
 
 # VERIFICAR-EN-APPLY: el plan de Cloud SQL (sqladmin.googleapis.com/Instance) en provider 6.x y

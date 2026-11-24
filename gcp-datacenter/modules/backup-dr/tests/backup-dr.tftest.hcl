@@ -33,9 +33,10 @@ run "base_cumple_lo_exigido" {
     error_message = "La retención mínima forzada debe ser de 30 días."
   }
 
+  # Un solo proyecto (ADR 0029): por defecto la bóveda solo acepta recursos del proyecto.
   assert {
-    condition     = google_backup_dr_backup_vault.this.access_restriction == "WITHIN_ORGANIZATION"
-    error_message = "La bóveda debe restringirse a la organización."
+    condition     = google_backup_dr_backup_vault.this.access_restriction == "WITHIN_PROJECT"
+    error_message = "La bóveda debe restringirse al proyecto por defecto."
   }
 
   assert {
@@ -102,6 +103,29 @@ run "con_backup_de_gke" {
     condition     = google_backup_dr_backup_plan_association.this["db"].resource_type == "sqladmin.googleapis.com/Instance"
     error_message = "La asociación debe heredar el tipo del plan."
   }
+}
+
+run "con_organizacion" {
+  command = plan
+
+  variables {
+    access_restriction = "WITHIN_ORGANIZATION"
+  }
+
+  assert {
+    condition     = google_backup_dr_backup_vault.this.access_restriction == "WITHIN_ORGANIZATION"
+    error_message = "access_restriction debe pasar tal cual a la bóveda."
+  }
+}
+
+run "rechaza_restriccion_desconocida" {
+  command = plan
+
+  variables {
+    access_restriction = "ACCESS_RESTRICTION_UNSPECIFIED"
+  }
+
+  expect_failures = [var.access_restriction]
 }
 
 run "rechaza_retencion_menor_a_30" {

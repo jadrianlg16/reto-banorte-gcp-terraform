@@ -218,7 +218,12 @@ jobs:
           for i in $(seq 1 "${ORPHAN_ATTEMPTS}"); do
             # VERIFICAR-EN-APPLY: cuánto tarda Cloud Asset en dejar de listar lo destruido
             # (pendiente 85) y que liste el proyecto mismo con --scope=projects/<ID>.
-            gcloud asset search-all-resources --scope="projects/${PROJECT_ID}" --format=json > "${assets}"
+            # Sin --read-mask el listado trae todos los campos salvo versionedResources (referencia
+            # de gcloud asset search-all-resources), y destroy-orphans.py busca ahí la red de los
+            # restos de GKE: se piden los campos que leen el script y unmanaged-resources.py.
+            gcloud asset search-all-resources --scope="projects/${PROJECT_ID}" --format=json \
+              --read-mask="name,assetType,project,displayName,description,labels,state,additionalAttributes,versionedResources" \
+              > "${assets}"
             set +e
             python3 scripts/destroy-orphans.py "${args[@]}" > /dev/null
             code=$?

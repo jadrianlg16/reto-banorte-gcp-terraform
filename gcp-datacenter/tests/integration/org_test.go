@@ -29,7 +29,7 @@ const domainConstraint = "iam.allowedPolicyMemberDomains"
 // TestOrg comprueba el módulo org (§8, ADR 0029 §1): las políticas de organización aplicadas
 // al proyecto de la prueba (padre projects/<id>) con su valor.
 // Compuerta: TEST_ALLOW_ORG=true y TERRATEST_ORG_ID. Las políticas solo tienen sentido con el
-// proyecto dentro de una organización (sin ella, 1-base no llama al módulo; que la API las
+// proyecto dentro de una organización (sin ella, 0-bootstrap no llama al módulo; que la API las
 // rechace sin organización es HYPOTHESIS), y la cuenta de la prueba necesita
 // roles/orgpolicy.policyAdmin, que solo se da en la organización. TEST_DIRECTORY_CUSTOMER_ID es
 // opcional: con él también se prueba iam.allowedPolicyMemberDomains.

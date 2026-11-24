@@ -17,6 +17,9 @@ module "backup_dr" {
   dr_region      = "us-east4"
   retention_days = 30
 
+  # Bóveda, planes y recursos en el mismo proyecto (valor por defecto, ADR 0029).
+  access_restriction = "WITHIN_PROJECT"
+
   protected_resources = {
     sql = {
       resource = "projects/example-prod-app/instances/bnt-prod-data-sql-usc1"

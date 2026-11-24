@@ -144,6 +144,18 @@ variable "protected_resources" {
   }
 }
 
+variable "access_restriction" {
+  description = "Desde dónde se puede respaldar en la bóveda y hacia dónde restaurar (access_restriction de la API de Backup and DR). WITHIN_PROJECT (por defecto): solo recursos del mismo proyecto, que es el diseño de un solo proyecto (ADR 0029). WITHIN_ORGANIZATION y WITHIN_ORG_BUT_UNRESTRICTED_FOR_BA suponen una organización; UNRESTRICTED no limita nada. La documentación dice que el valor es permanente: se elige antes de crear la bóveda."
+  type        = string
+  default     = "WITHIN_PROJECT"
+  nullable    = false
+
+  validation {
+    condition     = contains(["WITHIN_PROJECT", "WITHIN_ORGANIZATION", "WITHIN_ORG_BUT_UNRESTRICTED_FOR_BA", "UNRESTRICTED"], var.access_restriction)
+    error_message = "access_restriction debe ser WITHIN_PROJECT, WITHIN_ORGANIZATION, WITHIN_ORG_BUT_UNRESTRICTED_FOR_BA o UNRESTRICTED."
+  }
+}
+
 variable "sql_log_retention_days" {
   description = "Solo planes de Cloud SQL (sqladmin.googleapis.com/Instance): días de registros de transacciones que guarda el plan, es decir, la ventana de recuperación a un punto en el tiempo con respaldos mejorados. Igual que transaction_log_retention_days del módulo cloud-sql (7 por defecto, máximo de ENTERPRISE)."
   type        = number
