@@ -1,13 +1,3 @@
-variable "org_id" {
-  description = "ID numérico de la organización; se usa como padre de la política de acceso si el módulo la crea."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[0-9]{6,20}$", var.org_id))
-    error_message = "org_id debe ser el ID numérico de la organización."
-  }
-}
-
 variable "prefix" {
   description = "Prefijo de la empresa para los nombres (por ejemplo, bnt)."
   type        = string
@@ -19,30 +9,24 @@ variable "prefix" {
 }
 
 variable "environment" {
-  description = "Entorno que protege el perímetro (la arquitectura solo crea el de prod)."
+  description = "Entorno del nombre del perímetro. common (el de 1-base) cuando rodea todo el proyecto único (ADR 0029 §1); dev, qa o prod si algún día se separa uno por entorno."
   type        = string
 
   validation {
-    condition     = contains(["dev", "qa", "prod"], var.environment)
-    error_message = "environment debe ser dev, qa o prod."
+    condition     = contains(["common", "dev", "qa", "prod"], var.environment)
+    error_message = "environment debe ser common, dev, qa o prod."
   }
 }
 
 variable "access_policy_id" {
-  description = "ID numérico de una política de Access Context Manager que ya exista. Si es null, el módulo crea la política de la organización (solo puede haber una)."
+  description = "ID numérico de la política de Access Context Manager de la organización, que ya existe (el módulo no la crea: es una por organización y la administra una persona)."
   type        = string
-  default     = null
+  nullable    = false
 
   validation {
-    condition     = var.access_policy_id == null || can(regex("^[0-9]+$", var.access_policy_id))
-    error_message = "access_policy_id debe ser el número de la política (sin accessPolicies/) o null."
+    condition     = can(regex("^[0-9]+$", var.access_policy_id))
+    error_message = "access_policy_id debe ser el número de la política (sin accessPolicies/)."
   }
-}
-
-variable "access_policy_title" {
-  description = "Título de la política de acceso cuando el módulo la crea. Si es null: <prefix>-org-access-policy."
-  type        = string
-  default     = null
 }
 
 variable "perimeter_name" {
@@ -57,7 +41,7 @@ variable "perimeter_name" {
 }
 
 variable "resources" {
-  description = "Proyectos que este módulo mete al perímetro, como projects/<número>. Otras etapas agregan más con sus propios recursos (ver README)."
+  description = "Proyectos que este módulo mete al perímetro, como projects/<número>. Otras raíces pueden agregar más con sus propios recursos (ver README)."
   type        = list(string)
   default     = []
 
@@ -77,7 +61,7 @@ variable "restricted_services" {
   }
   validation {
     condition     = contains(var.restricted_services, "storage.googleapis.com")
-    error_message = "restricted_services debe incluir al menos storage.googleapis.com: el perímetro existe para los datos de prod."
+    error_message = "restricted_services debe incluir al menos storage.googleapis.com: el perímetro existe para los datos del proyecto."
   }
 }
 

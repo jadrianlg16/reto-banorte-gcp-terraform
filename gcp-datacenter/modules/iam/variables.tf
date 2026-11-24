@@ -1,8 +1,8 @@
 variable "bindings" {
   description = <<-EOT
     Asignaciones aditivas de un rol a un miembro sobre un recurso. Campos:
-    - scope: organization, folder, project, billing_account, service_account, storage_bucket,
-      kms_key_ring, kms_crypto_key, secret o subnetwork.
+    - scope: organization, project, service_account, storage_bucket, kms_key_ring,
+      kms_crypto_key, secret o subnetwork.
     - resource: identificador del recurso según scope (ver README).
     - role: rol predefinido (roles/...) o personalizado (organizations/N/roles/... o projects/P/roles/...).
     - member: group:, serviceAccount:, principal:// o principalSet://. Nunca user:.
@@ -28,10 +28,10 @@ variable "bindings" {
 
   validation {
     condition = alltrue([for b in var.bindings : contains([
-      "organization", "folder", "project", "billing_account", "service_account",
-      "storage_bucket", "kms_key_ring", "kms_crypto_key", "secret", "subnetwork",
+      "organization", "project", "service_account", "storage_bucket", "kms_key_ring",
+      "kms_crypto_key", "secret", "subnetwork",
     ], b.scope)])
-    error_message = "scope debe ser organization, folder, project, billing_account, service_account, storage_bucket, kms_key_ring, kms_crypto_key, secret o subnetwork."
+    error_message = "scope debe ser organization, project, service_account, storage_bucket, kms_key_ring, kms_crypto_key, secret o subnetwork."
   }
   validation {
     condition     = alltrue([for b in var.bindings : !startswith(lower(b.member), "user:")])
@@ -56,9 +56,7 @@ variable "bindings" {
   validation {
     condition = alltrue([for b in var.bindings : can(regex(lookup({
       organization    = "^(organizations/)?[0-9]+$"
-      folder          = "^folders/[0-9]+$"
       project         = "^[a-z][a-z0-9-]{4,28}[a-z0-9]$"
-      billing_account = "^[A-F0-9]{6}-[A-F0-9]{6}-[A-F0-9]{6}$"
       service_account = "^projects/[^/]+/serviceAccounts/[^/@]+@[^/]+$"
       storage_bucket  = "^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$"
       kms_key_ring    = "^projects/[^/]+/locations/[^/]+/keyRings/[^/]+$"
@@ -66,7 +64,7 @@ variable "bindings" {
       secret          = "^projects/[^/]+/secrets/[^/]+$"
       subnetwork      = "^projects/[^/]+/regions/[^/]+/subnetworks/[^/]+$"
     }, b.scope, "^$"), b.resource))])
-    error_message = "resource no tiene el formato de su scope (ver README: organizations/<n>, folders/<n>, ID de proyecto, cuenta de facturación, projects/<p>/serviceAccounts/<correo>, nombre de bucket, ID completo de llavero, llave, secreto o subred)."
+    error_message = "resource no tiene el formato de su scope (ver README: organizations/<n>, ID de proyecto, projects/<p>/serviceAccounts/<correo>, nombre de bucket, ID completo de llavero, llave, secreto o subred)."
   }
   validation {
     condition     = alltrue([for b in var.bindings : b.key == null || can(regex("^\\S+$", b.key))])

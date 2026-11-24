@@ -1,17 +1,18 @@
-# Interfaz con las etapas siguientes (§7.0): nombres y tipos fijos.
+# Interfaz con las etapas siguientes (ADR 0029, "Interfaces entre etapas"): nombres y tipos
+# fijos. Una raíz que necesite otra salida lo reporta antes de agregarla.
 
-output "seed_project_id" {
-  description = "ID del proyecto semilla."
-  value       = module.seed_project.project_id
+output "project_id" {
+  description = "ID del proyecto único."
+  value       = var.project_id
 }
 
-output "bootstrap_folder_id" {
-  description = "ID de la carpeta bootstrap (\"folders/<número>\")."
-  value       = module.bootstrap_folder.ids[local.environment]
+output "project_number" {
+  description = "Número del proyecto único."
+  value       = tostring(local.project_number)
 }
 
 output "state_bucket" {
-  description = "Nombre del bucket de estado; las etapas lo reciben como state_bucket y en -backend-config."
+  description = "Nombre del bucket de estado; las raíces lo reciben como state_bucket y en -backend-config."
   value       = google_storage_bucket.state.name
 }
 
@@ -21,8 +22,13 @@ output "state_kms_key_id" {
 }
 
 output "stage_service_accounts" {
-  description = "Mapa etapa (1-org, 2-security, 3-networks, 4-projects, 5-workloads) → correo de su cuenta de servicio."
+  description = "Mapa raíz (1-base, 2-networks, 2-networks/<env>, 3-workloads/<env>) → correo de la cuenta del pipeline que la aplica."
   value       = { for k, sa in google_service_account.stage : k => sa.email }
+}
+
+output "read_service_account" {
+  description = "Correo de la cuenta de solo lectura <prefix>-tf-read (plan, drift, prueba de humo y huérfanos; variable GCP_AUDIT_SERVICE_ACCOUNT)."
+  value       = google_service_account.read.email
 }
 
 output "workload_identity_provider" {
@@ -30,29 +36,17 @@ output "workload_identity_provider" {
   value       = google_iam_workload_identity_pool_provider.github.name
 }
 
-# --- Salidas adicionales ------------------------------------------------------------------
-
-output "seed_project_number" {
-  description = "Número del proyecto semilla."
-  value       = module.seed_project.project_number
-}
-
 output "workload_identity_pool" {
   description = "Nombre completo del pool de WIF."
   value       = google_iam_workload_identity_pool.github.name
 }
 
-output "kms_secret_iam_role_id" {
-  description = "Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 4-projects sobre el proyecto security."
-  value       = google_organization_iam_custom_role.kms_secret_iam_granter.name
-}
-
-output "secret_container_admin_role_id" {
-  description = "Rol personalizado de organización (organizations/<n>/roles/<id>) que la etapa 1 asigna a la cuenta de 2-security sobre el proyecto security: administra contenedores de secretos sin leer sus valores."
-  value       = google_organization_iam_custom_role.secret_container_admin.name
+output "custom_role_ids" {
+  description = "Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret_container_admin, kms_secret_iam_granter, service_account_manager, repository_iam_granter y off_hours_scheduler."
+  value       = { for k in keys(google_project_iam_custom_role.this) : k => local.custom_role_ids[k] }
 }
 
 output "state_iam_conditions" {
-  description = "Mapa etapa → { writes, reads } con los prefijos de estado que cada cuenta escribe y lee (tabla de §6.1), para revisión."
-  value       = { for k, s in local.stages : k => { writes = s.writes, reads = s.reads } }
+  description = "Mapa raíz → { writes, reads }: prefijos del bucket de estado que escribe y que lee la cuenta de cada raíz (ADR 0029 §3). tf-read lee todo el bucket."
+  value       = { for k, r in local.stage_roots : k => { writes = r.writes, reads = r.reads } }
 }

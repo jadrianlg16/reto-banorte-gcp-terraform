@@ -8,8 +8,8 @@ locals {
 
   by_scope = {
     for s in [
-      "organization", "folder", "project", "billing_account", "service_account",
-      "storage_bucket", "kms_key_ring", "kms_crypto_key", "secret", "subnetwork",
+      "organization", "project", "service_account", "storage_bucket", "kms_key_ring",
+      "kms_crypto_key", "secret", "subnetwork",
     ] : s => { for k, b in local.bindings : k => b if b.scope == s }
   }
 }
@@ -34,46 +34,12 @@ resource "google_organization_iam_member" "this" {
   }
 }
 
-resource "google_folder_iam_member" "this" {
-  for_each = local.by_scope["folder"]
-
-  folder = each.value.resource
-  role   = each.value.role
-  member = each.value.member
-
-  dynamic "condition" {
-    for_each = each.value.condition == null ? [] : [each.value.condition]
-    content {
-      title       = condition.value.title
-      expression  = condition.value.expression
-      description = condition.value.description
-    }
-  }
-}
-
 resource "google_project_iam_member" "this" {
   for_each = local.by_scope["project"]
 
   project = each.value.resource
   role    = each.value.role
   member  = each.value.member
-
-  dynamic "condition" {
-    for_each = each.value.condition == null ? [] : [each.value.condition]
-    content {
-      title       = condition.value.title
-      expression  = condition.value.expression
-      description = condition.value.description
-    }
-  }
-}
-
-resource "google_billing_account_iam_member" "this" {
-  for_each = local.by_scope["billing_account"]
-
-  billing_account_id = each.value.resource
-  role               = each.value.role
-  member             = each.value.member
 
   dynamic "condition" {
     for_each = each.value.condition == null ? [] : [each.value.condition]

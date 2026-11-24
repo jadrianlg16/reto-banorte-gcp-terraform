@@ -1,26 +1,25 @@
-# Pruebas unitarias sin GCP: proveedor simulado y solo plan. Casi todas pasan
-# access_policy_id para que el nombre completo del perímetro se conozca en el plan.
+# Pruebas unitarias sin GCP: proveedor simulado y solo plan. El perímetro rodea el proyecto
+# único (environment common, ADR 0029 §1) sobre una política de acceso que ya existe.
 
 mock_provider "google" {}
 
 variables {
-  org_id           = "000000000000"
   prefix           = "bnt"
-  environment      = "prod"
+  environment      = "common"
   access_policy_id = "123456789"
   resources        = ["projects/111111111111"]
   restricted_services = [
     "storage.googleapis.com",
     "sqladmin.googleapis.com",
   ]
-  ingress_identities = ["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]
+  ingress_identities = ["serviceAccount:bnt-tf-base@example-project-id.iam.gserviceaccount.com"]
 }
 
 run "dry_run_por_defecto" {
   command = plan
 
   assert {
-    condition     = google_access_context_manager_service_perimeter.this.name == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter"
+    condition     = google_access_context_manager_service_perimeter.this.name == "accessPolicies/123456789/servicePerimeters/bnt_common_sec_perimeter"
     error_message = "El perímetro no sigue <prefix>_<env>_sec_perimeter dentro de la política."
   }
   assert {
@@ -41,12 +40,12 @@ run "dry_run_por_defecto" {
   }
   assert {
     # Dry-run: la regla de entrada del pipeline es un recurso aparte de spec, no un bloque en
-    # línea (el perímetro ignora sus ingress_policies para no quitar las de la etapa 4).
+    # línea (el perímetro ignora sus ingress_policies para no quitar las de otras raíces).
     condition = alltrue([
       length(google_access_context_manager_service_perimeter.this.spec[0].ingress_policies) == 0,
       length(google_access_context_manager_service_perimeter_ingress_policy.pipeline) == 0,
-      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].perimeter == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter",
-      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_from[0].identities == tolist(["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]),
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].perimeter == "accessPolicies/123456789/servicePerimeters/bnt_common_sec_perimeter",
+      google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_from[0].identities == tolist(["serviceAccount:bnt-tf-base@example-project-id.iam.gserviceaccount.com"]),
       google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_from[0].sources[0].access_level == "*",
       google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_to[0].resources == tolist(["*"]),
       google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].ingress_to[0].operations[0].service_name == "*",
@@ -60,7 +59,7 @@ run "dry_run_por_defecto" {
   # Título único dentro del perímetro: nombre corto + "-pipeline-" + hash de las identidades
   # (con create_before_destroy, la regla nueva y la vieja conviven un momento).
   assert {
-    condition     = can(regex("^bnt_prod_sec_perimeter-pipeline-[0-9a-f]{8}$", google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].title))
+    condition     = can(regex("^bnt_common_sec_perimeter-pipeline-[0-9a-f]{8}$", google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline["pipeline"].title))
     error_message = "El título de la regla del pipeline debe llevar un hash de sus identidades."
   }
   assert {
@@ -68,15 +67,11 @@ run "dry_run_por_defecto" {
     error_message = "En dry-run los proyectos entran con el recurso de dry-run."
   }
   assert {
-    condition     = google_access_context_manager_service_perimeter_dry_run_resource.this["projects/111111111111"].perimeter_name == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter"
+    condition     = google_access_context_manager_service_perimeter_dry_run_resource.this["projects/111111111111"].perimeter_name == "accessPolicies/123456789/servicePerimeters/bnt_common_sec_perimeter"
     error_message = "El alta del proyecto debe apuntar al perímetro."
   }
   assert {
-    condition     = length(google_access_context_manager_access_policy.this) == 0
-    error_message = "Con access_policy_id no se crea política."
-  }
-  assert {
-    condition     = output.perimeter_name == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter" && output.access_policy_id == "123456789"
+    condition     = output.perimeter_name == "accessPolicies/123456789/servicePerimeters/bnt_common_sec_perimeter" && output.access_policy_id == "123456789"
     error_message = "Las salidas no coinciden con el perímetro y la política."
   }
 }
@@ -114,8 +109,8 @@ run "forzado" {
     condition = alltrue([
       length(google_access_context_manager_service_perimeter.this.status[0].ingress_policies) == 0,
       length(google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline) == 0,
-      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].perimeter == "accessPolicies/123456789/servicePerimeters/bnt_prod_sec_perimeter",
-      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_from[0].identities == tolist(["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]),
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].perimeter == "accessPolicies/123456789/servicePerimeters/bnt_common_sec_perimeter",
+      google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_from[0].identities == tolist(["serviceAccount:bnt-tf-base@example-project-id.iam.gserviceaccount.com"]),
       google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_from[0].sources[0].access_level == "*",
       google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_to[0].resources == tolist(["*"]),
       google_access_context_manager_service_perimeter_ingress_policy.pipeline["pipeline"].ingress_to[0].operations[0].service_name == "*",
@@ -143,8 +138,8 @@ run "identidades_distintas_cambian_el_titulo" {
 
   variables {
     ingress_identities = [
-      "serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com",
-      "serviceAccount:bnt-tf-5-workloads@example-seed-project.iam.gserviceaccount.com",
+      "serviceAccount:bnt-tf-base@example-project-id.iam.gserviceaccount.com",
+      "serviceAccount:bnt-tf-wl-prod@example-project-id.iam.gserviceaccount.com",
     ]
   }
 
@@ -160,8 +155,8 @@ run "orden_de_identidades_no_cambia_el_titulo" {
 
   variables {
     ingress_identities = [
-      "serviceAccount:bnt-tf-5-workloads@example-seed-project.iam.gserviceaccount.com",
-      "serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com",
+      "serviceAccount:bnt-tf-wl-prod@example-project-id.iam.gserviceaccount.com",
+      "serviceAccount:bnt-tf-base@example-project-id.iam.gserviceaccount.com",
     ]
   }
 
@@ -176,7 +171,7 @@ run "acepta_salida_con_identidades_sin_tipo" {
 
   variables {
     egress_policies = [{
-      identities = ["serviceAccount:bnt-tf-4-projects@example-seed-project.iam.gserviceaccount.com"]
+      identities = ["serviceAccount:bnt-tf-base@example-project-id.iam.gserviceaccount.com"]
       resources  = ["projects/222222222222"]
       operations = { "storage.googleapis.com" = [] }
     }]
@@ -215,32 +210,35 @@ run "sin_identidades_no_hay_regla" {
   }
 }
 
-run "crea_politica_si_no_hay" {
+run "rechaza_politica_mal_formada" {
   command = plan
 
   variables {
-    access_policy_id = null
+    access_policy_id = "accessPolicies/123456789"
   }
 
-  assert {
-    condition     = length(google_access_context_manager_access_policy.this) == 1
-    error_message = "Sin access_policy_id se debe crear la política."
+  expect_failures = [var.access_policy_id]
+}
+
+run "rechaza_entorno_desconocido" {
+  command = plan
+
+  variables {
+    environment = "security"
   }
-  assert {
-    condition     = google_access_context_manager_access_policy.this[0].parent == "organizations/000000000000" && google_access_context_manager_access_policy.this[0].title == "bnt-org-access-policy"
-    error_message = "La política debe colgar de la organización con el título por defecto."
-  }
+
+  expect_failures = [var.environment]
 }
 
 run "nombre_explicito" {
   command = plan
 
   variables {
-    perimeter_name = "bnt_prod_data"
+    perimeter_name = "bnt_common_data"
   }
 
   assert {
-    condition     = google_access_context_manager_service_perimeter.this.title == "bnt_prod_data"
+    condition     = google_access_context_manager_service_perimeter.this.title == "bnt_common_data"
     error_message = "No se respetó perimeter_name."
   }
 }

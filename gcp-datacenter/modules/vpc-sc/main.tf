@@ -1,13 +1,14 @@
-# Política de Access Context Manager (opcional), perímetro de VPC Service Controls y alta de
-# proyectos en él. La membresía de proyectos y las reglas de entrada se manejan SIEMPRE con
-# recursos separados (..._service_perimeter_resource / ..._dry_run_resource y
-# ..._ingress_policy / ..._dry_run_ingress_policy), tanto las de este módulo como las que
-# agrega la etapa 4 (ADR 0009); el perímetro ignora sus listas de recursos y de reglas de
-# entrada. Las reglas de salida siguen en línea: nadie más las agrega.
+# Perímetro de VPC Service Controls y alta del proyecto en él, sobre una política de Access
+# Context Manager que ya existe (ADR 0029 §1: el perímetro es opcional, rodea todo el proyecto y
+# solo existe con organización; la política de acceso es de la organización y no la crea el
+# pipeline). La membresía de proyectos y las reglas de entrada se manejan SIEMPRE con recursos
+# separados (..._service_perimeter_resource / ..._dry_run_resource y ..._ingress_policy /
+# ..._dry_run_ingress_policy), para que otra raíz pueda agregar los suyos (ADR 0009); el
+# perímetro ignora sus listas de recursos y de reglas de entrada. Las reglas de salida siguen en
+# línea: nadie más las agrega.
 
 locals {
-  create_policy    = var.access_policy_id == null
-  access_policy_id = local.create_policy ? google_access_context_manager_access_policy.this[0].name : var.access_policy_id
+  access_policy_id = var.access_policy_id
   short_name       = coalesce(var.perimeter_name, "${var.prefix}_${var.environment}_sec_perimeter")
   full_name        = "accessPolicies/${local.access_policy_id}/servicePerimeters/${local.short_name}"
 
@@ -29,14 +30,6 @@ locals {
   pipeline_ingress_title = "${local.short_name}-pipeline-${substr(sha256(join(",", sort(var.ingress_identities))), 0, 8)}"
 }
 
-# Solo puede haber una política de organización. Si ya existe, se pasa access_policy_id.
-resource "google_access_context_manager_access_policy" "this" {
-  count = local.create_policy ? 1 : 0
-
-  parent = "organizations/${var.org_id}"
-  title  = coalesce(var.access_policy_title, "${var.prefix}-org-access-policy")
-}
-
 resource "google_access_context_manager_service_perimeter" "this" {
   parent         = "accessPolicies/${local.access_policy_id}"
   name           = local.full_name
@@ -55,7 +48,7 @@ resource "google_access_context_manager_service_perimeter" "this" {
     content {
       restricted_services = status.value.restricted_services
 
-      # Reglas de entrada: recursos aparte (abajo y en la etapa 4).
+      # Reglas de entrada: recursos aparte (abajo y en otras raíces).
 
       dynamic "egress_policies" {
         for_each = status.value.egress_policies
@@ -90,7 +83,7 @@ resource "google_access_context_manager_service_perimeter" "this" {
     content {
       restricted_services = spec.value.restricted_services
 
-      # Reglas de entrada: recursos aparte (abajo y en la etapa 4).
+      # Reglas de entrada: recursos aparte (abajo y en otras raíces).
 
       dynamic "egress_policies" {
         for_each = spec.value.egress_policies
@@ -121,9 +114,9 @@ resource "google_access_context_manager_service_perimeter" "this" {
   }
 
   lifecycle {
-    # Los proyectos y las reglas de entrada entran por recursos separados (abajo y en la
-    # etapa 4). Sin esto, cada apply de la raíz que llama al módulo quitaría los proyectos y
-    # las reglas de entrada que agregó otra etapa (la documentación del proveedor de los
+    # Los proyectos y las reglas de entrada entran por recursos separados (abajo y en otras
+    # raíces). Sin esto, cada apply de la raíz que llama al módulo quitaría los proyectos y
+    # las reglas de entrada que agregó otra raíz (la documentación del proveedor de los
     # recursos ..._ingress_policy y ..._dry_run_ingress_policy exige este ignore_changes).
     ignore_changes = [
       status[0].resources,
@@ -141,8 +134,8 @@ resource "google_access_context_manager_service_perimeter" "this" {
 # título lleva un hash de las identidades para que las dos no choquen (local.pipeline_ingress_title).
 # Se prefiere a quitar create_before_destroy: si la creación de la regla nueva falla, la vieja
 # sigue y el pipeline conserva su acceso; sin create_before_destroy, un fallo dejaría el
-# perímetro forzado sin la regla del pipeline y las etapas 4 y 5 no podrían usar los servicios
-# restringidos de los proyectos de prod hasta un apply correcto de esta etapa (la API de Access
+# perímetro forzado sin la regla del pipeline y las demás raíces no podrían usar los servicios
+# restringidos del proyecto hasta un apply correcto de esta raíz (la API de Access
 # Context Manager es de organización y el perímetro no la restringe).
 # VERIFICAR-EN-APPLY: regla de entrada de las cuentas del pipeline (pendiente 5).
 resource "google_access_context_manager_service_perimeter_ingress_policy" "pipeline" {

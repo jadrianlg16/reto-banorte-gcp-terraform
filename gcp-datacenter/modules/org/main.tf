@@ -1,9 +1,11 @@
 locals {
-  policy_parent = coalesce(var.policy_parent, "organizations/${var.org_id}")
+  policy_parent = "projects/${var.project_id}"
 
-  # Las nueve políticas de organización. Son fijas: el módulo no permite apagar ninguna.
-  # Booleanas: enforce = "TRUE". De lista: deny_all o allowed_values.
-  policies = {
+  # Políticas de organización de la línea base, aplicadas al proyecto único (ADR 0029 §1). Son
+  # fijas: el módulo no permite apagar ninguna. Booleanas: enforce = "TRUE". De lista: deny_all o
+  # allowed_values. compute.skipDefaultNetworkCreation ya no está: solo actúa al crear un
+  # proyecto, y el proyecto ya existe (ADR 0029 §6; la red default se borra a mano).
+  base_policies = {
     "compute.vmExternalIpAccess" = {
       enforce        = null
       deny_all       = "TRUE"
@@ -39,18 +41,6 @@ locals {
       deny_all       = null
       allowed_values = null
     }
-    "compute.skipDefaultNetworkCreation" = {
-      enforce        = "TRUE"
-      deny_all       = null
-      allowed_values = null
-    }
-    "iam.allowedPolicyMemberDomains" = {
-      enforce  = null
-      deny_all = null
-      # VERIFICAR-EN-APPLY: que los agentes de servicio de Google (Logging, Cloud Storage, GKE)
-      # sigan recibiendo roles con esta restricción activa.
-      allowed_values = [var.directory_customer_id]
-    }
     "sql.restrictPublicIp" = {
       enforce        = "TRUE"
       deny_all       = null
@@ -58,15 +48,24 @@ locals {
     }
   }
 
-  sink_name = "${var.prefix}-common-ops-audit-sink"
+  # Solo con cliente de Cloud Identity: sin él no hay dominio que admitir.
+  domain_policy = var.directory_customer_id == null ? {} : {
+    "iam.allowedPolicyMemberDomains" = {
+      enforce  = null
+      deny_all = null
+      # VERIFICAR-EN-APPLY: que los agentes de servicio de Google (Logging, Cloud Storage, GKE)
+      # sigan recibiendo roles con esta restricción activa.
+      allowed_values = [var.directory_customer_id]
+    }
+  }
 
-  # Bucket del destino, si es de Cloud Storage. startswith da un resultado conocido aunque el
-  # nombre del bucket se calcule en el mismo plan.
-  sink_to_storage = startswith(var.log_sink_destination, "storage.googleapis.com/")
+  policies = merge(local.base_policies, local.domain_policy)
 }
 
-# --- Políticas de organización (API v2) -----------------------------------------------------
+# --- Políticas de organización (API v2) sobre el proyecto ------------------------------------
 
+# VERIFICAR-EN-APPLY: que una política con padre projects/<id> se cree con
+# roles/orgpolicy.policyAdmin dado en la organización a la cuenta que aplica.
 resource "google_org_policy_policy" "this" {
   for_each = local.policies
 
@@ -86,23 +85,4 @@ resource "google_org_policy_policy" "this" {
       }
     }
   }
-}
-
-# --- Sink agregado de la organización -------------------------------------------------------
-
-resource "google_logging_organization_sink" "this" {
-  name             = local.sink_name
-  org_id           = var.org_id
-  description      = "Sink agregado de auditoría de toda la organización."
-  destination      = var.log_sink_destination
-  filter           = var.log_sink_filter
-  include_children = true
-}
-
-resource "google_storage_bucket_iam_member" "sink_writer" {
-  for_each = var.grant_sink_writer && local.sink_to_storage ? toset(["this"]) : toset([])
-
-  bucket = trimprefix(var.log_sink_destination, "storage.googleapis.com/")
-  role   = "roles/storage.objectCreator"
-  member = google_logging_organization_sink.this.writer_identity
 }

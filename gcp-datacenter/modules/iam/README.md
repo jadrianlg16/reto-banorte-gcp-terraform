@@ -15,9 +15,7 @@ y los roles básicos `roles/owner` y `roles/editor`.
 | `scope` | Recurso de Terraform | Formato de `resource` |
 |---|---|---|
 | `organization` | `google_organization_iam_member` | `organizations/<n>` o `<n>` |
-| `folder` | `google_folder_iam_member` | `folders/<n>` |
 | `project` | `google_project_iam_member` | ID del proyecto |
-| `billing_account` | `google_billing_account_iam_member` | `XXXXXX-XXXXXX-XXXXXX` |
 | `service_account` | `google_service_account_iam_member` | `projects/<p>/serviceAccounts/<correo>` |
 | `storage_bucket` | `google_storage_bucket_iam_member` | nombre del bucket |
 | `kms_key_ring` | `google_kms_key_ring_iam_member` | `projects/<p>/locations/<l>/keyRings/<r>` |
@@ -25,11 +23,14 @@ y los roles básicos `roles/owner` y `roles/editor`.
 | `secret` | `google_secret_manager_secret_iam_member` | `projects/<p>/secrets/<s>` |
 | `subnetwork` | `google_compute_subnetwork_iam_member` | `projects/<p>/regions/<r>/subnetworks/<s>` |
 
-Se eligieron por lo que consumen las etapas: roles de organización, carpeta y facturación de
-las cuentas de servicio del pipeline (etapa 0), Workload Identity sobre esas cuentas, permisos
-condicionados por prefijo sobre el bucket de estado, IAM por grupos (etapa 1), llaves KMS y
-secretos para agentes de servicio y cuentas de ejecución, y uso de subredes de Shared VPC
-(etapa 4). Todos admiten `condition` (condiciones de IAM).
+Se eligieron por lo que consumen las etapas del diseño de un solo proyecto (ADR 0029): roles
+de proyecto de las cuentas del pipeline, condicionados por prefijo donde el servicio lo admite
+(`0-bootstrap`), el rol de organización opcional para políticas de organización, Workload
+Identity sobre esas cuentas, permisos condicionados por prefijo sobre el bucket de estado, IAM
+de personas por grupos (`1-base`), llaves KMS y secretos para agentes de servicio y cuentas de
+ejecución, y subredes. Ya no hay carpetas ni cuentas de facturación administradas por el
+pipeline: los scopes `folder` y `billing_account` se quitaron. Todos admiten `condition`
+(condiciones de IAM).
 
 ## Llaves del `for_each`
 

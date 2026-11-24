@@ -1,22 +1,48 @@
-variable "org_id" {
-  description = "ID numérico de la organización de GCP (sin el prefijo organizations/)."
+variable "project_id" {
+  description = "ID del proyecto único (ADR 0029 §1). Lo crea una persona con la consola o gcloud y lo liga a una cuenta de facturación de pago; ninguna raíz lo crea ni lo borra."
   type        = string
   nullable    = false
 
   validation {
-    condition     = can(regex("^[0-9]{6,20}$", var.org_id))
-    error_message = "org_id debe ser el número de la organización, sin organizations/."
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id debe ser un ID de proyecto válido (6 a 30 caracteres: minúsculas, dígitos y guiones)."
   }
 }
 
 variable "billing_account" {
-  description = "Cuenta de facturación del proyecto semilla y de los proyectos que crean las etapas (formato XXXXXX-XXXXXX-XXXXXX)."
+  description = "Cuenta de facturación ligada al proyecto (formato XXXXXX-XXXXXX-XXXXXX). Solo se usa para el presupuesto del proyecto; la persona que aplica necesita roles/billing.costsManager en ella."
   type        = string
   nullable    = false
 
   validation {
     condition     = can(regex("^[A-F0-9]{6}-[A-F0-9]{6}-[A-F0-9]{6}$", var.billing_account))
     error_message = "billing_account debe tener la forma XXXXXX-XXXXXX-XXXXXX (hexadecimal en mayúsculas)."
+  }
+}
+
+variable "org_id" {
+  description = "ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). null (por defecto): proyecto sin organización; no se da roles/orgpolicy.policyAdmin a la cuenta de 1-base."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.org_id == null || can(regex("^[0-9]{6,20}$", var.org_id))
+    error_message = "org_id debe ser el número de la organización, sin organizations/, o null."
+  }
+}
+
+variable "access_policy_id" {
+  description = "ID numérico de la política de Access Context Manager de la organización, si existe. Con él, la cuenta de 1-base recibe roles/accesscontextmanager.policyEditor sobre esa política para el perímetro opcional de VPC-SC. null (por defecto): sin perímetro. Exige org_id."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.access_policy_id == null || can(regex("^[0-9]+$", var.access_policy_id))
+    error_message = "access_policy_id debe ser el número de la política (sin accessPolicies/) o null."
+  }
+  validation {
+    condition     = var.access_policy_id == null || var.org_id != null
+    error_message = "access_policy_id solo tiene sentido con org_id: la política de acceso es de una organización."
   }
 }
 
@@ -29,28 +55,47 @@ variable "prefix" {
     condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
     error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
   }
+  validation {
+    condition     = var.prefix != "gcp"
+    error_message = "Los IDs de pools de WIF no pueden empezar con gcp-: elige otro prefix."
+  }
 }
 
-variable "project_suffix" {
-  description = "Sufijo opcional que se agrega al ID del proyecto semilla y al nombre del bucket de estado para que sean únicos a nivel mundial. Vacío: sin sufijo."
+variable "name_suffix" {
+  description = "Sufijo opcional del nombre del bucket de estado para que sea único a nivel mundial (los nombres de bucket son globales). Vacío: sin sufijo."
   type        = string
   default     = ""
   nullable    = false
 
   validation {
-    condition     = can(regex("^[a-z0-9]{0,8}$", var.project_suffix))
-    error_message = "project_suffix: hasta 8 caracteres en minúsculas o dígitos, sin guiones."
+    condition     = can(regex("^[a-z0-9]{0,8}$", var.name_suffix))
+    error_message = "name_suffix: hasta 8 caracteres en minúsculas o dígitos, sin guiones."
   }
 }
 
 variable "primary_region" {
-  description = "Región primaria (ADR 0002). La etapa 0 no crea recursos regionales: el bucket de estado y su llave van en state_bucket_location para sobrevivir a la caída de esta región."
+  description = "Región primaria (ADR 0002). Con dr_region y us forma las ubicaciones de los llaveros de entorno que la condición de IAM de las cuentas de cargas reconoce."
   type        = string
   nullable    = false
 
   validation {
     condition     = can(regex("^[a-z]+-[a-z]+[0-9]+$", var.primary_region))
     error_message = "primary_region debe ser una región, por ejemplo us-central1."
+  }
+}
+
+variable "dr_region" {
+  description = "Región de DR (ADR 0002). Ver primary_region."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z]+-[a-z]+[0-9]+$", var.dr_region))
+    error_message = "dr_region debe ser una región, por ejemplo us-east4."
+  }
+  validation {
+    condition     = var.dr_region != var.primary_region
+    error_message = "dr_region debe ser distinta de primary_region."
   }
 }
 
@@ -74,7 +119,7 @@ variable "location_short_codes" {
 }
 
 variable "state_bucket_location" {
-  description = "Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state_bucket_dual_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary_region (runbook de conmutación a DR). La ubicación de un bucket no se cambia después de crearlo."
+  description = "Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state_bucket_dual_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary_region. La ubicación de un bucket no se cambia después de crearlo."
   type        = string
   default     = "US"
   nullable    = false
@@ -86,7 +131,7 @@ variable "state_bucket_location" {
 }
 
 variable "state_bucket_dual_regions" {
-  description = "Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo [\"us-central1\", \"us-east4\"], primaria y DR del ADR 0002), dentro de state_bucket_location; lleva replicación turbo (RPO de 15 minutos). Vacío (por defecto): bucket multirregional."
+  description = "Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo [\"us-central1\", \"us-east4\"]), dentro de state_bucket_location; lleva replicación turbo. Vacío (por defecto): bucket multirregional."
   type        = list(string)
   default     = []
   nullable    = false
@@ -101,8 +146,20 @@ variable "state_bucket_dual_regions" {
   }
 }
 
+variable "state_versions_to_keep" {
+  description = "Versiones no actuales de cada archivo de estado que se conservan en el bucket; las más viejas se borran. Permiten recuperar un estado dañado."
+  type        = number
+  default     = 20
+  nullable    = false
+
+  validation {
+    condition     = var.state_versions_to_keep >= 5 && floor(var.state_versions_to_keep) == var.state_versions_to_keep
+    error_message = "state_versions_to_keep debe ser un entero mayor o igual a 5."
+  }
+}
+
 variable "github_repository" {
-  description = "Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation (§6.3). Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github_repository_id y github_repository_owner_id, que no se reutilizan si el nombre cambia de dueño."
+  description = "Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation. Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github_repository_id y github_repository_owner_id."
   type        = string
   nullable    = false
 
@@ -113,7 +170,7 @@ variable "github_repository" {
 }
 
 variable "github_repository_id" {
-  description = "ID numérico del repositorio autorizado (afirmación repository_id del token OIDC de GitHub; se obtiene con gh api repos/<dueño>/<repositorio> --jq .id). Es la base de la confianza de WIF: a diferencia del nombre, no se reutiliza si el repositorio se borra o se renombra."
+  description = "ID numérico del repositorio autorizado (afirmación repository_id del token OIDC de GitHub; gh api repos/<dueño>/<repositorio> --jq .id). Es la base de la confianza de WIF: no se reutiliza si el repositorio se borra o se renombra."
   type        = string
   nullable    = false
 
@@ -134,16 +191,53 @@ variable "github_repository_owner_id" {
   }
 }
 
-variable "state_versions_to_keep" {
-  description = "Versiones no actuales de cada archivo de estado que se conservan en el bucket; las más viejas se borran. Permiten recuperar un estado dañado."
-  type        = number
-  default     = 20
+variable "additional_apis" {
+  description = "APIs extra que se habilitan en el proyecto además de las fijas (por ejemplo bigquery.googleapis.com). Se habilitan una sola vez y no se apagan al destruir."
+  type        = set(string)
+  default     = []
   nullable    = false
 
   validation {
-    condition     = var.state_versions_to_keep >= 5 && floor(var.state_versions_to_keep) == var.state_versions_to_keep
-    error_message = "state_versions_to_keep debe ser un entero mayor o igual a 5."
+    condition     = alltrue([for a in var.additional_apis : can(regex("^[a-z0-9.-]+\\.googleapis\\.com$", a))])
+    error_message = "Cada API debe tener la forma <servicio>.googleapis.com."
   }
+}
+
+variable "budget_amount" {
+  description = "Monto mensual del presupuesto del proyecto, en la moneda de la cuenta de facturación (unidades enteras)."
+  type        = number
+  nullable    = false
+
+  validation {
+    condition     = var.budget_amount > 0 && floor(var.budget_amount) == var.budget_amount
+    error_message = "budget_amount debe ser un entero mayor que cero."
+  }
+}
+
+variable "budget_alert_thresholds" {
+  description = "Umbrales de alerta del presupuesto sobre el gasto real, como fracción del monto (0.5 = 50 %). Además se alerta al 100 % del gasto pronosticado."
+  type        = list(number)
+  default     = [0.5, 0.75, 0.9, 1.0]
+  nullable    = false
+
+  validation {
+    condition     = length(var.budget_alert_thresholds) > 0 && alltrue([for t in var.budget_alert_thresholds : t > 0 && t <= 2])
+    error_message = "Cada umbral debe estar entre 0 (exclusivo) y 2."
+  }
+}
+
+variable "enable_protection_tags" {
+  description = "Si es true (por defecto), crea la etiqueta <prefix>-proteccion = etapa-0 y la liga al bucket y al llavero del estado y a las nueve cuentas del pipeline (ADR 0029 §5). false solo si un apply demuestra que las etiquetas no funcionan en el proyecto; la protección queda entonces en los roles condicionados."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "enable_deny_policy" {
+  description = "Si es true (por defecto), crea la política de denegación del proyecto contra las nueve cuentas del pipeline (ADR 0029 §5). Sin etiquetas solo lleva la regla sin condición (WIF, roles personalizados, llaves de cuentas y borrar el proyecto). Quien aplica necesita roles/iam.denyAdmin."
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
 variable "labels" {
@@ -158,16 +252,5 @@ variable "labels" {
   validation {
     condition     = alltrue([for v in values(var.labels) : can(regex("^[a-z0-9_-]{0,63}$", v))])
     error_message = "Los valores de etiquetas van en minúsculas, dígitos, guion o guion bajo (ADR 0016)."
-  }
-}
-
-variable "security_alert_email" {
-  description = "Correo del grupo security_admins (el mismo de groups.security_admins de la etapa 1): recibe las alertas de auditoría del proyecto semilla (CIS 2.5 a 2.12, módulo audit-alerts)."
-  type        = string
-  nullable    = false
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.security_alert_email))
-    error_message = "security_alert_email debe ser un correo válido (el del grupo security_admins)."
   }
 }

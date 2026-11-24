@@ -1,12 +1,19 @@
 # Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
 
-org_id            = "000000000000"
-billing_account   = "000000-000000-000000"
-prefix            = "bnt"
-project_suffix    = ""
-primary_region    = "us-central1"
-github_repository = "example-org/example-repo"
+# Proyecto único que creó una persona y su cuenta de facturación (ADR 0029 §1).
+project_id      = "example-project-id"
+billing_account = "000000-000000-000000"
 
+# Solo si el proyecto está dentro de una organización (si no, dejar comentados).
+# org_id           = "000000000000"
+# access_policy_id = "000000000000"
+
+prefix         = "bnt"
+name_suffix    = ""
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+github_repository = "example-org/example-repo"
 # IDs numéricos del repositorio y de su dueño (base de la confianza de WIF):
 #   gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'
 github_repository_id       = "000000000"
@@ -17,9 +24,12 @@ github_repository_owner_id = "000000000"
 state_bucket_location = "US"
 # state_bucket_dual_regions = ["us-central1", "us-east4"]
 
-# Grupo security_admins (el mismo correo que groups.security_admins de la etapa 1): alertas de
-# auditoría del proyecto semilla (CIS 2.5 a 2.12).
-security_alert_email = "gcp-security-admins@example.com"
+# Presupuesto mensual del proyecto, en la moneda de la cuenta de facturación.
+budget_amount = 300
+
+# Protección del estado (ADR 0029 §5). Apagar solo si un apply demuestra que no funciona.
+enable_protection_tags = true
+enable_deny_policy     = true
 
 labels = {
   app         = "landing-zone"

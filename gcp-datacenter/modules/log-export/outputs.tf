@@ -15,7 +15,7 @@ output "destination" {
 
 output "sink_name" {
   description = "Nombre del sink creado, o null si parent es null."
-  value       = local.parent_type == "none" ? null : local.sink_name
+  value       = var.parent == null ? null : local.sink_name
 }
 
 output "writer_identity" {

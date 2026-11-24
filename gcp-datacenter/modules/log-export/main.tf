@@ -3,24 +3,13 @@ locals {
   bucket_name = join("-", compact([local.base_name, var.name_suffix]))
   sink_name   = "${local.base_name}-sink"
 
-  # El tipo de padre se deduce del prefijo. startswith da un resultado conocido aunque el ID
-  # se calcule en el mismo plan ("folders/<desconocido>"), siempre que el prefijo conocido sea
-  # al menos tan largo como el que se pregunta. Por eso el orden: "folders/" (el más corto),
-  # luego "projects/", y lo demás es organización (la validación ya descartó otros formatos).
-  # El valor debe llegar con su prefijo literal; la salida ids del módulo folders cumple.
-  parent_type = (
-    var.parent == null ? "none" :
-    startswith(var.parent, "folders/") ? "folder" :
-    startswith(var.parent, "projects/") ? "project" : "organization"
-  )
+  # Diseño de un solo proyecto (ADR 0029 §7): solo hay sink de proyecto. Sin parent solo se
+  # crea el bucket.
+  sinks = var.parent == null ? toset([]) : toset(["this"])
 
   destination = "storage.googleapis.com/${google_storage_bucket.this.name}"
 
-  writer_identity = one(concat(
-    [for s in google_logging_organization_sink.this : s.writer_identity],
-    [for s in google_logging_folder_sink.this : s.writer_identity],
-    [for s in google_logging_project_sink.this : s.writer_identity],
-  ))
+  writer_identity = one([for s in google_logging_project_sink.this : s.writer_identity])
 }
 
 # --- CMEK ---------------------------------------------------------------------------------
@@ -101,39 +90,34 @@ resource "google_storage_bucket" "this" {
 
 # --- Sink -----------------------------------------------------------------------------------
 
-resource "google_logging_organization_sink" "this" {
-  for_each = local.parent_type == "organization" ? toset(["this"]) : toset([])
-
-  name             = local.sink_name
-  org_id           = trimprefix(var.parent, "organizations/")
-  destination      = local.destination
-  filter           = var.filter
-  include_children = var.include_children
-}
-
-resource "google_logging_folder_sink" "this" {
-  for_each = local.parent_type == "folder" ? toset(["this"]) : toset([])
-
-  name             = local.sink_name
-  folder           = var.parent
-  destination      = local.destination
-  filter           = var.filter
-  include_children = var.include_children
-}
-
+# Sink de proyecto con identidad de escritura propia. Las exclusiones descartan entradas antes
+# de exportarlas (por ejemplo, los registros de acceso a datos del propio bucket de logs, que
+# de otro modo vuelven al bucket en cada escritura del sink).
+# VERIFICAR-EN-APPLY: que las exclusiones del sink descarten las entradas indicadas y que la
+# identidad del sink escriba en el bucket con CMEK.
 resource "google_logging_project_sink" "this" {
-  for_each = local.parent_type == "project" ? toset(["this"]) : toset([])
+  for_each = local.sinks
 
   name                   = local.sink_name
   project                = trimprefix(var.parent, "projects/")
   destination            = local.destination
   filter                 = var.filter
   unique_writer_identity = true
+
+  dynamic "exclusions" {
+    for_each = var.exclusions
+    content {
+      name        = exclusions.value.name
+      filter      = exclusions.value.filter
+      description = exclusions.value.description
+      disabled    = exclusions.value.disabled
+    }
+  }
 }
 
 # La identidad del sink solo puede crear objetos: no lee ni borra.
 resource "google_storage_bucket_iam_member" "writer" {
-  for_each = local.parent_type == "none" ? toset([]) : toset(["this"])
+  for_each = local.sinks
 
   bucket = google_storage_bucket.this.name
   role   = "roles/storage.objectCreator"

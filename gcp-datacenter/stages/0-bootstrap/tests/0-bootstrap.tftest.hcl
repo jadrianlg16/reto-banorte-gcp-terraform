@@ -1,38 +1,38 @@
-# Prueba de la raíz 0-bootstrap sin GCP: mock_provider y command = plan. Los valores
-# calculados que los módulos validan por formato (carpeta, llave KMS, correos de cuentas de
-# servicio) tienen valores simulados con el formato real.
+# Prueba de la raíz 0-bootstrap sin GCP: mock_provider y command = plan. Los valores calculados
+# que los módulos validan por formato (llave KMS, correos de cuentas de servicio) tienen valores
+# simulados con el formato real.
 
 mock_provider "google" {
   # Los valores simulados se usan ya en el plan (Terraform >= 1.11): así se comprueban el
-  # principalSet exacto, la llave del bucket y el principal de la denegación.
+  # principalSet exacto, la llave del bucket, la etiqueta y el principal de la denegación.
   override_during = plan
 
-  mock_resource "google_folder" {
-    defaults = {
-      folder_id = "111111111111"
-      name      = "folders/111111111111"
-    }
-  }
-  mock_resource "google_project" {
+  mock_data "google_project" {
     defaults = {
       number = "222222222222"
     }
   }
+  mock_data "google_storage_project_service_account" {
+    defaults = {
+      email_address = "service-222222222222@gs-project-accounts.iam.gserviceaccount.com"
+    }
+  }
   mock_resource "google_kms_key_ring" {
     defaults = {
-      id = "projects/bnt-bootstrap-seed/locations/us/keyRings/bnt-bootstrap-sec-keyring-us"
+      id = "projects/example-project-id/locations/us/keyRings/bnt-bootstrap-sec-keyring-us"
     }
   }
   mock_resource "google_kms_crypto_key" {
     defaults = {
-      id = "projects/bnt-bootstrap-seed/locations/us/keyRings/bnt-bootstrap-sec-keyring-us/cryptoKeys/bnt-bootstrap-sec-state"
+      id = "projects/example-project-id/locations/us/keyRings/bnt-bootstrap-sec-keyring-us/cryptoKeys/bnt-bootstrap-sec-state"
     }
   }
   mock_resource "google_service_account" {
     defaults = {
-      email  = "bnt-tf-stage@bnt-bootstrap-seed.iam.gserviceaccount.com"
-      member = "serviceAccount:bnt-tf-stage@bnt-bootstrap-seed.iam.gserviceaccount.com"
-      name   = "projects/bnt-bootstrap-seed/serviceAccounts/bnt-tf-stage@bnt-bootstrap-seed.iam.gserviceaccount.com"
+      email     = "bnt-tf-stage@example-project-id.iam.gserviceaccount.com"
+      member    = "serviceAccount:bnt-tf-stage@example-project-id.iam.gserviceaccount.com"
+      name      = "projects/example-project-id/serviceAccounts/bnt-tf-stage@example-project-id.iam.gserviceaccount.com"
+      unique_id = "100000000000000000001"
     }
   }
   mock_resource "google_iam_workload_identity_pool" {
@@ -45,14 +45,15 @@ mock_provider "google" {
       name = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/providers/bnt-bootstrap-sec-github"
     }
   }
-  mock_resource "google_organization_iam_custom_role" {
+  mock_resource "google_tags_tag_key" {
     defaults = {
-      name = "organizations/000000000000/roles/bntTfKmsSecretIamGranter"
+      id              = "tagKeys/333333333333"
+      namespaced_name = "example-project-id/bnt-proteccion"
     }
   }
-  mock_data "google_storage_project_service_account" {
+  mock_resource "google_tags_tag_value" {
     defaults = {
-      email_address = "service-222222222222@gs-project-accounts.iam.gserviceaccount.com"
+      id = "tagValues/444444444444"
     }
   }
 }
@@ -62,16 +63,16 @@ mock_provider "google-beta" {}
 # Mismos valores que terraform.tfvars.example, salvo los IDs de GitHub: aquí son distintos
 # entre sí para que la prueba distinga el ID del repositorio del de su dueño.
 variables {
-  org_id                     = "000000000000"
+  project_id                 = "example-project-id"
   billing_account            = "000000-000000-000000"
   prefix                     = "bnt"
-  project_suffix             = ""
   primary_region             = "us-central1"
+  dr_region                  = "us-east4"
   github_repository          = "example-org/example-repo"
   github_repository_id       = "100000001"
   github_repository_owner_id = "200000002"
   state_bucket_location      = "US"
-  security_alert_email       = "gcp-security-admins@example.com"
+  budget_amount              = 300
   labels = {
     app         = "landing-zone"
     owner       = "plataforma"
@@ -82,233 +83,351 @@ variables {
 run "plan_con_valores_de_ejemplo" {
   command = plan
 
-  # Nombres (§4.2 y ADR 0017).
+  # --- Proyecto, APIs y valores únicos (ADR 0029 §2 y §4) ---
   assert {
-    condition     = output.seed_project_id == "bnt-bootstrap-seed"
-    error_message = "El proyecto semilla debe llamarse <prefix>-bootstrap-seed."
+    condition     = output.project_id == "example-project-id" && output.project_number == "222222222222"
+    error_message = "project_id y project_number deben salir del proyecto dado."
   }
   assert {
-    condition     = startswith(output.bootstrap_folder_id, "folders/")
-    error_message = "bootstrap_folder_id debe tener la forma folders/<número>."
+    condition = alltrue([for a in [
+      "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "sts.googleapis.com", "cloudkms.googleapis.com",
+      "storage.googleapis.com", "compute.googleapis.com", "dns.googleapis.com", "servicenetworking.googleapis.com",
+      "networkmanagement.googleapis.com", "secretmanager.googleapis.com", "container.googleapis.com",
+      "sqladmin.googleapis.com", "cloudasset.googleapis.com", "essentialcontacts.googleapis.com",
+      "billingbudgets.googleapis.com", "cloudscheduler.googleapis.com", "binaryauthorization.googleapis.com",
+    ] : contains(keys(google_project_service.this), a)])
+    error_message = "Faltan APIs del proyecto (todas viven aquí, una sola vez)."
   }
+  assert {
+    condition     = alltrue([for s in google_project_service.this : s.disable_on_destroy == false && s.project == "example-project-id"])
+    error_message = "Ninguna API se apaga al destruir (ADR 0029 §2)."
+  }
+  assert {
+    condition     = toset(keys(google_project_service_identity.this)) == toset(["artifactregistry.googleapis.com", "file.googleapis.com", "gkebackup.googleapis.com", "pubsub.googleapis.com", "redis.googleapis.com", "secretmanager.googleapis.com", "sqladmin.googleapis.com"])
+    error_message = "Los agentes de servicio que 1-base usa se crean aquí."
+  }
+  assert {
+    condition     = google_compute_project_metadata_item.os_login.key == "enable-oslogin" && google_compute_project_metadata_item.os_login.value == "TRUE"
+    error_message = "OS Login debe quedar activo en el proyecto (CIS 4.4)."
+  }
+  assert {
+    condition     = google_project_default_service_accounts.this.action == "DEPRIVILEGE"
+    error_message = "La cuenta de Compute por defecto debe quedar sin roles/editor."
+  }
+  assert {
+    condition = alltrue([
+      google_billing_budget.project.budget_filter[0].projects == toset(["projects/222222222222"]),
+      google_billing_budget.project.display_name == "bnt-bootstrap-ops-budget",
+      google_billing_budget.project.amount[0].specified_amount[0].units == "300",
+    ])
+    error_message = "El presupuesto va filtrado al proyecto único."
+  }
+
+  # --- Estado (§6.1) ---
   assert {
     condition     = output.state_bucket == "bnt-bootstrap-ops-tfstate"
     error_message = "El bucket de estado debe llamarse <prefix>-bootstrap-ops-tfstate."
   }
   assert {
-    condition = alltrue([for k in keys(local.stages) :
-      google_service_account.stage[k].account_id == "bnt-tf-${k}"
-    ])
-    error_message = "Las cuentas de servicio deben llamarse <prefix>-tf-<etapa>."
-  }
-  assert {
-    condition     = google_iam_workload_identity_pool.github.workload_identity_pool_id == "bnt-bootstrap-sec-wif-pool"
-    error_message = "Nombre del pool de WIF fuera de convención."
-  }
-
-  # CIS (docs/cumplimiento-cis.md): Cloud Asset (2.14) y Essential Contacts (API del proyecto
-  # de cuota de la etapa 1, 1.17) en el semilla; métricas y alertas de auditoría (2.5 a 2.12)
-  # hacia security_admins; y el rol de contactos de la cuenta de 1-org en la organización.
-  assert {
-    condition     = alltrue([for a in ["cloudasset.googleapis.com", "essentialcontacts.googleapis.com", "monitoring.googleapis.com"] : contains(module.seed_project.enabled_apis, a)])
-    error_message = "El proyecto semilla debe habilitar Cloud Asset, Essential Contacts y Monitoring."
-  }
-  assert {
-    condition     = length(module.seed_audit_alerts.metric_names) == 9 && module.seed_audit_alerts.metric_names["owner"] == "bnt-bootstrap-ops-audit-owner"
-    error_message = "El proyecto semilla debe tener las métricas de auditoría de CIS 2.5 a 2.12."
-  }
-  assert {
-    condition     = module.stage_iam.bindings["org|1-org|roles/essentialcontacts.admin"].scope == "organization"
-    error_message = "La cuenta de 1-org necesita roles/essentialcontacts.admin en la organización (CIS 1.17)."
-  }
-
-  # Salida stage_service_accounts: exactamente las cinco llaves del contrato.
-  assert {
-    condition     = toset(keys(output.stage_service_accounts)) == toset(["1-org", "2-security", "3-networks", "4-projects", "5-workloads"])
-    error_message = "stage_service_accounts debe tener las llaves 1-org … 5-workloads."
-  }
-
-  # Bucket de estado (§6.1): versionado, acceso uniforme, sin acceso público, CMEK propia.
-  assert {
     condition = alltrue([
+      google_storage_bucket.state.project == "example-project-id",
       google_storage_bucket.state.versioning[0].enabled,
       google_storage_bucket.state.uniform_bucket_level_access,
       google_storage_bucket.state.public_access_prevention == "enforced",
       google_storage_bucket.state.force_destroy == false,
+      google_storage_bucket.state.encryption[0].default_kms_key_name == module.state_kms.key_ids["state"],
+      google_storage_bucket.state.location == "US",
+      module.state_kms.location == "us",
+      module.state_kms.keyring_name == "bnt-bootstrap-sec-keyring-us",
     ])
-    error_message = "El bucket de estado debe ser versionado, uniforme, sin acceso público y sin borrado forzado."
+    error_message = "El bucket de estado debe ser versionado, uniforme, sin acceso público, multirregional y con su llave en us."
   }
-  # CMEK: exactamente la llave state de la etapa 0, no otra.
   assert {
-    condition     = google_storage_bucket.state.encryption[0].default_kms_key_name == "projects/bnt-bootstrap-seed/locations/us/keyRings/bnt-bootstrap-sec-keyring-us/cryptoKeys/bnt-bootstrap-sec-state" && google_storage_bucket.state.encryption[0].default_kms_key_name == module.state_kms.key_ids["state"]
-    error_message = "El bucket de estado debe cifrarse con la llave state de la etapa 0."
+    condition     = google_kms_crypto_key_iam_member.state_storage_agent.member == "serviceAccount:service-222222222222@gs-project-accounts.iam.gserviceaccount.com"
+    error_message = "El agente de Cloud Storage debe poder usar la llave del estado."
   }
-  # Sobrevive a la caída de la región primaria: bucket multirregional y llave en la
-  # multirregión de KMS correspondiente (la CMEK de Cloud Storage exige la misma ubicación).
+
+  # --- Cuentas del pipeline (ADR 0029 §3) ---
+  assert {
+    condition = toset(keys(output.stage_service_accounts)) == toset([
+      "1-base", "2-networks", "2-networks/dev", "2-networks/qa", "2-networks/prod",
+      "3-workloads/dev", "3-workloads/qa", "3-workloads/prod",
+    ])
+    error_message = "stage_service_accounts debe tener exactamente las ocho raíces del ADR 0029."
+  }
   assert {
     condition = alltrue([
-      google_storage_bucket.state.location == "US",
-      length(google_storage_bucket.state.custom_placement_config) == 0,
-      module.state_kms.keyring_name == "bnt-bootstrap-sec-keyring-us",
-      module.state_kms.location == "us",
+      google_service_account.stage["1-base"].account_id == "bnt-tf-base",
+      google_service_account.stage["2-networks"].account_id == "bnt-tf-net",
+      google_service_account.stage["2-networks/qa"].account_id == "bnt-tf-net-qa",
+      google_service_account.stage["3-workloads/prod"].account_id == "bnt-tf-wl-prod",
+      google_service_account.read.account_id == "bnt-tf-read",
+      output.read_service_account == google_service_account.read.email,
     ])
-    error_message = "El bucket de estado debe ser multirregional (US) y su llave estar en la ubicación us de KMS."
-  }
-  assert {
-    condition     = google_storage_bucket.state.labels["env"] == "bootstrap" && google_storage_bucket.state.labels["managed_by"] == "terraform"
-    error_message = "El bucket debe llevar las etiquetas comunes."
+    error_message = "Las cuentas deben llamarse <prefix>-tf-base, -tf-net, -tf-net-<env>, -tf-wl-<env> y -tf-read."
   }
 
-  # Llave del estado con rotación de 90 días (ADR 0008).
+  # Mínimo privilegio: sin roles básicos, sin serviceAccountAdmin, sin storage.admin ni
+  # projectIamAdmin sin condición (ADR 0029 §3 y §5).
   assert {
-    condition     = module.state_kms.key_names["state"] == "bnt-bootstrap-sec-state"
-    error_message = "La llave del estado debe llamarse <prefix>-bootstrap-sec-state."
+    condition = alltrue([for k, b in module.stage_iam.bindings :
+      !contains(["roles/owner", "roles/editor", "roles/iam.serviceAccountAdmin", "roles/iam.roleAdmin", "roles/iam.securityAdmin", "roles/serviceusage.serviceUsageAdmin"], b.role)
+    ])
+    error_message = "Ninguna cuenta del pipeline recibe roles básicos, serviceAccountAdmin, roleAdmin, securityAdmin ni serviceUsageAdmin."
   }
-  # El correo del agente no se conoce en el plan: la fuente de datos se consulta con el número
-  # del proyecto semilla, que se crea en el mismo plan (así no corre contra un proyecto que aún
-  # no existe). Se comprueba el rol; el correo lo da la fuente de datos en el apply.
   assert {
-    condition     = google_kms_crypto_key_iam_member.state_storage_agent.role == "roles/cloudkms.cryptoKeyEncrypterDecrypter"
-    error_message = "El agente de Cloud Storage del proyecto semilla debe poder usar la llave."
+    condition = alltrue([for k, b in module.stage_iam.bindings :
+      module.stage_iam.conditions[k] != null if contains(["roles/storage.admin", "roles/resourcemanager.projectIamAdmin", "roles/cloudkms.admin"], b.role)
+    ])
+    error_message = "storage.admin, projectIamAdmin y cloudkms.admin siempre van condicionados."
+  }
+  assert {
+    condition = alltrue([
+      module.stage_iam.conditions["project|3-workloads/dev|roles/storage.admin"].expression == "resource.name.startsWith(\"projects/_/buckets/bnt-dev-\")",
+      module.stage_iam.conditions["project|3-workloads/prod|roles/storage.admin"].expression == "resource.name.startsWith(\"projects/_/buckets/bnt-prod-\")",
+      module.stage_iam.conditions["project|1-base|roles/storage.admin"].expression == "resource.name.startsWith(\"projects/_/buckets/bnt-common-\")",
+    ])
+    error_message = "storage.admin se condiciona al prefijo de buckets del entorno (common para 1-base)."
+  }
+  assert {
+    condition = module.stage_iam.conditions["project|3-workloads/dev|projects/example-project-id/roles/bntTfKmsSecretIamGranter"].expression == join(" || ", [
+      "resource.name.startsWith(\"projects/example-project-id/locations/us-central1/keyRings/bnt-dev-\")",
+      "resource.name.startsWith(\"projects/example-project-id/locations/us-east4/keyRings/bnt-dev-\")",
+      "resource.name.startsWith(\"projects/example-project-id/locations/us/keyRings/bnt-dev-\")",
+      "resource.name.startsWith(\"projects/222222222222/secrets/bnt-dev-\")",
+    ])
+    error_message = "El IAM de llaves y secretos de 3-workloads se limita a los llaveros y secretos de su entorno."
+  }
+  assert {
+    condition     = module.stage_iam.conditions["project|1-base|roles/cloudkms.admin"].expression == "!resource.name.startsWith(\"projects/example-project-id/locations/us/keyRings/bnt-bootstrap-\")"
+    error_message = "cloudkms.admin de 1-base excluye el llavero del estado."
+  }
+  assert {
+    condition = alltrue([
+      strcontains(module.stage_iam.conditions["project|3-workloads/qa|roles/resourcemanager.projectIamAdmin"].expression, "'roles/cloudsql.instanceUser'"),
+      strcontains(module.stage_iam.conditions["project|3-workloads/qa|roles/resourcemanager.projectIamAdmin"].expression, "'projects/example-project-id/roles/bntOffHoursScheduler'"),
+      !strcontains(module.stage_iam.conditions["project|3-workloads/qa|roles/resourcemanager.projectIamAdmin"].expression, "'roles/viewer'"),
+      startswith(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin"].expression, "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(["),
+      strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin"].expression, "'roles/resourcemanager.tagUser'"),
+    ])
+    error_message = "projectIamAdmin es una concesión delegada: solo los roles de la lista de cada raíz."
+  }
+  assert {
+    condition = alltrue([
+      contains(keys(module.stage_iam.bindings), "project|3-workloads/dev|roles/cloudscheduler.admin"),
+      contains(keys(module.stage_iam.bindings), "project|3-workloads/qa|roles/cloudscheduler.admin"),
+      !contains(keys(module.stage_iam.bindings), "project|3-workloads/prod|roles/cloudscheduler.admin"),
+      contains(keys(module.stage_iam.bindings), "project|3-workloads/prod|roles/resourcemanager.tagUser"),
+      contains(keys(module.stage_iam.bindings), "project|3-workloads/prod|projects/example-project-id/roles/bntTfServiceAccountManager"),
+    ])
+    error_message = "cloudscheduler.admin solo en dev y qa (ADR 0028); tagUser y el rol de cuentas en los tres entornos."
+  }
+  assert {
+    condition = alltrue([
+      contains(keys(module.stage_iam.bindings), "project|2-networks/dev|roles/resourcemanager.tagAdmin"),
+      contains(keys(module.stage_iam.bindings), "project|2-networks/dev|roles/servicenetworking.networksAdmin"),
+      !contains(keys(module.stage_iam.bindings), "project|2-networks|roles/resourcemanager.tagAdmin"),
+      contains(keys(module.stage_iam.bindings), "project|2-networks|roles/dns.admin"),
+    ])
+    error_message = "tagAdmin y servicenetworking solo para los spokes; el hub tiene red, seguridad y DNS."
+  }
+  assert {
+    condition = alltrue([for r in ["roles/viewer", "roles/iam.securityReviewer", "roles/cloudasset.viewer", "roles/networkmanagement.admin"] :
+      module.stage_iam.bindings["project|read|${r}"].member == google_service_account.read.member
+    ])
+    error_message = "tf-read recibe viewer, securityReviewer, cloudasset.viewer y networkmanagement.admin."
+  }
+  assert {
+    condition     = !contains(keys(module.stage_iam.bindings), "org|1-base|roles/orgpolicy.policyAdmin") && length(google_access_context_manager_access_policy_iam_member.base) == 0
+    error_message = "Sin org_id no hay roles de organización ni de la política de acceso."
   }
 
-  # WIF (§6.3).
-  # La confianza se basa en los IDs numéricos (no reutilizables), no en el nombre.
+  # --- Estado por raíz (ADR 0029 §3) ---
+  assert {
+    condition = alltrue([
+      output.state_iam_conditions["1-base"].reads == ["0-bootstrap"],
+      output.state_iam_conditions["2-networks"].writes == ["2-networks/hub"],
+      output.state_iam_conditions["2-networks"].reads == [],
+      output.state_iam_conditions["2-networks/qa"].reads == ["2-networks/hub"],
+      output.state_iam_conditions["3-workloads/prod"].writes == ["3-workloads/prod"],
+      output.state_iam_conditions["3-workloads/prod"].reads == ["1-base", "2-networks/prod"],
+    ])
+    error_message = "La tabla de estado no coincide con el ADR 0029 (las raíces de red no leen 1-base)."
+  }
+  assert {
+    condition = module.stage_iam.conditions["state|3-workloads/dev|roles/storage.objectViewer"].expression == join(" || ", [
+      "resource.type == \"storage.googleapis.com/Bucket\"",
+      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/1-base/\")",
+      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/2-networks/dev/\")",
+    ])
+    error_message = "3-workloads/dev lee solo 1-base y 2-networks/dev."
+  }
+  assert {
+    condition = module.stage_iam.conditions["state|2-networks|roles/storage.objectAdmin"].expression == join(" || ", [
+      "resource.type == \"storage.googleapis.com/Bucket\"",
+      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/2-networks/hub/\")",
+    ])
+    error_message = "El hub escribe solo 2-networks/hub/ (la barra final evita prefijos hermanos)."
+  }
+  assert {
+    condition     = !contains(keys(module.stage_iam.bindings), "state|2-networks|roles/storage.objectViewer")
+    error_message = "El hub no lee ningún otro estado."
+  }
+  assert {
+    condition     = module.stage_iam.bindings["state|read|roles/storage.objectViewer"].resource == "bnt-bootstrap-ops-tfstate" && module.stage_iam.conditions["state|read|roles/storage.objectViewer"] == null
+    error_message = "tf-read lee todo el bucket de estado."
+  }
+
+  # --- WIF (ADR 0029 §3) ---
   assert {
     condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository_id == \"100000001\" && assertion.repository_owner_id == \"200000002\""
     error_message = "attribute_condition debe exigir los IDs numéricos del repositorio y de su dueño."
   }
   assert {
     condition = alltrue([
-      google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.repository_id"] == "assertion.repository_id",
-      google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.repository_owner_id"] == "assertion.repository_owner_id",
-      google_iam_workload_identity_pool_provider.github.attribute_mapping["google.subject"] == "assertion.sub",
-      alltrue([for a in ["attribute.repository", "attribute.ref", "attribute.environment"] :
-        contains(keys(google_iam_workload_identity_pool_provider.github.attribute_mapping), a)
-      ]),
+      module.stage_iam.bindings["wif|1-base|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/common",
+      module.stage_iam.bindings["wif|2-networks|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/common",
+      module.stage_iam.bindings["wif|2-networks/dev|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/dev",
+      module.stage_iam.bindings["wif|3-workloads/prod|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/prod",
+      module.stage_iam.bindings["wif|read|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.repository_id/100000001",
     ])
-    error_message = "El proveedor debe mapear repository_id, repository_owner_id, repository, ref y environment."
-  }
-  assert {
-    # Exactamente el principalSet del ID del repositorio en el pool de la etapa: ni el pool
-    # entero (/*) ni el atributo por nombre.
-    condition = alltrue([for k in keys(local.stages) :
-      module.stage_iam.bindings["wif|${k}|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.repository_id/100000001" &&
-      module.stage_iam.bindings["wif|${k}|roles/iam.workloadIdentityUser"].scope == "service_account"
-    ])
-    error_message = "Cada cuenta de etapa acepta workloadIdentityUser solo desde el ID del repositorio autorizado."
+    error_message = "1-base y el hub solo con el entorno common, cada cuenta de entorno con el suyo y tf-read con todo el repositorio."
   }
 
-  # Política de denegación de la carpeta bootstrap contra la cuenta de 1-org.
+  # --- Roles personalizados ---
   assert {
-    condition = alltrue([
-      google_iam_deny_policy.bootstrap_folder.parent == "cloudresourcemanager.googleapis.com%2Ffolders%2F111111111111",
-      google_iam_deny_policy.bootstrap_folder.name == "bnt-bootstrap-sec-deny-1-org",
-      google_iam_deny_policy.bootstrap_folder.rules[0].deny_rule[0].denied_principals == tolist(["principal://iam.googleapis.com/projects/-/serviceAccounts/${google_service_account.stage["1-org"].email}"]),
-    ])
-    error_message = "La política de denegación va en la carpeta bootstrap y solo contra la cuenta de 1-org."
-  }
-  assert {
-    condition = alltrue([for p in [
-      "iam.googleapis.com/serviceAccounts.setIamPolicy",
-      "iam.googleapis.com/serviceAccounts.getAccessToken",
-      "iam.googleapis.com/serviceAccounts.implicitDelegation",
-      "iam.googleapis.com/serviceAccounts.signJwt",
-      "storage.googleapis.com/buckets.setIamPolicy",
-      "cloudresourcemanager.googleapis.com/projects.setIamPolicy",
-      "cloudresourcemanager.googleapis.com/folders.setIamPolicy",
-      "cloudkms.googleapis.com/cryptoKeys.setIamPolicy",
-    ] : contains(google_iam_deny_policy.bootstrap_folder.rules[0].deny_rule[0].denied_permissions, p)])
-    error_message = "1-org no debe poder cambiar el IAM ni tomar la identidad de nada en la carpeta bootstrap."
-  }
-  assert {
-    # Lo que 1-org sí hace en la carpeta: leer y escribir objetos de estado y usar el proyecto
-    # semilla como proyecto de cuota. Nada de eso se niega.
-    condition = alltrue([for p in google_iam_deny_policy.bootstrap_folder.rules[0].deny_rule[0].denied_permissions :
-      !startswith(p, "storage.googleapis.com/objects.") || p == "storage.googleapis.com/objects.setIamPolicy"
-      ]) && alltrue([for p in google_iam_deny_policy.bootstrap_folder.rules[0].deny_rule[0].denied_permissions :
-      !startswith(p, "serviceusage.googleapis.com/")
-    ])
-    error_message = "La denegación no puede quitarle a 1-org la lectura y escritura de su estado ni el proyecto de cuota."
-  }
-
-  # Rol de 2-security para los secretos: sin acceso a valores ni IAM de secretos.
-  assert {
-    condition = alltrue([
-      contains(google_organization_iam_custom_role.secret_container_admin.permissions, "secretmanager.secrets.create"),
-      length([for p in google_organization_iam_custom_role.secret_container_admin.permissions : p if startswith(p, "secretmanager.versions.")]) == 0,
-      !contains(google_organization_iam_custom_role.secret_container_admin.permissions, "secretmanager.secrets.setIamPolicy"),
-    ])
-    error_message = "El rol de contenedores de secretos no puede leer versiones ni cambiar el IAM de los secretos."
-  }
-
-  # IAM condicionado del estado (§6.2), derivado de la tabla de §6.1.
-  assert {
-    condition = local.state_admin_expression["1-org"] == join(" || ", [
-      "resource.type == \"storage.googleapis.com/Bucket\"",
-      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/1-org/\")",
-    ])
-    error_message = "1-org solo escribe su prefijo (más el listado del bucket)."
-  }
-  assert {
-    condition = local.state_viewer_expression["2-security"] == join(" || ", [
-      "resource.type == \"storage.googleapis.com/Bucket\"",
-      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/0-bootstrap/\")",
-      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/1-org/\")",
-    ])
-    error_message = "2-security lee 0-bootstrap y 1-org."
-  }
-  assert {
-    condition     = strcontains(local.state_admin_expression["3-networks"], "/objects/3-networks/hub/\")")
-    error_message = "Los prefijos terminan en / para que 3-networks/hub no coincida con un hermano."
+    condition = output.custom_role_ids == {
+      secret_container_admin  = "projects/example-project-id/roles/bntTfSecretContainerAdmin"
+      kms_secret_iam_granter  = "projects/example-project-id/roles/bntTfKmsSecretIamGranter"
+      service_account_manager = "projects/example-project-id/roles/bntTfServiceAccountManager"
+      repository_iam_granter  = "projects/example-project-id/roles/bntTfRepositoryIamGranter"
+      off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
+    }
+    error_message = "custom_role_ids debe dar el ID completo de los cinco roles personalizados."
   }
   assert {
     condition = alltrue([
-      contains(local.stages["4-projects"].reads, "3-networks/prod"),
-      !contains(local.stages["4-projects"].reads, "0-bootstrap"),
-      !contains(local.stages["4-projects"].reads, "3-networks/hub"),
-      !contains(local.stages["5-workloads"].reads, "0-bootstrap"),
-      contains(local.stages["5-workloads"].reads, "4-projects/dev"),
+      length([for p in google_project_iam_custom_role.this["secret_container_admin"].permissions : p if startswith(p, "secretmanager.versions.")]) == 0,
+      !contains(google_project_iam_custom_role.this["secret_container_admin"].permissions, "secretmanager.secrets.setIamPolicy"),
+      length([for p in google_project_iam_custom_role.this["service_account_manager"].permissions : p if strcontains(p, "TagBinding")]) == 0,
+      contains(google_project_iam_custom_role.this["service_account_manager"].permissions, "iam.serviceAccounts.setIamPolicy"),
     ])
-    error_message = "4-projects y 5-workloads leen solo lo de su fila de §6.1."
-  }
-  # Solo lo que sus raíces leen de verdad (remote_state.tf): 3-networks no lee 0-bootstrap y
-  # 5-workloads no lee 1-org.
-  assert {
-    condition = alltrue([
-      local.stages["3-networks"].reads == ["1-org"],
-      !contains(local.stages["5-workloads"].reads, "1-org"),
-      !strcontains(module.stage_iam.conditions["state|3-networks|roles/storage.objectViewer"].expression, "/objects/0-bootstrap/"),
-      !strcontains(module.stage_iam.conditions["state|5-workloads|roles/storage.objectViewer"].expression, "/objects/1-org/"),
-    ])
-    error_message = "3-networks no lee 0-bootstrap y 5-workloads no lee 1-org."
-  }
-  # Cada asignación del bucket lleva su condición (aislamiento por prefijo).
-  assert {
-    condition = alltrue([for k in keys(local.stages) :
-      module.stage_iam.bindings["state|${k}|roles/storage.objectAdmin"].resource == "bnt-bootstrap-ops-tfstate" &&
-      module.stage_iam.conditions["state|${k}|roles/storage.objectAdmin"].expression == local.state_admin_expression[k] &&
-      module.stage_iam.conditions["state|${k}|roles/storage.objectViewer"].expression == local.state_viewer_expression[k]
-    ])
-    error_message = "Cada cuenta recibe objectAdmin y objectViewer condicionados a sus prefijos sobre el bucket de estado."
-  }
-  assert {
-    condition = module.stage_iam.conditions["state|4-projects|roles/storage.objectAdmin"].expression == join(" || ", [
-      "resource.type == \"storage.googleapis.com/Bucket\"",
-      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/4-projects/dev/\")",
-      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/4-projects/qa/\")",
-      "resource.name.startsWith(\"projects/_/buckets/bnt-bootstrap-ops-tfstate/objects/4-projects/prod/\")",
-    ])
-    error_message = "La condición de escritura de 4-projects debe cubrir solo sus tres prefijos."
+    error_message = "Contenedores de secretos sin valores ni IAM; cuentas de servicio sin permisos de etiquetas."
   }
 
-  # Mínimo privilegio: ningún rol básico ni de dueño de organización.
+  # --- Protección (ADR 0029 §5) ---
   assert {
-    condition = alltrue([for b in values(module.stage_iam.bindings) :
-      !contains(["roles/owner", "roles/editor", "roles/resourcemanager.organizationAdmin"], b.role)
+    condition = alltrue([
+      google_tags_tag_key.protection["this"].parent == "projects/example-project-id",
+      google_tags_tag_key.protection["this"].short_name == "bnt-proteccion",
+      google_tags_tag_value.stage0["this"].short_name == "etapa-0",
+      google_tags_location_tag_binding.state_bucket["this"].parent == "//storage.googleapis.com/projects/_/buckets/bnt-bootstrap-ops-tfstate",
+      google_tags_location_tag_binding.state_bucket["this"].location == "us",
+      google_tags_location_tag_binding.state_keyring["this"].parent == "//cloudkms.googleapis.com/projects/example-project-id/locations/us/keyRings/bnt-bootstrap-sec-keyring-us",
+      length(google_tags_tag_binding.pipeline_accounts) == 9,
+      google_tags_tag_binding.pipeline_accounts["read"].parent == "//iam.googleapis.com/projects/example-project-id/serviceAccounts/100000000000000000001",
     ])
-    error_message = "Las cuentas de etapa no reciben roles básicos ni organizationAdmin."
+    error_message = "La etiqueta etapa-0 se liga al bucket, al llavero del estado y a las nueve cuentas."
   }
+  assert {
+    condition = alltrue([
+      google_iam_deny_policy.pipeline["this"].parent == "cloudresourcemanager.googleapis.com%2Fprojects%2Fexample-project-id",
+      google_iam_deny_policy.pipeline["this"].name == "bnt-bootstrap-sec-deny-pipeline",
+      length(google_iam_deny_policy.pipeline["this"].rules) == 2,
+      length(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denied_principals) == 9,
+      google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denial_condition[0].expression == "resource.matchTag('example-project-id/bnt-proteccion', 'etapa-0')",
+      length(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denial_condition) == 0,
+    ])
+    error_message = "La denegación va en el proyecto, contra las nueve cuentas, con una regla por etiqueta y otra sin condición."
+  }
+  assert {
+    condition = alltrue(concat(
+      [for p in ["storage.googleapis.com/buckets.delete", "storage.googleapis.com/buckets.setIamPolicy", "iam.googleapis.com/serviceAccounts.actAs", "iam.googleapis.com/serviceAccounts.getAccessToken", "iam.googleapis.com/serviceAccounts.setIamPolicy", "cloudkms.googleapis.com/cryptoKeyVersions.destroy"] :
+      contains(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denied_permissions, p)],
+      [for p in ["iam.googleapis.com/workloadIdentityPoolProviders.update", "iam.googleapis.com/roles.update", "iam.googleapis.com/serviceAccountKeys.create"] :
+      contains(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denied_permissions, p)],
+    ))
+    error_message = "Se niega cambiar o borrar el bucket, suplantar o cambiar el IAM de las cuentas, el proveedor de WIF y los roles personalizados."
+  }
+  assert {
+    # Lo que las cuentas sí hacen: objetos de su estado, cuota del proyecto e IAM delegado.
+    condition = alltrue([for r in google_iam_deny_policy.pipeline["this"].rules : alltrue([for p in r.deny_rule[0].denied_permissions :
+      (!startswith(p, "storage.googleapis.com/objects.") || p == "storage.googleapis.com/objects.setIamPolicy") &&
+      !startswith(p, "serviceusage.googleapis.com/") &&
+      p != "cloudresourcemanager.googleapis.com/projects.setIamPolicy"
+    ])])
+    error_message = "La denegación no puede quitar los objetos del estado, el proyecto de cuota ni el IAM delegado."
+  }
+}
+
+run "sin_etiquetas" {
+  command = plan
+
+  variables {
+    enable_protection_tags = false
+  }
+
+  assert {
+    condition = alltrue([
+      length(google_tags_tag_key.protection) == 0,
+      length(google_tags_tag_binding.pipeline_accounts) == 0,
+      length(google_iam_deny_policy.pipeline["this"].rules) == 1,
+      length(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denial_condition) == 0,
+    ])
+    error_message = "Sin etiquetas, la denegación solo lleva la regla sin condición."
+  }
+}
+
+run "sin_denegacion" {
+  command = plan
+
+  variables {
+    enable_deny_policy = false
+  }
+
+  assert {
+    condition     = length(google_iam_deny_policy.pipeline) == 0 && length(google_tags_tag_key.protection) == 1
+    error_message = "enable_deny_policy = false quita solo la política de denegación."
+  }
+}
+
+run "con_organizacion_y_politica_de_acceso" {
+  command = plan
+
+  variables {
+    org_id           = "000000000000"
+    access_policy_id = "555555555555"
+  }
+
+  assert {
+    condition = alltrue([
+      module.stage_iam.bindings["org|1-base|roles/orgpolicy.policyAdmin"].scope == "organization",
+      module.stage_iam.bindings["org|1-base|roles/orgpolicy.policyAdmin"].resource == "000000000000",
+      google_access_context_manager_access_policy_iam_member.base["555555555555"].name == "accessPolicies/555555555555",
+      google_access_context_manager_access_policy_iam_member.base["555555555555"].role == "roles/accesscontextmanager.policyEditor",
+    ])
+    error_message = "Con organización, 1-base recibe orgpolicy.policyAdmin y policyEditor sobre la política de acceso."
+  }
+}
+
+run "politica_de_acceso_sin_organizacion" {
+  command = plan
+
+  variables {
+    access_policy_id = "555555555555"
+  }
+
+  expect_failures = [var.access_policy_id]
+}
+
+run "prefix_gcp" {
+  command = plan
+
+  variables {
+    prefix = "gcp"
+  }
+
+  expect_failures = [var.prefix]
 }
 
 run "prefix_invalido" {
@@ -329,6 +448,16 @@ run "repositorio_invalido" {
   }
 
   expect_failures = [var.github_repository]
+}
+
+run "id_de_repositorio_invalido" {
+  command = plan
+
+  variables {
+    github_repository_id = "example-org/example-repo"
+  }
+
+  expect_failures = [var.github_repository_id]
 }
 
 run "estado_en_doble_region" {
@@ -369,12 +498,22 @@ run "ubicacion_regional_del_estado" {
   expect_failures = [var.state_bucket_location]
 }
 
-run "id_de_repositorio_invalido" {
+run "proyecto_invalido" {
   command = plan
 
   variables {
-    github_repository_id = "example-org/example-repo"
+    project_id = "Proyecto"
   }
 
-  expect_failures = [var.github_repository_id]
+  expect_failures = [var.project_id]
+}
+
+run "dr_igual_a_primaria" {
+  command = plan
+
+  variables {
+    dr_region = "us-central1"
+  }
+
+  expect_failures = [var.dr_region]
 }
