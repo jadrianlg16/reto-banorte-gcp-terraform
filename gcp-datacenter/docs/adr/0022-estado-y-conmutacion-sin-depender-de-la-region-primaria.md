@@ -4,6 +4,11 @@
 
 Aceptado, 2026-11-21. Completa los ADR 0002, 0005, 0006 y 0008.
 
+Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md)) lo que
+decía "etapa 3, hub" está en `stages/2-networks` y lo de la "etapa 5" en
+`stages/3-workloads/envs/<env>`; la raíz de cargas es nueva y no tiene bloques `moved` (el estado
+empieza de cero). La decisión no cambia.
+
 Tipo: Aclaración.
 
 ## Contexto
@@ -26,7 +31,7 @@ ejecutar tal como estaba escrita:
 
 ## Decisión
 
-- **Estado (etapa 0).** El bucket se crea en `state_bucket_location` (por defecto `US`,
+- **Estado (`0-bootstrap`).** El bucket se crea en `state_bucket_location` (por defecto `US`,
   multirregión; `EU` o `ASIA` por validación) o, con `state_bucket_dual_regions`, como doble
   región configurable dentro de esa multirregión con `rpo = "ASYNC_TURBO"`; una precondición
   exige que la lista incluya `primary_region`. Su llave va en la ubicación de KMS homónima
@@ -35,7 +40,7 @@ ejecutar tal como estaba escrita:
   la multirregión `us`; documentación de CMEK de Cloud Storage, citada en el código). El
   llavero pasa a ser `<prefix>-bootstrap-sec-keyring-us`. La ubicación de un bucket no se cambia
   después de crearlo: se elige antes del primer apply.
-- **VPN de DR (etapa 3, hub).** Con `enable_vpn_dr = true` (por defecto) se crea una segunda HA
+- **VPN de DR (`2-networks`, hub).** Con `enable_vpn_dr = true` (por defecto) se crea una segunda HA
   VPN, `module.vpn_hub_dr`, en el Cloud Router del hub en `dr_region`, con sus /30 propios
   (`vpn_dr_bgp_ranges`, por defecto `169.254.0.8/30` y `169.254.0.12/30`), los mismos anuncios
   que la primaria y `advertised_route_priority = vpn_dr_route_priority` (200 por defecto; la
@@ -44,25 +49,25 @@ ejecutar tal como estaba escrita:
   subred, `extra_router_regions` del módulo `network-hub`) y su propia punta
   (`module.vpn_onprem_sim_dr`). Con on-premises real, la VPN de DR crea su gateway externo
   `<prefix>-common-net-vpn-onprem-dr-peer` con las mismas `onprem_vpn_gateway_ips`.
-- **Balanceador interno por región (etapa 5).** `module.internal_lb` usa
+- **Balanceador interno por región (`3-workloads`).** `module.internal_lb` usa
   `for_each = local.compute_regions` (llaves `primary` y `dr`): `dr_active = true` agrega
   `module.internal_lb["dr"]` y no toca `["primary"]`; volver a `dr_active = false` destruye solo
-  el de DR. Un bloque `moved` lleva la llave vieja `["internal"]` a `["primary"]`. El módulo
+  el de DR. El módulo
   `load-balancer` pone `allow_global_access = true` en las dos reglas de reenvío internas
   (443 y 80): on-premises llega a cualquiera de los dos balanceadores por la VPN de cualquier
   región, y el registro DNS interno decide a cuál va el tráfico. Salidas:
   `internal_lb_ip_address` (la región activa), `internal_lb_ip_addresses` (todas) e
   `internal_lb_dns_authorization_records_by_region`.
-- **Certificado interno de DR antes del incidente (etapa 5).** La autorización DNS y el
+- **Certificado interno de DR antes del incidente (`3-workloads`).** La autorización DNS y el
   certificado de Certificate Manager del balanceador interno los crea la raíz por región
   (`google_certificate_manager_certificate.internal`) y se los pasa al módulo por
   `certificate_manager_certificates`. Con `enable_dr` existe también el de `dr_region` aunque
   `dr_active` sea false: sus registros de autorización se crean al dar de alta el entorno y la
   conmutación ya no espera la emisión. El registro DNS interno de `internal_domain_names` no lo
-  administra ninguna etapa (la zona no está en el repositorio y la cuenta de la etapa 5 no tiene
+  administra ninguna etapa (la zona no está en el repositorio y `tf-wl-<env>` no tiene
   `dns.admin`); la salida `internal_lb_dns_records` da los registros A de la región activa y
   moverlos es el único paso manual de DNS del runbook 04.
-- **Vuelta a la región primaria (etapa 5).** En prod los módulos `gke` y `cloud-run` fijan
+- **Vuelta a la región primaria (`3-workloads`).** En prod los módulos `gke` y `cloud-run` fijan
   `deletion_protection = true` y el proveedor se niega a destruir un clúster o un servicio
   protegido, así que `dr_active = false` sola no puede retirar el cómputo de DR. `dr_teardown`
   (solo se admite con `dr_active = true`, validado) pasa `teardown = true` solo a las
@@ -74,7 +79,7 @@ ejecutar tal como estaba escrita:
   pierde la protección. El MIG y el balanceador interno no tienen protección contra
   borrado; la réplica de Cloud SQL, el certificado interno de DR y los planes de respaldo
   dependen de `enable_dr`/`enable_backup` y la vuelta no los toca.
-- **GKE durante la conmutación (etapa 5).** `dr_active = true` planea con los `tfvars` normales:
+- **GKE durante la conmutación (`3-workloads`).** `dr_active = true` planea con los `tfvars` normales:
   mientras `gke_lb_negs.dr` esté vacío, el backend `gke` sale del balanceador externo y el
   backend por defecto pasa al primero habilitado (`run`, `mig`, `gke`). Si GKE es el único
   backend, el balanceador conserva los NEG primarios para no destruirse con su IP. Cuando la
@@ -98,9 +103,9 @@ ejecutar tal como estaba escrita:
   sin tráfico, con costo, y el siguiente `dr_active = false` seguiría sin poder retirarlos.
 - **Quitar la protección contra borrado de todo el cómputo de prod durante la vuelta.**
   Rechazado: dejaría la región primaria sin protección justo cuando vuelve a atender el tráfico.
-- **Registro DNS interno administrado por la etapa 5.** Rechazado con los permisos actuales: la
-  zona del dominio interno no está en el repositorio y darle `dns.admin` a la etapa 5 sobre el
-  hub rompe el límite entre etapas.
+- **Registro DNS interno administrado por `3-workloads`.** Rechazado con los permisos actuales:
+  la zona del dominio interno no está en el repositorio, y `dns.admin` para `tf-wl-<env>` sería
+  sin condición en todo el proyecto (alcanzaría las zonas del hub y de los otros entornos).
 
 ## Consecuencias
 

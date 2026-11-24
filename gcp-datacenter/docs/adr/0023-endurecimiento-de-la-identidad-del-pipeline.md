@@ -119,7 +119,9 @@ Riesgos residuales (análisis de la documentación de Google, sin probar en GCP)
 - **Algunos permisos no se pueden negar:** `iam.serviceAccounts.createTagBinding` y
   `deleteTagBinding`, `cloudkms.keyRings.deleteTagBinding` y `iam.denypolicies.*`. Ninguna cuenta
   tiene esos permisos sobre lo protegido ni `iam.denyAdmin`. Las cuentas de spoke tienen
-  `resourcemanager.tagAdmin`, que alcanza también la clave de protección (riesgo abierto).
+  `resourcemanager.tagAdmin` en el proyecto, que alcanza también la clave de protección (su IAM
+  y sus valores); sin permisos de enlace sobre cuentas, buckets ni llaves no deberían poder quitar
+  la etiqueta de lo protegido (HYPOTHESIS, riesgo abierto).
 - **Los permisos de objeto de Cloud Storage no se niegan:** los prefijos del estado se separan
   solo con condiciones de IAM (ADR 0010).
 - **Permisos sin condición entre entornos:** una cuenta de dev puede, técnicamente, cambiar

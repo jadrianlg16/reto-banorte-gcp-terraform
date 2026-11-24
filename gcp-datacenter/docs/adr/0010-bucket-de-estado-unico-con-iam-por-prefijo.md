@@ -3,7 +3,10 @@
 ## Estado
 
 Aceptado, 2026-11-20. Enmendado el 2026-11-21: lecturas mínimas por cuenta (menos que lo que
-permite la columna "Lee además" de §6.1) y cláusula de listado ya construida.
+permite la columna "Lee además" de §6.1) y cláusula de listado ya construida. Enmendado el
+2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md) §2) los prefijos son
+`1-base`, `2-networks/hub`, `2-networks/<env>` y `3-workloads/<env>`; hay una cuenta que escribe
+por raíz y entorno, y la cuenta de solo lectura `tf-read` lee todo el bucket para los `plan`.
 
 Tipo: Aclaración.
 
@@ -11,29 +14,28 @@ Tipo: Aclaración.
 
 La especificación pide que cada cuenta de servicio del pipeline escriba solo su prefijo del
 estado y, a la vez, que cada etapa lea las salidas de la anterior. Tomadas al pie de la letra,
-"solo su prefijo" impediría el `terraform_remote_state`. Hay siete cuentas o raíces
-(`0-bootstrap` a `5-workloads`, con hub y spokes en la etapa 3) y un solo bucket en el proyecto
-semilla (ADR 0008).
+"solo su prefijo" impediría el `terraform_remote_state`. Hay nueve cuentas (ocho que escriben,
+una por raíz, y `tf-read`) y un solo bucket en el proyecto único (ADR 0008).
 
 ## Decisión
 
-Un bucket, un prefijo por raíz (`1-org`, `2-security`, `3-networks/hub`, `3-networks/<env>`,
-`4-projects/<env>`, `5-workloads/<env>`; tabla de §6.1). `backend.tf` fija solo el prefijo; el
-bucket entra por `-backend-config`. Las lecturas se concentran en `remote_state.tf` y ninguna
-raíz lee un prefijo fuera de su fila de §6.1. La etapa 0 da a cada cuenta
-`<prefix>-tf-<etapa>`:
+Un bucket, un prefijo por raíz (`0-bootstrap`, `1-base`, `2-networks/hub`, `2-networks/<env>`,
+`3-workloads/<env>`; tabla de §6.1 del contrato). `backend.tf` fija solo el prefijo; el bucket
+entra por `-backend-config`. Las lecturas se concentran en `remote_state.tf` y ninguna raíz lee
+un prefijo fuera de su fila de §6.1. `0-bootstrap` da a cada cuenta que escribe:
 
 - `roles/storage.objectAdmin` con una condición de IAM sobre los objetos de su prefijo
   (`resource.name.startsWith("projects/_/buckets/<bucket>/objects/<prefijo>/")`);
 - `roles/storage.objectViewer` con condiciones equivalentes para los prefijos de la columna
   "Lee además".
 
-Las lecturas son las que las raíces de cada cuenta usan de verdad (`reads` en
-`stages/0-bootstrap/service_accounts.tf`): `3-networks` lee solo `1-org` (los spokes leen el hub,
-que la misma cuenta escribe); `4-projects` lee `1-org`, `2-security` y `3-networks/<env>`; y
-`5-workloads` lee `2-security`, `3-networks/<env>` y `4-projects/<env>`, sin `1-org`. Las dos
-condiciones empiezan con `resource.type == "storage.googleapis.com/Bucket"` para que el backend
-pueda listar.
+Las lecturas son las que las raíces de cada cuenta usan de verdad (`reads` de `local.stage_roots`
+en `stages/0-bootstrap/service_accounts.tf`, publicadas en la salida `state_iam_conditions`):
+`tf-base` lee `0-bootstrap`; `tf-net` (hub) no lee nada; `tf-net-<env>` lee `2-networks/hub`; y
+`tf-wl-<env>` lee `1-base` y `2-networks/<env>`. Las condiciones empiezan con
+`resource.type == "storage.googleapis.com/Bucket"` para que el backend pueda listar.
+`tf-read` tiene `roles/storage.objectViewer` sobre todo el bucket, sin condición: los `plan`
+corren con ella y `-lock=false` (ADR 0025).
 
 Leer aguas arriba es la interpretación mínima que cumple las dos exigencias.
 
@@ -60,7 +62,10 @@ Leer aguas arriba es la interpretación mínima que cumple las dos exigencias.
   objetos pero no su contenido. Si aun así el backend falla, la salida es pasar a carpetas
   administradas.
 - El bloqueo (`<prefijo>/default.tflock`) cae dentro del prefijo propio, así que la escritura
-  condicionada lo cubre.
+  condicionada lo cubre. `tf-read` no puede escribirlo; por eso los `plan` van con
+  `-lock=false`.
+- `tf-read` lee el estado de todas las raíces, incluido el secreto de la VPN del hub (ADR 0006):
+  cualquier trabajo del repositorio puede tomar esa cuenta (ADR 0023).
 - Primer apply: listado de objetos del backend con IAM condicionado por prefijo (punto 1 de
   [`docs/pendientes-apply.md`](../pendientes-apply.md)); si falla, aplicar una de las salidas
   anteriores y actualizar este ADR.

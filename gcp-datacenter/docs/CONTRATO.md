@@ -164,9 +164,11 @@ Cada raíz de `stages/` contiene: `main.tf`, `variables.tf`, `outputs.tf`, `vers
 `providers.tf`, `backend.tf`, `remote_state.tf` (si lee otras raíces), `terraform.tfvars.example`,
 `README.md`, `.terraform.lock.hcl` y `tests/`. `0-bootstrap` reparte su contenido en
 `service_accounts.tf`, `custom_roles.tf`, `wif.tf` y `deny_policy.tf`, y no tiene
-`remote_state.tf`; tampoco el hub, que no lee ningún estado (§2.1). `1-base` reparte el suyo en
-`kms.tf`, `artifacts.tf`, `iam.tf` y `org.tf`; `3-workloads` en `service_accounts.tf`,
-`compute.tf`, `data.tf`, `load_balancing.tf`, `operations.tf` y `off_hours.tf`.
+`remote_state.tf` (sí `backend_override.tf.example`, para el arranque con estado local); tampoco
+el hub, que no lee ningún estado (§2.1). `1-base` reparte el suyo en `kms.tf`, `artifacts.tf`,
+`iam.tf` y `org.tf`; el hub en `vpn.tf`, `dns.tf` y `firewall.tf`; cada spoke en `dns.tf` y
+`firewall.tf`; `3-workloads` en `service_accounts.tf`, `compute.tf`, `data.tf`,
+`load_balancing.tf`, `operations.tf` y `off_hours.tf`.
 
 Las raíces de `envs/{dev,qa,prod}` de una misma etapa son idénticas salvo `backend.tf` (prefijo)
 y `terraform.tfvars.example`. La lógica común va en los módulos, no copiada tres veces.
@@ -492,7 +494,9 @@ permisos sobre lo protegido (`tf-wl-<env>` usa `<prefix>TfServiceAccountManager`
 tiene `tagUser` ni KMS sobre el llavero del estado). Los permisos `iam.denypolicies.*` no se
 pueden negar y ninguna cuenta tiene `iam.denyAdmin`. Los permisos de objeto de Cloud Storage no
 se niegan: los prefijos se separan con las condiciones de §6.2. Las cuentas de spoke tienen
-`tagAdmin`, que alcanza también la clave de protección (riesgo abierto).
+`resourcemanager.tagAdmin` en el proyecto, que alcanza también la clave de protección (su IAM y
+sus valores); sin permisos de enlace sobre cuentas, buckets ni llaves no deberían poder quitar la
+etiqueta de lo protegido (HYPOTHESIS, riesgo abierto).
 
 Que el bucket y el llavero admitan la etiqueta, que la llave la herede y que las etiquetas y la
 denegación funcionen en un proyecto sin organización es HYPOTHESIS (`VERIFICAR-EN-APPLY`). Si no
