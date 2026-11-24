@@ -7,45 +7,24 @@ terraform {
 
 provider "google" {}
 
-# Política jerárquica en la organización: permite verificaciones de salud e IAP, delega en
-# la política de red el tráfico interno y on-premises (goto_next) y deniega el resto.
-module "firewall_org" {
+# Política de red de la VPC hub: sin reglas propias, solo la denegación por defecto de la
+# entrada que crea el módulo (el hub no tiene cargas).
+module "firewall_hub" {
   source = "../.."
 
   prefix      = "bnt"
   environment = "common"
-  policy_type = "hierarchical"
-  parent      = "organizations/000000000000"
-
-  rules = {
-    allow-health-checks = {
-      priority       = 1000
-      action         = "allow"
-      src_ip_ranges  = ["35.191.0.0/16", "130.211.0.0/22"]
-      layer4_configs = [{ ip_protocol = "tcp" }]
-    }
-    allow-iap = {
-      priority       = 1010
-      action         = "allow"
-      src_ip_ranges  = ["35.235.240.0/20"]
-      layer4_configs = [{ ip_protocol = "tcp", ports = ["22", "3389"] }]
-    }
-    delegate-internal = {
-      priority      = 2000
-      action        = "goto_next"
-      src_ip_ranges = ["10.0.0.0/8", "192.168.0.0/16"]
-    }
-  }
+  name_suffix = "hub"
+  parent      = "projects/example-landing-zone/global/networks/bnt-common-net-hub"
 }
 
-# Política de red de un spoke con etiquetas seguras.
+# Política de red de un spoke con etiquetas seguras, en el mismo proyecto.
 module "firewall_spoke" {
   source = "../.."
 
   prefix      = "bnt"
   environment = "dev"
-  policy_type = "network"
-  parent      = "projects/example-dev-net-spoke/global/networks/bnt-dev-net-spoke"
+  parent      = "projects/example-landing-zone/global/networks/bnt-dev-net-spoke"
 
   secure_tags = {
     lb_backend = { description = "Backends del balanceador." }
@@ -70,9 +49,9 @@ module "firewall_spoke" {
   }
 }
 
-output "org_policy_id" {
-  description = "Política jerárquica."
-  value       = module.firewall_org.policy_id
+output "hub_policy_id" {
+  description = "Política de red de la VPC hub."
+  value       = module.firewall_hub.policy_id
 }
 
 output "spoke_secure_tag_ids" {

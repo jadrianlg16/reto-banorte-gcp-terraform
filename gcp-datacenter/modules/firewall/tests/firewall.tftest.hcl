@@ -3,8 +3,7 @@ mock_provider "google" {}
 variables {
   prefix      = "bnt"
   environment = "dev"
-  policy_type = "network"
-  parent      = "projects/example-dev-net-spoke/global/networks/bnt-dev-net-spoke"
+  parent      = "projects/example-landing-zone/global/networks/bnt-dev-net-spoke"
   secure_tags = {
     lb_backend = {}
     iap_ssh    = {}
@@ -31,29 +30,39 @@ run "politica_de_red" {
   command = plan
 
   assert {
-    condition     = length(google_compute_network_firewall_policy.this) == 1 && length(google_compute_firewall_policy.this) == 0
-    error_message = "policy_type = network debe crear solo la política de red."
-  }
-
-  assert {
-    condition     = google_compute_network_firewall_policy.this[0].name == "bnt-dev-net-fw" && google_compute_network_firewall_policy.this[0].project == "example-dev-net-spoke"
+    condition     = google_compute_network_firewall_policy.this.name == "bnt-dev-net-fw" && google_compute_network_firewall_policy.this.project == "example-landing-zone"
     error_message = "La política debe llamarse bnt-dev-net-fw y vivir en el proyecto de la VPC."
   }
 
   assert {
-    condition     = google_compute_network_firewall_policy_association.this[0].attachment_target == "projects/example-dev-net-spoke/global/networks/bnt-dev-net-spoke"
-    error_message = "La política debe asociarse a la VPC."
+    condition = (
+      google_compute_network_firewall_policy_association.this.attachment_target == "projects/example-landing-zone/global/networks/bnt-dev-net-spoke" &&
+      google_compute_network_firewall_policy_association.this.name == "bnt-dev-net-fw-assoc" &&
+      output.network_id == "projects/example-landing-zone/global/networks/bnt-dev-net-spoke"
+    )
+    error_message = "La política debe asociarse a la VPC de parent."
   }
 
   assert {
     condition = (
-      google_compute_network_firewall_policy_rule.default_deny_ingress[0].action == "deny" &&
-      google_compute_network_firewall_policy_rule.default_deny_ingress[0].direction == "INGRESS" &&
-      google_compute_network_firewall_policy_rule.default_deny_ingress[0].priority == 65000 &&
-      google_compute_network_firewall_policy_rule.default_deny_ingress[0].enable_logging == true &&
-      google_compute_network_firewall_policy_rule.default_deny_ingress[0].match[0].src_ip_ranges == tolist(["0.0.0.0/0"])
+      google_compute_network_firewall_policy_rule.default_deny_ingress.action == "deny" &&
+      google_compute_network_firewall_policy_rule.default_deny_ingress.direction == "INGRESS" &&
+      google_compute_network_firewall_policy_rule.default_deny_ingress.priority == 65000 &&
+      google_compute_network_firewall_policy_rule.default_deny_ingress.enable_logging == true &&
+      google_compute_network_firewall_policy_rule.default_deny_ingress.match[0].src_ip_ranges == tolist(["0.0.0.0/0"])
     )
     error_message = "Falta la denegación por defecto de la entrada con registro."
+  }
+
+  assert {
+    condition = (
+      jsonencode(keys(output.default_deny_rules)) == jsonencode(["ingress"]) &&
+      output.default_deny_rules["ingress"].action == "deny" &&
+      output.default_deny_rules["ingress"].priority == 65000 &&
+      output.default_deny_rules["ingress"].enable_logging == true &&
+      jsonencode(output.default_deny_rules["ingress"].src_ip_ranges) == jsonencode(["0.0.0.0/0"])
+    )
+    error_message = "La salida default_deny_rules debe leer la denegación de entrada del recurso."
   }
 
   assert {
@@ -64,7 +73,7 @@ run "politica_de_red" {
   assert {
     condition = alltrue([
       for k in ["lb_backend", "iap_ssh"] :
-      google_tags_tag_key.this[k].purpose == "GCE_FIREWALL" && google_tags_tag_key.this[k].purpose_data == tomap({ network = "example-dev-net-spoke/bnt-dev-net-spoke" })
+      google_tags_tag_key.this[k].purpose == "GCE_FIREWALL" && google_tags_tag_key.this[k].purpose_data == tomap({ network = "example-landing-zone/bnt-dev-net-spoke" })
     ])
     error_message = "Cada llave de etiqueta debe tener propósito GCE_FIREWALL ligado a la VPC."
   }
@@ -72,11 +81,12 @@ run "politica_de_red" {
   assert {
     condition = (
       length(google_tags_tag_key.this) == 2 &&
-      google_tags_tag_key.this["lb_backend"].parent == "projects/example-dev-net-spoke" &&
+      google_tags_tag_key.this["lb_backend"].parent == "projects/example-landing-zone" &&
+      google_tags_tag_key.this["iap_ssh"].parent == "projects/example-landing-zone" &&
       google_tags_tag_key.this["lb_backend"].short_name == "bnt-dev-net-fw-lb-backend" &&
       google_tags_tag_key.this["iap_ssh"].short_name == "bnt-dev-net-fw-iap-ssh"
     )
-    error_message = "Debe haber una llave de etiqueta por entrada, en el proyecto de la VPC y con nombre <prefijo>-<entorno>-net-fw-<entrada>."
+    error_message = "Debe haber una llave de etiqueta por entrada, con padre el proyecto de la VPC y nombre <prefijo>-<entorno>-net-fw-<entrada>."
   }
 
   assert {
@@ -139,13 +149,41 @@ run "salida_rules_desde_recursos" {
   }
 }
 
+# Política de la VPC hub: mismo proyecto, otro sufijo, sin etiquetas ni reglas propias. Solo
+# la denegación por defecto (la que antes daba la política jerárquica de la organización).
+run "politica_sin_reglas_propias" {
+  command = plan
+
+  variables {
+    environment = "common"
+    name_suffix = "hub"
+    parent      = "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub"
+    secure_tags = {}
+    rules       = {}
+  }
+
+  assert {
+    condition = (
+      google_compute_network_firewall_policy.this.name == "bnt-common-net-fw-hub" &&
+      google_compute_network_firewall_policy.this.project == "example-landing-zone" &&
+      output.network_id == "projects/example-landing-zone/global/networks/bnt-common-net-hub"
+    )
+    error_message = "Con name_suffix la política debe llamarse <prefijo>-<entorno>-net-fw-<sufijo> y asociarse a la VPC del self_link."
+  }
+
+  assert {
+    condition     = length(output.rules) == 0 && length(google_tags_tag_key.this) == 0 && length(output.secure_tag_key_ids) == 0 && output.default_deny_rules["ingress"].action == "deny"
+    error_message = "Sin reglas ni etiquetas solo queda la denegación por defecto."
+  }
+}
+
 run "nombre_con_sufijo" {
   command = plan
 
   variables {
     environment = "common"
     name_suffix = "onprem-sim"
-    parent      = "projects/example-net-hub/global/networks/bnt-common-net-onprem-sim"
+    parent      = "projects/example-landing-zone/global/networks/bnt-common-net-onprem-sim"
     secure_tags = {}
     rules = {
       allow-dns = {
@@ -158,7 +196,7 @@ run "nombre_con_sufijo" {
   }
 
   assert {
-    condition     = google_compute_network_firewall_policy.this[0].name == "bnt-common-net-fw-onprem-sim" && google_compute_network_firewall_policy_association.this[0].name == "bnt-common-net-fw-onprem-sim-assoc"
+    condition     = google_compute_network_firewall_policy.this.name == "bnt-common-net-fw-onprem-sim" && google_compute_network_firewall_policy_association.this.name == "bnt-common-net-fw-onprem-sim-assoc"
     error_message = "Con name_suffix la política debe llamarse <prefijo>-<entorno>-net-fw-<sufijo>."
   }
 
@@ -168,107 +206,68 @@ run "nombre_con_sufijo" {
   }
 }
 
-run "politica_jerarquica" {
+run "denegacion_de_salida" {
   command = plan
 
   variables {
-    environment = "common"
-    policy_type = "hierarchical"
-    parent      = "organizations/000000000000"
-    secure_tags = {}
+    enable_egress_default_deny = true
     rules = {
-      allow-health-checks = {
+      allow-egress-google-apis = {
         priority       = 1000
+        direction      = "EGRESS"
         action         = "allow"
-        src_ip_ranges  = ["35.191.0.0/16", "130.211.0.0/22"]
-        layer4_configs = [{ ip_protocol = "tcp" }]
+        dest_ip_ranges = ["199.36.153.4/30"]
+        layer4_configs = [{ ip_protocol = "tcp", ports = ["443"] }]
       }
+    }
+  }
+
+  assert {
+    condition = (
+      google_compute_network_firewall_policy_rule.default_deny_egress[0].direction == "EGRESS" &&
+      google_compute_network_firewall_policy_rule.default_deny_egress[0].priority == 65001 &&
+      output.default_deny_rules["egress"].action == "deny" &&
+      jsonencode(output.default_deny_rules["egress"].dest_ip_ranges) == jsonencode(["0.0.0.0/0"])
+    )
+    error_message = "enable_egress_default_deny debe crear la denegación de salida."
+  }
+
+  assert {
+    condition     = output.rules["allow-egress-google-apis"].direction == "EGRESS" && jsonencode(output.rules["allow-egress-google-apis"].dest_ip_ranges) == jsonencode(["199.36.153.4/30"])
+    error_message = "La salida rules debe leer las reglas de salida."
+  }
+}
+
+run "rechaza_goto_next" {
+  command = plan
+
+  variables {
+    rules = {
       delegate-internal = {
         priority      = 2000
         action        = "goto_next"
         src_ip_ranges = ["10.0.0.0/8"]
       }
     }
-    enable_egress_default_deny = true
   }
 
-  assert {
-    condition     = length(google_compute_firewall_policy.this) == 1 && length(google_compute_network_firewall_policy.this) == 0
-    error_message = "policy_type = hierarchical debe crear solo la política jerárquica."
-  }
-
-  assert {
-    condition     = google_compute_firewall_policy.this[0].short_name == "bnt-common-net-fw" && google_compute_firewall_policy.this[0].parent == "organizations/000000000000"
-    error_message = "La política jerárquica debe llamarse bnt-common-net-fw y vivir en la organización."
-  }
-
-  assert {
-    condition     = google_compute_firewall_policy_association.this[0].attachment_target == "organizations/000000000000"
-    error_message = "La política jerárquica debe asociarse a su padre."
-  }
-
-  assert {
-    condition     = google_compute_firewall_policy_rule.default_deny_ingress[0].action == "deny" && google_compute_firewall_policy_rule.default_deny_ingress[0].priority == 65000 && google_compute_firewall_policy_rule.default_deny_ingress[0].enable_logging == true
-    error_message = "Falta la denegación por defecto de la entrada en la política jerárquica."
-  }
-
-  assert {
-    condition     = google_compute_firewall_policy_rule.default_deny_egress[0].direction == "EGRESS" && google_compute_firewall_policy_rule.default_deny_egress[0].priority == 65001
-    error_message = "enable_egress_default_deny debe crear la denegación de salida."
-  }
-
-  assert {
-    condition     = google_compute_firewall_policy_rule.this["delegate-internal"].enable_logging == false
-    error_message = "Las reglas goto_next no registran."
-  }
-
-  assert {
-    condition     = output.rules["delegate-internal"].action == "goto_next" && jsonencode(output.rules["delegate-internal"].src_ip_ranges) == jsonencode(["10.0.0.0/8"]) && length(output.rules["delegate-internal"].target_resources) == 0
-    error_message = "La salida rules debe leer las reglas jerárquicas creadas."
-  }
-
-  assert {
-    condition     = length(google_tags_tag_key.this) == 0 && length(output.secure_tag_key_ids) == 0
-    error_message = "Sin secure_tags no se crea llave de etiqueta."
-  }
+  expect_failures = [var.rules]
 }
 
-run "jerarquica_con_etiquetas_de_organizacion" {
+run "rechaza_nombre_reservado" {
   command = plan
 
   variables {
-    environment       = "common"
-    policy_type       = "hierarchical"
-    parent            = "folders/000000000000"
-    secure_tag_parent = "organizations/000000000000"
-    secure_tags       = { iap_ssh = {} }
     rules = {
-      allow-iap = {
-        priority           = 1000
-        action             = "allow"
-        src_ip_ranges      = ["35.235.240.0/20"]
-        target_secure_tags = ["iap_ssh"]
-        layer4_configs     = [{ ip_protocol = "tcp", ports = ["22"] }]
+      default-deny-ingress = {
+        priority      = 1000
+        action        = "deny"
+        src_ip_ranges = ["10.0.0.0/8"]
       }
     }
   }
 
-  assert {
-    condition     = google_tags_tag_key.this["iap_ssh"].parent == "organizations/000000000000" && google_tags_tag_key.this["iap_ssh"].purpose_data == tomap({ organization = "auto" }) && google_tags_tag_key.this["iap_ssh"].short_name == "bnt-common-net-fw-iap-ssh"
-    error_message = "En hierarchical la llave de etiqueta debe ser de la organización."
-  }
-}
-
-run "rechaza_jerarquica_con_etiquetas_sin_organizacion" {
-  command = plan
-
-  variables {
-    environment = "common"
-    policy_type = "hierarchical"
-    parent      = "folders/000000000000"
-  }
-
-  expect_failures = [var.secure_tag_parent]
+  expect_failures = [var.rules]
 }
 
 run "rechaza_entrada_desde_internet" {
@@ -336,7 +335,8 @@ run "rechaza_etiqueta_desconocida" {
   expect_failures = [var.rules]
 }
 
-run "rechaza_parent_que_no_coincide" {
+# Sin organización ni carpetas (ADR 0029): parent ya no admite una política jerárquica.
+run "rechaza_parent_de_organizacion" {
   command = plan
 
   variables {

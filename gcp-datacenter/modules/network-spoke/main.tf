@@ -71,7 +71,7 @@ resource "google_compute_network" "this" {
   # checkov:skip=CKV2_GCP_18: las reglas de firewall viven en el módulo firewall (política de red con etiquetas seguras), no en este módulo
   project                         = var.project_id
   name                            = "${local.name_base}-spoke"
-  description                     = "VPC spoke del entorno ${var.environment}, host de Shared VPC."
+  description                     = "VPC spoke del entorno ${var.environment}."
   auto_create_subnetworks         = false
   routing_mode                    = "GLOBAL"
   delete_default_routes_on_create = true
@@ -122,7 +122,8 @@ resource "google_compute_subnetwork" "proxy" {
 
 # Rutas explícitas. La VPC se crea sin la ruta por defecto para que las dos salidas queden
 # a la vista: el VIP restringido (Private Google Access) y la salida a internet, que solo
-# usa Cloud NAT porque ninguna VM tiene IP pública (política de organización).
+# usa Cloud NAT porque ninguna VM tiene IP pública (regla de Conftest en cada PR y, si hay
+# organización, la política de organización; ADR 0029 §1).
 resource "google_compute_route" "restricted_vip" {
   project          = var.project_id
   network          = google_compute_network.this.id
@@ -156,8 +157,10 @@ resource "google_compute_global_address" "psa" {
   labels        = var.labels
 }
 
-# VERIFICAR-EN-APPLY: que el destroy de la conexión funcione después de borrar las
-# instancias de la etapa 5 (servicenetworking puede tardar en liberar el peering).
+# VERIFICAR-EN-APPLY: que cada VPC spoke del mismo proyecto tenga su propia conexión de
+# servicenetworking con su rango (ADR 0029 §6; la guía de PSA no lo dice para varias VPC de un
+# proyecto), y que el destroy de la conexión funcione después de borrar las instancias de
+# 3-workloads (servicenetworking puede tardar en liberar el peering).
 resource "google_service_networking_connection" "psa" {
   network                 = google_compute_network.this.id
   service                 = "servicenetworking.googleapis.com"
@@ -177,8 +180,9 @@ resource "google_compute_network_peering" "spoke_to_hub" {
   depends_on = [google_service_networking_connection.psa]
 }
 
-# Peering hub → spoke, creado sobre la red del hub (la cuenta de la etapa 3 administra los
-# dos proyectos). El hub exporta sus rutas personalizadas.
+# Peering hub → spoke, creado sobre la red del hub por quien aplica el spoke (con el ADR 0029
+# las dos VPC suelen estar en el mismo proyecto; el módulo también admite un hub en otro
+# proyecto). El hub exporta sus rutas personalizadas.
 # VERIFICAR-EN-APPLY: que dos spokes no creen su peering sobre el hub al mismo tiempo (el
 # pipeline aplica los entornos en serie) y que las rutas BGP lleguen al spoke.
 resource "google_compute_network_peering" "hub_to_spoke" {

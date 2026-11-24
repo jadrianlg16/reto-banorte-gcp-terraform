@@ -1,10 +1,9 @@
 # firewall
 
-Crea una política de firewall con sus reglas y su asociación, de uno de dos tipos
-(`policy_type`): jerárquica, con padre y asociación en una organización o carpeta, o de red
-global, creada en el proyecto de la VPC y asociada a ella. Crea además, si se piden, etiquetas
-seguras (por cada entrada de `secure_tags`, una llave propia con propósito `GCE_FIREWALL` y un
-solo valor `enabled`) que las reglas usan como origen o destino. La especificación (sección "Componentes del datacenter",
+Crea una política de firewall de red global en el proyecto de una VPC, sus reglas y su
+asociación con esa VPC. Crea además, si se piden, etiquetas seguras (por cada entrada de
+`secure_tags`, una llave propia con propósito `GCE_FIREWALL` y un solo valor `enabled`) que las
+reglas usan como origen o destino. La especificación (sección "Componentes del datacenter",
 seguridad de red) exige denegar todo por defecto y reglas por etiqueta segura: el módulo crea
 siempre una regla de denegación de entrada desde `0.0.0.0/0`, con registro y prioridad 65000,
 que el llamador no puede quitar; las reglas del llamador solo admiten prioridades de 0 a 64999,
@@ -12,38 +11,37 @@ así que siempre se evalúan antes.
 
 Decisiones del módulo:
 
-- `policy_type` se pide aparte de `parent` porque la VPC del spoke se crea en el mismo plan y su
-  `self_link` no se conoce hasta el apply; con él el número de recursos se sabe en el plan.
-- Política jerárquica y denegación por defecto: una regla `deny` en la organización es final y
-  las políticas de red de abajo no pueden permitir lo que ella deniega. Por eso la política
-  jerárquica debe delegar con reglas `goto_next` el tráfico que decide cada spoke (rangos
-  internos y on-premises) y permitir aquí solo lo común (verificaciones de salud e IAP). Las
-  reglas `goto_next` no se registran.
+- Solo política de red (ADR 0029 §6). Con toda la landing zone en un proyecto, sin carpetas y
+  quizá sin organización, no hay dónde asociar una política jerárquica: la denegación por
+  defecto que daba la organización la da ahora la política de cada VPC (hub, `onprem-sim` y
+  cada spoke). Las reglas admiten solo `allow` y `deny`: la política de red es el último nivel
+  configurado, y un `goto_next` solo pasaría a las reglas implícitas de la VPC.
 - Una llave por etiqueta: un recurso admite un solo valor por llave de etiqueta, y una VM puede
   necesitar a la vez `lb_backend` e `iap_ssh`. Por eso cada entrada de `secure_tags` crea su
   llave `<prefix>-<environment>-net-fw-<entrada>` (guion bajo → guion) con un único valor
   `enabled`. Salidas: `secure_tag_ids` (entrada → `tagValues/…`) y `secure_tag_key_ids`
   (entrada → `tagKeys/…`).
-- Etiquetas seguras: en una política de red la llave queda ligada a la VPC
-  (`purpose_data.network = <proyecto>/<red>`) y vive en el proyecto de la VPC. Una política
-  jerárquica no puede usar etiquetas ligadas a una VPC: la llave se crea en la organización con
-  `purpose_data.organization = auto` y por eso exige `secure_tag_parent = organizations/<id>`
-  (una carpeta no puede ser padre de una llave de etiqueta).
-- Validaciones de reglas: prioridades únicas y fuera del rango reservado, origen obligatorio en
-  INGRESS y destino en EGRESS, CIDR válidos, etiquetas que existan en `secure_tags`,
-  `target_resources` solo en jerárquica y ninguna regla INGRESS `allow` desde `/0` (el tráfico
-  externo llega por los rangos del balanceador).
+- Etiquetas seguras con padre proyecto: la llave vive en el proyecto de la VPC y queda ligada a
+  ella (`purpose_data.network = <proyecto>/<red>`). La
+  [guía de etiquetas para firewalls](https://docs.cloud.google.com/firewall/docs/tags-firewalls-overview)
+  dice que una llave puede tener padre proyecto y que, con propósito de red, debe apuntar a una
+  VPC del mismo proyecto; que funcione en un proyecto sin organización es HYPOTHESIS
+  (`VERIFICAR-EN-APPLY` en `main.tf`).
+- Varias políticas en un proyecto: el nombre `<prefix>-<environment>-net-fw[-<name_suffix>]`
+  distingue la de cada VPC (por ejemplo `bnt-common-net-fw-hub`, `bnt-common-net-fw-onprem-sim`
+  y `bnt-dev-net-fw`), y lo mismo las llaves de etiqueta.
+- Validaciones de reglas: prioridades únicas y fuera del rango reservado, nombres
+  `default-deny-*` reservados, origen obligatorio en INGRESS y destino en EGRESS, CIDR válidos,
+  etiquetas que existan en `secure_tags` y ninguna regla INGRESS `allow` desde un origen más
+  amplio que `/8` (el tráfico externo llega por los rangos del balanceador).
 - `enable_egress_default_deny` agrega la denegación de salida (prioridad 65001); por defecto la
   salida queda abierta y la controla el NAT y el VIP restringido.
-- `name_suffix` (opcional) agrega un sufijo al nombre de la política y de las llaves de
-  etiqueta, para varias políticas de red en un mismo proyecto (por ejemplo `onprem-sim` en
-  `net-hub`).
-- La salida `rules` se arma con los recursos de regla (no con la variable): prioridad, acción,
-  orígenes, `target_resources`, etiquetas destino traducidas a su llave lógica y protocolos.
-  Sirve para que las pruebas de las raíces comprueben lo que de verdad se crea.
+- Las salidas `rules` y `default_deny_rules` se arman con los recursos de regla (no con la
+  variable): prioridad, acción, orígenes, etiquetas destino traducidas a su llave lógica y
+  protocolos. `network_id` sale del recurso de asociación. Sirven para que las pruebas de las
+  raíces comprueben lo que de verdad se crea.
 - Para adjuntar una etiqueta a una VM o nodo, la cuenta que crea el recurso necesita
-  `roles/resourcemanager.tagUser` sobre el valor (`secure_tag_ids`); ese permiso lo da la etapa
-  que crea los proyectos de servicio.
+  `roles/resourcemanager.tagUser` sobre el valor (`secure_tag_ids`); el módulo no lo otorga.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements

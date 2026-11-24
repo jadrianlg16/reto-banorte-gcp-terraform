@@ -1,14 +1,14 @@
 mock_provider "google" {}
 
 variables {
-  project_id  = "example-dev-net-spoke"
+  project_id  = "example-landing-zone"
   prefix      = "bnt"
   environment = "dev"
   regions = {
     primary = "us-central1"
     dr      = "us-east4"
   }
-  hub_network_self_link = "https://www.googleapis.com/compute/v1/projects/example-net-hub/global/networks/bnt-common-net-hub"
+  hub_network_self_link = "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub"
   subnet_cidrs = {
     app           = "10.10.0.0/20"
     app_dr        = "10.10.16.0/20"
@@ -97,7 +97,7 @@ run "spoke_sin_dr" {
   }
 
   assert {
-    condition     = google_compute_network_peering.hub_to_spoke.export_custom_routes == true && google_compute_network_peering.hub_to_spoke.network == "projects/example-net-hub/global/networks/bnt-common-net-hub"
+    condition     = google_compute_network_peering.hub_to_spoke.export_custom_routes == true && google_compute_network_peering.hub_to_spoke.network == "projects/example-landing-zone/global/networks/bnt-common-net-hub"
     error_message = "El hub debe exportar sus rutas personalizadas hacia el spoke."
   }
 
@@ -110,7 +110,7 @@ run "spoke_sin_dr" {
     condition = (
       output.peerings["spoke_to_hub"].import_custom_routes == true && output.peerings["spoke_to_hub"].export_custom_routes == false &&
       output.peerings["hub_to_spoke"].export_custom_routes == true && output.peerings["hub_to_spoke"].import_custom_routes == false &&
-      output.peerings["hub_to_spoke"].network == "projects/example-net-hub/global/networks/bnt-common-net-hub"
+      output.peerings["hub_to_spoke"].network == "projects/example-landing-zone/global/networks/bnt-common-net-hub"
     )
     error_message = "La salida peerings debe reflejar los recursos de peering."
   }
@@ -138,6 +138,18 @@ run "spoke_sin_dr" {
   assert {
     condition     = google_compute_global_address.psa.labels["managed_by"] == "terraform"
     error_message = "El rango de PSA debe llevar las etiquetas."
+  }
+
+  # ADR 0029: hub y spoke en el mismo proyecto, sin Shared VPC.
+  assert {
+    condition = (
+      google_compute_network.this.project == "example-landing-zone" &&
+      google_compute_network.this.description == "VPC spoke del entorno dev." &&
+      alltrue([for s in google_compute_subnetwork.this : s.project == "example-landing-zone"]) &&
+      alltrue([for r in google_compute_router.this : r.project == "example-landing-zone"]) &&
+      google_compute_global_address.psa.project == "example-landing-zone"
+    )
+    error_message = "La VPC, las subredes, los routers y el rango de PSA deben crearse en project_id."
   }
 }
 

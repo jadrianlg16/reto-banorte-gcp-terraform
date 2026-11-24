@@ -1,6 +1,7 @@
 # network-spoke
 
-Crea la VPC spoke de un entorno (host de Shared VPC, ADR 0003): subredes del plan de
+Crea la VPC spoke de un entorno (ADR 0003, sin Shared VPC desde el ADR 0029: el spoke y las
+cargas del entorno viven en el mismo proyecto, junto con el hub): subredes del plan de
 direccionamiento con sus rangos secundarios, subredes proxy-only, el rango y la conexión de
 Private Service Access, el peering con el hub en los dos sentidos, las rutas de salida y un
 Cloud Router con Cloud NAT por región activa (ADR 0004). La especificación (sección
@@ -28,6 +29,11 @@ Decisiones del módulo:
   `0.0.0.0/0` hacia el gateway de internet, que solo sirve a Cloud NAT porque las VM no tienen IP
   pública. Ambas son parte de la red y no opciones de la raíz; la zona DNS de `googleapis.com` sí
   la crea la raíz con el módulo `dns`.
+- Un proyecto, varias VPC (ADR 0029 §6): los nombres llevan `<prefix>-<environment>-`, así que
+  las tres VPC spoke conviven con el hub y `onprem-sim` en el mismo proyecto, cada una con su
+  propia conexión de Private Service Access (rango `psa` distinto por entorno en el plan de
+  direccionamiento). Que varias VPC de un proyecto tengan cada una su conexión de PSA está
+  marcado `VERIFICAR-EN-APPLY`.
 - Peering: el lado del spoke importa rutas personalizadas y el lado del hub (creado sobre la red
   del hub, a partir de `hub_network_self_link`) las exporta. Se encadenan con `depends_on`
   detrás de la conexión de servicenetworking porque GCP no admite dos operaciones de peering a la
