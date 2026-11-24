@@ -174,8 +174,11 @@ ar_case "un cambio en 3-workloads de qa planea solo esa raíz" gcp-datacenter/st
 ar_case "un cambio en 0-bootstrap no planea nada (la aplica una persona)" gcp-datacenter/stages/0-bootstrap/main.tf ""
 ar_case "un cambio en modules/ planea todas las raíces" gcp-datacenter/modules/storage/main.tf "$all_roots"
 ar_case "un cambio en policies/ planea todas las raíces" gcp-datacenter/policies/p.rego "$all_roots"
-ar_case "stages/3-workloads/README.md planea las tres raíces de 3-workloads" \
-  gcp-datacenter/stages/3-workloads/README.md "$workload_roots"
+ar_case "stages/3-workloads/README.md no planea nada (los .md no cambian un plan)" \
+  gcp-datacenter/stages/3-workloads/README.md ""
+ar_case "el README de un módulo no planea nada (terraform-docs)" gcp-datacenter/modules/storage/README.md ""
+ar_case "el README de una raíz no planea nada" gcp-datacenter/stages/1-base/README.md ""
+ar_case "un .md en policies/ no planea nada" gcp-datacenter/policies/README.md ""
 ar_case "código común en stages/3-workloads/comun planea las tres raíces de 3-workloads" \
   gcp-datacenter/stages/3-workloads/comun/main.tf "$workload_roots"
 ar_case "un módulo local dentro del hub planea el hub y el spoke que lo usa" \
@@ -782,20 +785,93 @@ gitc "$r/dev" commit -q -m "merge que descarta C y D" && git -C "$r/dev" push -q
 check "check-main-tip: (preparación) el log de las rutas no lista el merge que descarta C y D" 0 $?
 tip_run "$r/run" "$sha_d"
 check "check-main-tip: un merge que descarta cambios de las rutas deja viejo el commit (diff de árboles)" 1 $?
+# Un merge que solo cambia documentación (gcp-datacenter/docs/ o un .md de gcp-datacenter/) no
+# deja vieja a la ejecución en curso: apply.yml no se dispara por él. Un .tf sí.
+sha_m="$(git -C "$r/dev" rev-parse HEAD)"
+tip_commit gcp-datacenter/docs/pipeline.md E >/dev/null
+tip_run "$r/run" "$sha_m"
+check "check-main-tip: un cambio en gcp-datacenter/docs/ no detiene la cadena" 0 $?
+tip_commit gcp-datacenter/stages/1-base/README.md F >/dev/null
+tip_commit gcp-datacenter/README.md G >/dev/null
+tip_run "$r/run" "$sha_m"
+check "check-main-tip: un README.md de una raíz o de gcp-datacenter/ no detiene la cadena" 0 $?
+tip_commit gcp-datacenter/stages/1-base/main.tf H >/dev/null
+tip_run "$r/run" "$sha_m"
+check "check-main-tip: después, un .tf sí deja viejo el commit (las exclusiones no tapan todo)" 1 $?
 # apply.yml se dispara con las mismas rutas que el script considera del despliegue: si no, un
-# commit que deja vieja a una ejecución no traería otra que la retome.
-"$PY" -c '
+# commit que deja vieja a una ejecución no traería otra que la retome. Se compara qué archivos
+# elige cada uno: los paths del push con la semántica de GitHub (docs.github.com, "Filter pattern
+# cheat sheet": * no cruza /, ** sí; con !, el último patrón que coincide decide) y DEPLOY_PATHS
+# con git ls-files en un repositorio con esos archivos.
+pr_="$tmp/paths-repo"
+git init -q "$pr_"
+for f in gcp-datacenter/stages/1-base/main.tf gcp-datacenter/stages/1-base/README.md \
+  gcp-datacenter/stages/1-base/terraform.tfvars.example gcp-datacenter/README.md \
+  gcp-datacenter/modules/kms/README.md gcp-datacenter/modules/kms/main.tf \
+  gcp-datacenter/modules/kms/docs/notas.md gcp-datacenter/modules/kms/docs/datos.json \
+  gcp-datacenter/docs/pipeline.md gcp-datacenter/docs/adr/0029-un-solo-proyecto.md \
+  gcp-datacenter/docs/diagramas/red.png gcp-datacenter/docsx/a.tf gcp-datacenter/stages/2-networks/docs.tf \
+  gcp-datacenter/scripts/root-tfvars.py gcp-datacenter/policies/required_labels.rego \
+  gcp-datacenter/tests/e2e/smoke_test.go gcp-datacenter/.terraform-docs.yml \
+  gcp-datacenter/notas.markdown .github/workflows/apply.yml .github/workflows/README.md \
+  .github/dependabot.yml README.md labs/x.tf docs/x.md; do
+  mkdir -p "$pr_/$(dirname "$f")"
+  echo x >"$pr_/$f"
+done
+gitc "$pr_" add -A
+deploy_paths="$(sed -n -E 's/.*DEPLOY_PATHS:-([^}]*)\}.*/\1/p' scripts/check-main-tip.sh)"
+read -r -a dp <<<"$deploy_paths"
+git -C "$pr_" ls-files -- "${dp[@]}" | LC_ALL=C sort >"$tmp/paths-git.txt"
+git -C "$pr_" ls-files | LC_ALL=C sort >"$tmp/paths-all.txt"
+"$PY" - "$WF/apply.yml" "$tmp/paths-all.txt" "$tmp/paths-git.txt" >"$tmp/paths.txt" 2>&1 <<'PYEOF'
 import re, sys
 wf = open(sys.argv[1], encoding="utf-8").read()
 push = wf[wf.index("  push:"):wf.index("  workflow_dispatch:")]
-trigger = {p.rstrip("*").rstrip("/") for p in re.findall(r"^\s*-\s*\"([^\"]+)\"", push, re.M)}
-sh = open(sys.argv[2], encoding="utf-8").read()
-deploy = set(re.search(r"DEPLOY_PATHS:-([^}]*)\}", sh).group(1).split())
-print("disparo %s, script %s" % (sorted(trigger), sorted(deploy)))
-sys.exit(0 if trigger == deploy else 1)
-' "$WF/apply.yml" scripts/check-main-tip.sh >"$tmp/paths.txt" 2>&1
+patterns = re.findall(r"^\s*-\s*\"([^\"]+)\"", push[push.index("paths:"):], re.M)
+def to_regex(p):
+    out, i = "", 0
+    while i < len(p):
+        if p.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif p[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        elif p[i] in "?+[]":
+            raise ValueError("patrón no soportado por esta prueba: %s" % p)
+        else:
+            out, i = out + re.escape(p[i]), i + 1
+    return re.compile(out + r"\Z")
+rules = [(p.startswith("!"), to_regex(p.lstrip("!"))) for p in patterns]
+def github(path):
+    hit = False
+    for negated, rx in rules:
+        if rx.match(path):
+            hit = not negated
+    return hit
+files = open(sys.argv[2], encoding="utf-8").read().split()
+gh = {f for f in files if github(f)}
+git = set(open(sys.argv[3], encoding="utf-8").read().split())
+must_in = {"gcp-datacenter/stages/1-base/main.tf", "gcp-datacenter/modules/kms/main.tf", ".github/workflows/apply.yml",
+           "gcp-datacenter/stages/2-networks/docs.tf", "gcp-datacenter/docsx/a.tf",
+           "gcp-datacenter/modules/kms/docs/datos.json", "gcp-datacenter/tests/e2e/smoke_test.go"}
+must_out = {"gcp-datacenter/README.md", "gcp-datacenter/stages/1-base/README.md", "gcp-datacenter/docs/pipeline.md",
+            "gcp-datacenter/docs/diagramas/red.png", "gcp-datacenter/modules/kms/docs/notas.md", "README.md", "labs/x.tf"}
+bad = []
+if gh != git:
+    bad.append("solo apply.yml: %s; solo check-main-tip: %s" % (sorted(gh - git), sorted(git - gh)))
+if not must_in <= gh:
+    bad.append("faltan del despliegue: %s" % sorted(must_in - gh))
+if gh & must_out:
+    bad.append("sobran en el despliegue: %s" % sorted(gh & must_out))
+print("; ".join(bad) if bad else "%d archivos del despliegue de %d" % (len(gh), len(files)))
+sys.exit(1 if bad else 0)
+PYEOF
 rc=$?
-check "check-main-tip: apply.yml se dispara con las rutas del despliegue ($(cat "$tmp/paths.txt"))" 0 "$rc"
+check "check-main-tip: apply.yml y DEPLOY_PATHS eligen los mismos archivos ($(cat "$tmp/paths.txt"))" 0 "$rc"
+# Ningún .tf lee un .md ni algo de docs/: si lo hiciera, excluirlos dejaría fuera un cambio que
+# sí cambia un plan.
+! grep -rEn --include='*.tf' '(file|templatefile|filebase64|fileset|filemd5|filesha256|filesha1)\([^)]*(\.md|docs/)' \
+  modules stages tests/fixtures >/dev/null 2>&1
+check "check-main-tip: ningún .tf lee un .md ni docs/ (las exclusiones de apply.yml no esconden cambios de un plan)" 0 $?
 n="$(grep -c 'scripts/check-main-tip.sh "${GITHUB_SHA}"' "$WF/_terraform-root.yml")"
 check "check-main-tip: _terraform-root.yml lo llama en plan y antes del apply (2)" 2 "$n"
 # Orden en el trabajo apply: la comprobación va después de volver a planear y antes del apply.

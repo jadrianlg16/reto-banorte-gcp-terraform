@@ -54,10 +54,15 @@ on:
     branches: [main]
     # Las mismas rutas que scripts/check-main-tip.sh considera "del despliegue": un commit que
     # deja vieja a una ejecución en curso siempre trae otra que la retoma (docs/pipeline.md
-    # §1.2, "Ejecuciones viejas").
+    # §1.2, "Ejecuciones viejas"). Sin la documentación: gcp-datacenter/docs/ y los .md de
+    # gcp-datacenter/ (README de módulos y etapas que regenera terraform-docs); ningún .tf los
+    # lee. Las exclusiones van con "!" al final de la lista (GitHub no admite paths y
+    # paths-ignore juntos en el mismo evento; el último patrón que coincide decide).
     paths:
       - "gcp-datacenter/**"
       - ".github/workflows/**"
+      - "!gcp-datacenter/docs/**"
+      - "!gcp-datacenter/**.md"
   workflow_dispatch:
     inputs:
       omitir_prueba_de_humo:

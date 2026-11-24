@@ -7,8 +7,10 @@
 #
 # Corre con cualquier cambio, también solo de documentación: las comprobaciones obligatorias
 # tienen que reportarse siempre (un flujo que no se dispara deja el PR esperando), y
-# scripts/docs.sh --check y selftest.sh (que lee docs/pipeline.md) revisan la documentación. Los
-# planes solo corren para las raíces afectadas, y un cambio en docs/ no afecta ninguna.
+# scripts/docs.sh --check y selftest.sh (que lee docs/pipeline.md) revisan la documentación. Por
+# eso aquí no hay filtro de rutas en el disparo; el filtro equivalente está en los planes: solo
+# corren para las raíces afectadas, y ni docs/ ni un .md (README de módulos y etapas) afectan
+# ninguna (scripts/affected-roots.sh), igual que apply.yml no se dispara por ellos.
 #
 # Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada
 # (scripts/affected-roots.sh), con la cuenta de lectura y sin candado (ADR 0029 §3), Conftest

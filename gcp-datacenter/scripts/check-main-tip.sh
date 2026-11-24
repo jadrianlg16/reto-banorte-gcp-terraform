@@ -4,14 +4,15 @@
 #
 # Regla: <sha> está en la rama (por defecto main de origin) y ningún commit posterior de la rama
 # cambia las rutas que afectan un despliegue (por defecto gcp-datacenter/ y .github/workflows/,
-# desde la raíz del repositorio). Así:
+# desde la raíz del repositorio, sin gcp-datacenter/docs/ ni los .md de gcp-datacenter/). Así:
 # - una ejecución vieja que se vuelve a correr ("Re-run jobs"), o una aprobación que llega
 #   después de otro merge que sí cambia Terraform o los flujos, falla sin planear ni aplicar
 #   código viejo encima de lo que ya aplicó una ejecución más nueva;
-# - un merge que no toca esas rutas (README de la raíz, labs/, la configuración de Dependabot)
-#   no detiene la cadena en curso. apply.yml solo se dispara con cambios en esas mismas rutas
-#   (gcp-datacenter/** y .github/workflows/**; selftest.sh comprueba que coinciden), así que
-#   ese merge no traería otra ejecución que la retome.
+# - un merge que no toca esas rutas (README de la raíz, labs/, la configuración de Dependabot,
+#   documentación de gcp-datacenter/) no detiene la cadena en curso. apply.yml solo se dispara
+#   con cambios en esas mismas rutas (paths del push: gcp-datacenter/** y .github/workflows/**
+#   menos !gcp-datacenter/docs/** y !gcp-datacenter/**.md; selftest.sh comprueba que eligen los
+#   mismos archivos), así que ese merge no traería otra ejecución que la retome.
 #
 # Dos comprobaciones, las dos obligatorias: `git log` de las rutas (lista los commits que las
 # tocan) y `git diff` entre el árbol de <sha> y el de la punta. La segunda cubre lo que la
@@ -21,7 +22,8 @@
 # de las rutas ya sea otro.
 #
 # Uso: scripts/check-main-tip.sh <sha> [remoto] [rama]
-# Variables: DEPLOY_PATHS (rutas separadas por espacio, desde la raíz del repositorio).
+# Variables: DEPLOY_PATHS (pathspecs de git separados por espacio, desde la raíz del
+# repositorio; admite exclusiones como :(exclude)<ruta>).
 # Sale con 0 si está vigente, 1 si no, 2 si no se puede decidir (falla cerrado): sin sha, remoto
 # ilegible, historia superficial que no se puede completar o <sha> desconocido.
 #
@@ -33,7 +35,7 @@ set -uo pipefail
 sha="${1:-}"
 remote="${2:-origin}"
 branch="${3:-main}"
-read -r -a paths <<<"${DEPLOY_PATHS:-gcp-datacenter .github/workflows}"
+read -r -a paths <<<"${DEPLOY_PATHS:-gcp-datacenter .github/workflows :(exclude)gcp-datacenter/docs :(exclude,glob)gcp-datacenter/**/*.md}"
 
 err() { # err <código> <mensaje>
   echo "::error::$2" >&2
