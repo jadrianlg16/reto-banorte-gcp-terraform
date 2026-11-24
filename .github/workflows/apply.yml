@@ -28,8 +28,9 @@
 # cambios no hay apply ni pedido de aprobación.
 #
 # Llaves de GCP_STAGE_SERVICE_ACCOUNTS (salida stage_service_accounts de 0-bootstrap): 1-base,
-# 2-networks, 2-networks/<env> y 3-workloads/<env>. Cada cuenta de entorno solo acepta tokens
-# de su entorno de GitHub, y tf-base y tf-net solo de `common` (ADR 0029 §3).
+# 2-networks, 2-networks/<env> y 3-workloads/<env>. Cada cuenta que escribe solo acepta tokens
+# de main, de un flujo de .github/workflows/ de este repositorio y de su entorno de GitHub
+# (`common` para tf-base y tf-net): attribute.deploy de stages/0-bootstrap/wif.tf (ADR 0029 §3).
 #
 # Los spokes (2-networks/envs/<env>) quedan en serie por el encadenado entre entornos, también
 # con entornos apagados (cada spoke sigue dependiendo del trabajo del entorno anterior, aunque se
@@ -43,8 +44,9 @@
 #
 # Sin GCP: mientras la variable de repositorio GCP_ENABLED no sea "true", todos los trabajos
 # de Terraform se omiten y el flujo termina en verde. Una ejecución manual desde otra rama
-# tampoco aplica nada: los trabajos exigen github.ref == refs/heads/main (la condición de WIF
-# no filtra por rama, ver docs/pipeline.md). Autenticación solo por Workload Identity
+# tampoco aplica nada: los trabajos exigen github.ref == refs/heads/main y, además, WIF no entrega
+# las cuentas que escriben fuera de main (attribute.deploy, ver docs/pipeline.md). Autenticación
+# solo por Workload Identity
 # Federation; no hay llaves en ningún lado.
 
 name: apply

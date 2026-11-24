@@ -262,8 +262,9 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Cuenta de lectura (tf-read): las cuentas que escriben solo aceptan tokens de su entorno
-      # de GitHub y este trabajo no tiene entorno (ADR 0029 §3).
+      # Cuenta de lectura (tf-read): las cuentas que escriben solo aceptan tokens de main y de un
+      # trabajo con su entorno de GitHub (attribute.deploy); este trabajo no tiene entorno y corre
+      # en la rama del PR (ADR 0029 §3).
       - name: Autenticar con Workload Identity Federation (cuenta de lectura)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
