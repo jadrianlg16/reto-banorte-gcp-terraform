@@ -17,6 +17,9 @@ module "observability" {
   lb_url_map_name     = "bnt-prod-app-web-xlb-um"
   slo_target          = 0.999
 
+  # Canales que ya existen (en el proyecto único, los de 1-base) y reciben también las alertas.
+  extra_notification_channel_ids = ["projects/example-prod-app/notificationChannels/000000000000"]
+
   uptime_checks = {
     web = {
       host = "app.example.com"

@@ -15,6 +15,8 @@ module "gke" {
   prefix      = "bnt"
   environment = "prod"
   location    = "us-central1"
+  # Nombre por convención del proyecto único (ADR 0029 §4): <prefix>-<env>-<app>-gke[-dr].
+  cluster_name = "bnt-prod-app-gke"
 
   network        = "projects/example-prod-net-spoke/global/networks/bnt-prod-net-vpc"
   subnet         = "projects/example-prod-net-spoke/regions/us-central1/subnetworks/bnt-prod-net-app-usc1"

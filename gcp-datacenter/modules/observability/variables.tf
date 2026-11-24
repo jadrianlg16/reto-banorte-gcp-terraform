@@ -66,6 +66,22 @@ variable "notification_emails" {
   }
 }
 
+variable "extra_notification_channel_ids" {
+  description = "Canales de notificación que ya existen (projects/<proyecto>/notificationChannels/<id>) y que reciben también todas las alertas del módulo, además de los de notification_emails. En el proyecto único, los de 1-base (salida notification_channel_ids). Vacío por defecto."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for c in var.extra_notification_channel_ids : can(regex("^projects/[^/]+/notificationChannels/[^/]+$", c))])
+    error_message = "Cada canal debe tener la forma projects/<proyecto>/notificationChannels/<id>."
+  }
+  validation {
+    condition     = length(distinct(var.extra_notification_channel_ids)) == length(var.extra_notification_channel_ids)
+    error_message = "extra_notification_channel_ids no debe repetir canales."
+  }
+}
+
 variable "uptime_checks" {
   description = <<-EOT
     Verificaciones de disponibilidad HTTP(S). Llave: nombre corto. host: dominio público a revisar
@@ -140,7 +156,7 @@ variable "slo_rolling_period_days" {
 }
 
 variable "lb_url_map_name" {
-  description = "Nombre del mapa de URL del balanceador externo (salida url_map_name de load-balancer) para filtrar el SLO, la alerta de 5xx y el tablero. null: todos los balanceadores del proyecto."
+  description = "Nombre del mapa de URL del balanceador externo (salida url_map_name de load-balancer) para filtrar el SLO, la alerta de 5xx y el tablero. null: todos los balanceadores del entorno (mapas de URL que empiezan con <prefix>-<environment>-)."
   type        = string
   default     = null
 

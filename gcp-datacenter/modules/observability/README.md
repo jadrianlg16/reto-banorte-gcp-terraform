@@ -12,7 +12,15 @@ alertas, el tablero y el SLO se crean siempre, y `slo_target` se valida para que
 
 Notas: la alerta de memoria de VM usa la métrica de Ops Agent (las VM del MIG deben tenerlo); el
 SLO, la alerta de 5xx y el tablero se filtran por `lb_url_map_name` (salida `url_map_name` de
-`load-balancer`) o, si es null, cubren todos los balanceadores externos del proyecto.
+`load-balancer`) o, si es null, cubren los balanceadores externos del entorno.
+
+Alcance por entorno (proyecto único, ADR 0029): todos los filtros se limitan a los recursos del
+entorno, para que las alertas de un entorno no vean los de otro en el mismo proyecto: mapas de
+URL y clústeres de GKE cuyo nombre empieza con `<prefix>-<environment>-`, VM con la etiqueta
+`env = <environment>`, instancias de Cloud SQL `<project_id>:<prefix>-<environment>-*` y, en el
+tablero, solo los dominios de `uptime_checks` (sin verificaciones no hay mosaico de
+disponibilidad). `extra_notification_channel_ids` agrega a todas las alertas canales que ya
+existen (por ejemplo, los de `1-base`).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -57,8 +65,9 @@ No modules.
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo "bnt". | `string` | n/a | yes |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto donde se crean canales, verificaciones, alertas, tablero y SLO (proyecto de servicio del entorno, o su proyecto de alcance de métricas). | `string` | n/a | yes |
 | <a name="input_cpu_utilization_threshold"></a> [cpu\_utilization\_threshold](#input\_cpu\_utilization\_threshold) | Uso de CPU (0 a 1) sostenido 5 minutos que dispara la alerta de saturación (VM y nodos de GKE). | `number` | `0.85` | no |
+| <a name="input_extra_notification_channel_ids"></a> [extra\_notification\_channel\_ids](#input\_extra\_notification\_channel\_ids) | Canales de notificación que ya existen (projects/<proyecto>/notificationChannels/<id>) y que reciben también todas las alertas del módulo, además de los de notification\_emails. En el proyecto único, los de 1-base (salida notification\_channel\_ids). Vacío por defecto. | `list(string)` | `[]` | no |
 | <a name="input_lb_5xx_ratio_threshold"></a> [lb\_5xx\_ratio\_threshold](#input\_lb\_5xx\_ratio\_threshold) | Fracción de respuestas 5xx del balanceador sobre el total que dispara la alerta. | `number` | `0.05` | no |
-| <a name="input_lb_url_map_name"></a> [lb\_url\_map\_name](#input\_lb\_url\_map\_name) | Nombre del mapa de URL del balanceador externo (salida url\_map\_name de load-balancer) para filtrar el SLO, la alerta de 5xx y el tablero. null: todos los balanceadores del proyecto. | `string` | `null` | no |
+| <a name="input_lb_url_map_name"></a> [lb\_url\_map\_name](#input\_lb\_url\_map\_name) | Nombre del mapa de URL del balanceador externo (salida url\_map\_name de load-balancer) para filtrar el SLO, la alerta de 5xx y el tablero. null: todos los balanceadores del entorno (mapas de URL que empiezan con <prefix>-<environment>-). | `string` | `null` | no |
 | <a name="input_memory_utilization_threshold"></a> [memory\_utilization\_threshold](#input\_memory\_utilization\_threshold) | Uso de memoria (0 a 1) sostenido 5 minutos que dispara la alerta de saturación (VM con Ops Agent y nodos de GKE). | `number` | `0.9` | no |
 | <a name="input_slo_rolling_period_days"></a> [slo\_rolling\_period\_days](#input\_slo\_rolling\_period\_days) | Ventana móvil del SLO, en días. | `number` | `28` | no |
 | <a name="input_slo_target"></a> [slo\_target](#input\_slo\_target) | Objetivo del SLO de disponibilidad por solicitudes del balanceador (la especificación pide 99.9 %). | `number` | `0.999` | no |

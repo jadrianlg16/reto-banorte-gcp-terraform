@@ -39,6 +39,13 @@ el pool a 0 de noche, y lo devuelven en la mañana con los límites de `gke_node
 cobrando su cuota con los pools en 0. La salida `node_pools` da a la etapa 5 lo que necesitan
 los trabajos.
 
+Nombre del clúster: por defecto `<prefix>-<environment>-app-<name>-<código de región>`. Con
+`cluster_name` (opcional) se fija el nombre completo, que debe empezar con
+`<prefix>-<environment>-` (validación). En el proyecto único (ADR 0029 §4) la raíz
+`3-workloads/envs/<env>` lo usa con la convención `<prefix>-<env>-<app>-gke[-dr]`, porque la
+política de Binary Authorization de `1-base` tiene una regla por clúster de prod que necesita
+conocer el nombre antes de que el clúster exista.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -83,6 +90,7 @@ No modules.
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crea el clúster. | `string` | n/a | yes |
 | <a name="input_services_range"></a> [services\_range](#input\_services\_range) | Nombre del rango secundario de la subred para los servicios (VPC nativa). | `string` | n/a | yes |
 | <a name="input_subnet"></a> [subnet](#input\_subnet) | Self link (o ruta projects/<host>/regions/<región>/subnetworks/<subred>) de la subred compartida donde viven los nodos. | `string` | n/a | yes |
+| <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Nombre completo del clúster, en lugar del que se arma con name y la región. Sirve cuando otra etapa necesita conocer el nombre por convención (en el proyecto único, la regla por clúster de Binary Authorization de 1-base usa <prefix>-<env>-<app>-gke[-dr], ADR 0029 §4). Debe empezar con <prefix>-<environment>-. null: <prefix>-<environment>-app-<name>-<código de región>. | `string` | `null` | no |
 | <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Protección contra borrado fuera de prod. En prod siempre es true, sin importar este valor (salvo teardown). | `bool` | `false` | no |
 | <a name="input_enable_backup_agent"></a> [enable\_backup\_agent](#input\_enable\_backup\_agent) | Habilita el complemento de Backup for GKE (lo necesita el plan de respaldo del módulo backup-dr). | `bool` | `true` | no |
 | <a name="input_enable_private_endpoint"></a> [enable\_private\_endpoint](#input\_enable\_private\_endpoint) | Si es true, el plano de control solo tiene IP privada (sin endpoint público). Si es false (solo dev y qa), el endpoint público queda limitado a master\_authorized\_networks, que no puede estar vacío. | `bool` | `true` | no |

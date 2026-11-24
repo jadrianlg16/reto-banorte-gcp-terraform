@@ -67,6 +67,49 @@ run "nombres_siguen_la_convencion" {
   }
 }
 
+# Proyecto único (ADR 0029 §4): el nombre del clúster se fija por convención,
+# <prefix>-<env>-<app>-gke[-dr], porque 1-base lo usa en la regla por clúster de Binary
+# Authorization.
+run "nombre_explicito_del_cluster" {
+  command = plan
+
+  variables {
+    cluster_name = "bnt-prod-app-gke-dr"
+    location     = "us-east4"
+    subnet       = "projects/example-prod-net-spoke/regions/us-east4/subnetworks/bnt-prod-net-app-use4"
+    kms_key      = "projects/example-common-security/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/gke"
+  }
+
+  assert {
+    condition     = google_container_cluster.this.name == "bnt-prod-app-gke-dr" && output.cluster_name == "bnt-prod-app-gke-dr"
+    error_message = "Con cluster_name el clúster debe llamarse exactamente así."
+  }
+  assert {
+    condition     = output.node_pools["general"].cluster == "bnt-prod-app-gke-dr" && output.node_pools["general"].name == "bnt-prod-app-np-general"
+    error_message = "Los pools cuelgan del clúster con el nombre explícito y conservan su nombre."
+  }
+}
+
+run "rechaza_nombre_de_cluster_de_otro_entorno" {
+  command = plan
+
+  variables {
+    cluster_name = "bnt-dev-app-gke"
+  }
+
+  expect_failures = [var.cluster_name]
+}
+
+run "rechaza_nombre_de_cluster_invalido" {
+  command = plan
+
+  variables {
+    cluster_name = "bnt-prod-App_gke"
+  }
+
+  expect_failures = [var.cluster_name]
+}
+
 # Apagado fuera de horario (ADR 0028): el pool "scheduled" debe tener la misma configuración
 # que exige_configuracion_de_la_especificacion comprueba en "this", con otro nombre.
 run "scheduled_scaling_misma_configuracion" {
