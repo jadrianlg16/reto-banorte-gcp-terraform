@@ -314,6 +314,20 @@ for f in pr.yml drift.yml _terraform-root.yml; do
 done
 check "root-tfvars: los flujos lo usan antes de cada init (pr, drift y plan y apply de _terraform-root: 4)" 4 "$n"
 
+# pr.yml corre las pruebas de Go sin GCP (config.example.json contra los variables.tf, entre
+# otras): go vet y go test de todos los paquetes en tests/, sin id-token ni cuentas de GCP.
+"$PY" -c '
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"\n  go:\n(.*?)(?=\n  [a-z][a-z0-9_-]*:\n|\Z)", t, re.S)
+body = m.group(1) if m else ""
+ok = (body and "name: go (vet y pruebas sin GCP)" in body and "working-directory: gcp-datacenter/tests" in body
+      and "run: go vet ./..." in body and "run: go test -count=1 ./..." in body
+      and "id-token" not in body and "google-github-actions/auth" not in body and "if:" not in body)
+sys.exit(0 if ok else 1)
+' "$WF/pr.yml"
+check "pr.yml: trabajo go (vet y pruebas sin GCP) con go vet y go test de tests/, sin credenciales ni condición" 0 $?
+
 # --- go-test-report.sh ---------------------------------------------------------------------
 g="$DATA/go-test"
 bash scripts/go-test-report.sh "$g/tres-omitidas.json" 0 >/dev/null 2>&1
