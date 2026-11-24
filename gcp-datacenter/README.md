@@ -51,12 +51,16 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
   para el estado, la VPN ni el balanceador interno
   ([0002](docs/adr/0002-regiones-primaria-y-de-dr.md),
   [diagrama 4](docs/diagramas/04-operacion-continuidad-automatizacion.md)).
+- Apagado fuera de horario opcional en dev y qa (`off_hours_shutdown`, encendido en sus
+  ejemplos, rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler, MIG
+  con programa de escalado, sin deriva falsa en `drift.yml`
+  ([0028](docs/adr/0028-apagado-fuera-de-horario-de-dev-y-qa.md)).
 
 ## Mapa del repositorio
 
 | Ruta | Contenido |
 |---|---|
-| `modules/` | 24 módulos propios, cada uno con `README.md`, `examples/basic/` y `tests/` (contrato §8) |
+| `modules/` | 25 módulos propios, cada uno con `README.md`, `examples/basic/` y `tests/` (contrato §8) |
 | `stages/0-bootstrap` | Carpeta y proyecto semilla, llave y bucket de estado (multirregión), cuentas de etapa, roles personalizados, política de denegación, WIF |
 | `stages/1-org` | Carpetas, proyectos de `common`, políticas, sink de auditoría, SCC, presupuesto, IAM de grupos y de las cuentas de etapa en `common` y las carpetas |
 | `stages/2-security` | Llaves KMS (incluida `artifacts`), contenedores de secretos y perímetro de VPC-SC |
@@ -172,8 +176,8 @@ rm "$R/tfplan" "$R/plan.json"
 | `stages/2-security` | `2-security` | `vpc_sc_enforced = false` por defecto; `access_policy_id` si la organización ya tiene política de Access Context Manager. |
 | `stages/3-networks` | `3-networks/hub` | Antes de cualquier spoke. `simulate_onprem = true` y `enable_vpn_dr = true` por defecto (ocho túneles en modo simulado: cuatro en el hub y cuatro en `onprem-sim`). |
 | `stages/3-networks/envs/<env>` | `3-networks/<env>` | **Spokes de uno en uno** (dev, luego qa, luego prod), nunca en paralelo: cada spoke crea su peering sobre la VPC hub y GCP no admite dos operaciones de peering a la vez sobre una red. |
-| `stages/4-projects/envs/<env>` | `4-projects/<env>` | `workloads_service_account` = `stage_service_accounts["5-workloads"]` de la etapa 0. |
-| `stages/5-workloads/envs/<env>` | `5-workloads/<env>` | Imágenes de Cloud Run y GKE en el repositorio de `artifact_registry_repositories` de la etapa 4 (Binary Authorization rechaza otras). Con GKE detrás del balanceador: primer apply sin `gke_lb_negs`, desplegar la carga, segundo apply con los NEG. El rango del plano de control sale de `reserved_cidrs` de la etapa 3. |
+| `stages/4-projects/envs/<env>` | `4-projects/<env>` | `workloads_service_account` = `stage_service_accounts["5-workloads"]` de la etapa 0. En dev y qa, `enable_off_hours_shutdown = true` (ejemplos) crea la cuenta y el rol de los trabajos del apagado fuera de horario. |
+| `stages/5-workloads/envs/<env>` | `5-workloads/<env>` | Imágenes de Cloud Run y GKE en el repositorio de `artifact_registry_repositories` de la etapa 4 (Binary Authorization rechaza otras). Con GKE detrás del balanceador: primer apply sin `gke_lb_negs`, desplegar la carga, segundo apply con los NEG. El rango del plano de control sale de `reserved_cidrs` de la etapa 3. En dev y qa, `off_hours_shutdown` (ejemplos) apaga Cloud SQL, el MIG y los pools de GKE de 20:00 a 07:00 y el fin de semana: un apply o la prueba de humo de noche encuentran Cloud SQL detenida (README de la raíz). |
 
 Pasos fuera de Terraform después de la etapa 5: subir la imagen al repositorio de la aplicación
 (antes de encender Cloud Run o GKE), registros DNS A de `domain_names` hacia la salida
@@ -189,27 +193,27 @@ cd gcp-datacenter
 
 bash scripts/check.sh                 # fmt, validate, tflint, checkov y terraform test (Terraform >= 1.11)
 bash scripts/check.sh --skip test     # lo mismo sin terraform test (lo que corre con Terraform 1.9)
-bash scripts/check.sh --list          # objetivos: 24 módulos, 24 ejemplos y 13 raíces (61)
+bash scripts/check.sh --list          # objetivos: 25 módulos, 25 ejemplos y 13 raíces (63)
 bash scripts/check.sh --skip checkov stages/5-workloads/envs/prod
 bash scripts/policy-check.sh          # conftest verify y los 27 planes de ejemplo (15 pasan, 12 se rechazan)
 bash scripts/selftest.sh              # autopruebas de los scripts del pipeline
-bash scripts/docs.sh --check          # READMEs de terraform-docs al día (24 módulos y 13 raíces)
+bash scripts/docs.sh --check          # READMEs de terraform-docs al día (25 módulos y 13 raíces)
 bash scripts/docs.sh                  # regenerarlos
 ```
 
 Los números de los comentarios salen de correr estos comandos el 23 nov 2026 desde
 `gcp-datacenter/`, con `PATH="$HOME/go/bin:$PATH"` (Conftest instalado con Go):
 
-- `bash scripts/check.sh --list` → 61 líneas: 24 `modules/<m>`, 24 `.../examples/basic` y 13
-  `stages/...` (contadas con `grep -c`).
+- `bash scripts/check.sh --list` → 63 líneas: 25 `modules/<m>`, 25 `.../examples/basic` y 13
+  `stages/...` (contadas con `grep -c`; 23 nov 2026, con el módulo `off-hours-shutdown`).
 - `bash scripts/policy-check.sh` → "83 tests, 83 passed, 0 warnings, 0 failures" y
   "RESULTADO: 27 planes con el resultado esperado." (15 con resultado `pasa` y 12 con
   `rechaza`; 13 de los 27 son recortes de planes reales sin GCP, `ls policies/fixtures | grep -c _real_` → 13).
 - `bash scripts/selftest.sh` → 111 líneas `OK` (`grep -c '^OK'`), 0 `FALLA` y "RESULTADO: todas
   las comprobaciones pasaron." (con las pruebas de `destroy.yml`; si no encuentra Conftest, una de
   esas líneas sale como `INFO`).
-- `bash scripts/docs.sh --check` → "Resultado: PASS (37)".
-- `ls modules/*/tests/*.tftest.hcl | wc -l` → 24.
+- `bash scripts/docs.sh --check` → "Resultado: PASS (38)".
+- `ls modules/*/tests/*.tftest.hcl | wc -l` → 25.
 
 `bash scripts/check.sh` completo (con `terraform test`) no se volvió a correr para este
 documento; su resultado lo reporta cada PR en la pata `estático (terraform 1.16.5)`.
@@ -258,11 +262,11 @@ apply. Los números de pendientes remiten a [`docs/pendientes-apply.md`](docs/pe
 | Criterio de la especificación | Cómo lo aborda el repositorio | Estado |
 |---|---|---|
 | Despliegue limpio de las etapas 0 a 5 | Orden fijo; interfaces de §7 del contrato; `remote_state.tf` con postcondiciones; `apply.yml` encadenado | **Pendiente del primer apply.** Sin GCP solo se demuestra que cada raíz valida y planea con proveedores simulados (`bash scripts/check.sh`) |
-| Segundo `plan` sin cambios | `ignore_changes` donde hay altas externas (perímetro, pool por defecto de GKE); `drift.yml` diario con `-detailed-exitcode` | **Pendiente del primer apply** (pendiente 11) |
+| Segundo `plan` sin cambios | `ignore_changes` donde hay altas externas (perímetro, pool por defecto de GKE) y donde cambia el apagado fuera de horario de dev y qa (ADR 0028); `drift.yml` diario con `-detailed-exitcode` | **Pendiente del primer apply** (pendientes 11 y 80) |
 | `destroy` de dev sin huérfanos | `destroy.yml`: 5-workloads → 4-projects → 3-networks del entorno con plan guardado y huella, `scripts/destroy-plan-check.py` detiene una raíz con `deletion_protection` o `deletion_policy` que impidan borrar, y `scripts/destroy-orphans.py` falla si Cloud Asset Inventory muestra algo inesperado en la carpeta; `project_deletion_policy` / `deletion_policy = "DELETE"` y `deletion_protection = false` admitidos fuera de prod | **Construido y probado sin GCP** (`bash scripts/selftest.sh`, 23 nov 2026: guardias, comprobaciones de planes reales de destrucción y huérfanos con datos de ejemplo); **pendiente** correrlo contra dev (pendientes 11 y 85; la bóveda con retención forzada, la conexión de PSA y el bucket con objetos pueden bloquearlo: 86, 87 y 89; recrear el entorno pide un `project_suffix` nuevo: 88) |
 | El pipeline bloquea un PR que viola una política | Siete reglas Rego; `pr.yml` corre `policy-check.sh` siempre y Conftest sobre el plan real con `GCP_ENABLED`; `plan-gate` falla si falla un plan | **Demostrado sin GCP para las reglas:** `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` (23 nov 2026) → 83 pruebas de Rego y 27 planes de ejemplo (13 recortados de planes reales sin GCP) con el resultado esperado. Que un PR real quede bloqueado depende de configurar en GitHub la protección de `main` con `plan-gate` y las demás comprobaciones como obligatorias, del plan de GitHub (pendiente 12) y de la primera corrida de `pr.yml` (pendiente 51) |
 | Una VM de prod alcanza on-premises y resuelve su DNS | Dos HA VPN con BGP, anuncios del hub, peering con exportación de rutas, zona de reenvío en el hub y de peering DNS en el spoke; en modo simulado, firewall de `onprem-sim` y delegación del rango de DNS ya construidos | **Pendiente del primer apply** (pendientes 6, 7, 36 y 37). En modo simulado falta crear a mano la VM DNS en `onprem-sim` |
 | Sin hallazgos críticos ni altos en Security Command Center | Políticas de organización, checkov en cada PR, notificación de hallazgos altos y críticos a Pub/Sub | **Pendiente del primer apply** y de activar SCC (pendiente 2). checkov sin GCP no equivale a SCC |
 | Simulacro de DR dentro del RTO | Réplica de Cloud SQL, bucket de doble región, `dr_active`; estado multirregional, VPN de DR y balanceador interno por región (ADR 0022); [runbook 04](docs/runbooks/04-conmutacion-a-dr.md) con tabla de tiempos | **Pendiente del primer apply.** RTO ≤ 4 h y RPO ≤ 15 min son objetivos sin medir |
 | Cero recursos creados a mano | Trabajo de recursos no administrados en `drift.yml` (Cloud Asset Inventory frente a los estados) | **Construido y probado con datos de ejemplo** (`bash scripts/selftest.sh`, 23 nov 2026 → 111 OK, 0 FALLA); **pendiente** correrlo contra una carpeta real (pendiente 49) |
-| Cada módulo tiene README, ejemplo y prueba | Estructura de §4.5 del contrato | **Demostrado sin GCP:** los 24 módulos tienen `README.md`, `examples/basic/main.tf` y `tests/*.tftest.hcl` (`ls modules/*/tests/*.tftest.hcl \| wc -l` → 24, 23 nov 2026); `bash scripts/docs.sh --check` → `PASS (37)` (23 nov 2026). Las pruebas exigen Terraform 1.11 o mayor |
+| Cada módulo tiene README, ejemplo y prueba | Estructura de §4.5 del contrato | **Demostrado sin GCP:** los 25 módulos tienen `README.md`, `examples/basic/main.tf` y `tests/*.tftest.hcl` (`ls modules/*/tests/*.tftest.hcl \| wc -l` → 25, 23 nov 2026); `bash scripts/docs.sh --check` → `PASS (38)` (23 nov 2026). Las pruebas exigen Terraform 1.11 o mayor |

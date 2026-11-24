@@ -670,3 +670,79 @@ variable "uptime_check_path" {
     error_message = "uptime_check_path debe empezar con /."
   }
 }
+
+# ---------------------------------------------------------------------------------------------
+# Apagado fuera de horario (solo dev y qa, ADR 0028)
+# ---------------------------------------------------------------------------------------------
+
+variable "off_hours_shutdown" {
+  description = <<-EOT
+    Apagado fuera de horario de dev y qa (ADR 0028). Con enabled = true:
+    - Cloud SQL se detiene a la hora de stop_schedule y se enciende a la de start_schedule
+      (trabajos de Cloud Scheduler, módulo off-hours-shutdown);
+    - el MIG (enable_mig) baja a 0 VM fuera del horario con un programa de escalado nativo y
+      tiene mig_min_replicas VM durante el horario, sin autoescalado por CPU;
+    - los pools de GKE (enable_gke) se llevan a 0 nodos y vuelven a su mínimo con el
+      autoescalado reactivado;
+    - la ventana de Backup and DR pasa al horario encendido.
+    Cloud Run ya escala a 0 (min_instances = 0); Memorystore y Filestore no se pueden detener.
+    Los crons van en time_zone con la forma "M H * * D" (minuto, hora, días de la semana 0-6) y
+    los mismos días en los dos. Exige enable_off_hours_shutdown = true en 4-projects/<env> (la
+    cuenta de los trabajos). Se rechaza en prod y con enable_dr.
+  EOT
+  type = object({
+    enabled        = bool
+    time_zone      = optional(string, "America/Mexico_City")
+    start_schedule = optional(string, "0 7 * * 1-5")
+    stop_schedule  = optional(string, "0 20 * * 1-5")
+  })
+  default  = { enabled = false }
+  nullable = false
+
+  validation {
+    condition     = var.environment != "prod" || !var.off_hours_shutdown.enabled
+    error_message = "off_hours_shutdown no se admite en prod: el apagado fuera de horario es solo para dev y qa (ADR 0028)."
+  }
+  validation {
+    condition     = !var.off_hours_shutdown.enabled || !var.enable_dr
+    error_message = "off_hours_shutdown no se admite con enable_dr: la réplica de Cloud SQL no se puede detener (ADR 0028)."
+  }
+  validation {
+    condition = alltrue([
+      for c in [var.off_hours_shutdown.start_schedule, var.off_hours_shutdown.stop_schedule] :
+      can(regex("^([0-9]|[1-5][0-9]) ([0-9]|1[0-9]|2[0-3]) \\* \\* (\\*|[0-6](-[0-6])?(,[0-6](-[0-6])?)*)$", c))
+    ])
+    error_message = "start_schedule y stop_schedule deben tener la forma \"M H * * D\": minuto 0-59, hora 0-23, día del mes y mes en *, y días de la semana * o una lista de 0-6 con rangos (por ejemplo 1-5)."
+  }
+  validation {
+    condition     = try(split(" ", var.off_hours_shutdown.start_schedule)[4] == split(" ", var.off_hours_shutdown.stop_schedule)[4], false)
+    error_message = "start_schedule y stop_schedule deben tener los mismos días de la semana (el horario encendido empieza y termina el mismo día)."
+  }
+  validation {
+    condition = try(
+      (tonumber(split(" ", var.off_hours_shutdown.stop_schedule)[1]) * 60 + tonumber(split(" ", var.off_hours_shutdown.stop_schedule)[0])) -
+      (tonumber(split(" ", var.off_hours_shutdown.start_schedule)[1]) * 60 + tonumber(split(" ", var.off_hours_shutdown.start_schedule)[0])) >= 60,
+      false
+    )
+    error_message = "stop_schedule debe caer al menos 60 minutos después de start_schedule, el mismo día."
+  }
+  validation {
+    # El segundo paso del apagado de GKE corre 10 minutos después (gke_step_minutes del módulo).
+    condition     = try(tonumber(split(" ", var.off_hours_shutdown.stop_schedule)[1]) * 60 + tonumber(split(" ", var.off_hours_shutdown.stop_schedule)[0]) + 10 <= 1439, false)
+    error_message = "stop_schedule debe ser a más tardar a las 23:29: el segundo paso del apagado de GKE corre 10 minutos después, el mismo día."
+  }
+  validation {
+    condition     = can(regex("^(UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+)+)$", var.off_hours_shutdown.time_zone))
+    error_message = "off_hours_shutdown.time_zone debe ser UTC o un nombre IANA como America/Monterrey."
+  }
+  validation {
+    # La ventana diaria de Backup and DR (6 horas, empieza en hora cerrada) debe caber en el
+    # horario encendido: con Cloud SQL detenida, el respaldo de ese día no se toma.
+    condition = !var.off_hours_shutdown.enabled || !var.enable_backup || try(
+      ceil((tonumber(split(" ", var.off_hours_shutdown.start_schedule)[1]) * 60 + tonumber(split(" ", var.off_hours_shutdown.start_schedule)[0])) / 60) * 60 + 360 <=
+      tonumber(split(" ", var.off_hours_shutdown.stop_schedule)[1]) * 60 + tonumber(split(" ", var.off_hours_shutdown.stop_schedule)[0]),
+      false
+    )
+    error_message = "Con enable_backup, el horario encendido debe contener la ventana de respaldo de 6 horas que empieza en la primera hora cerrada desde start_schedule (por ejemplo, 07:00 a 13:00 con encendido a las 07:00)."
+  }
+}

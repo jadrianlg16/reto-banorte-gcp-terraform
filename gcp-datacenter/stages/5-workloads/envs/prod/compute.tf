@@ -33,6 +33,9 @@ module "gke" {
   deletion_protection        = var.deletion_protection
   # Solo la instancia de DR se puede retirar (vuelta a la primaria, runbook 04).
   teardown = each.key == "dr" && var.dr_teardown
+  # Apagado fuera de horario (off_hours.tf): Terraform ignora el autoscaling de los pools, que
+  # cambian los trabajos de Cloud Scheduler. Encenderlo o apagarlo reemplaza los pools.
+  scheduled_scaling = local.off_hours_enabled
 
   labels = local.labels
 
@@ -68,7 +71,11 @@ module "mig" {
   min_replicas    = var.mig_min_replicas
   max_replicas    = var.mig_max_replicas
   service_account = local.service_accounts["mig"]
-  kms_key         = local.kms_key_ids[each.value]["compute"]
+
+  # Apagado fuera de horario (off_hours.tf): mig_min_replicas VM durante el horario encendido y
+  # 0 fuera de él, con el programa de escalado nativo del autoescalador (sin señal de CPU).
+  business_hours = local.mig_business_hours
+  kms_key        = local.kms_key_ids[each.value]["compute"]
 
   named_ports = { http = var.mig_http_port }
   health_check = {

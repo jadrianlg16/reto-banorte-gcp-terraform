@@ -163,6 +163,23 @@ o si la prueba se omite (máximo de omitidas 0 en
 `omitir_prueba_de_humo = true`, que queda como advertencia y en el resumen con el nombre de quien
 la pidió.
 
+**Prueba de humo fuera de horario (ADR 0028).** Con `off_hours_shutdown` en dev, un merge que
+llega con Cloud SQL detenida hace fallar la prueba dev → Cloud SQL con un mensaje que lo dice
+(`sqlStoppedError` de `tests/e2e/connectivity_test.go`: `settings.activationPolicy = NEVER`; el
+`state` sigue en `RUNNABLE`). La prueba no la enciende: la cuenta de auditoría es de solo lectura
+y encenderla de noche la dejaría prendida hasta el siguiente apagado. qa espera, porque depende
+de este trabajo. Para seguir:
+
+1. Volver a correr el trabajo fallido ("Re-run failed jobs") después de la hora de encendido.
+   `check-main-tip.sh` no lo impide mientras `main` no cambie `gcp-datacenter/` ni
+   `.github/workflows/`; si cambió, la ejecución nueva de ese merge lleva el cambio.
+2. O encenderla antes: `gcloud scheduler jobs run <id>`, con el `id` de
+   `job_ids["sql-primary-start"]` de la salida `off_hours_shutdown` de `5-workloads/envs/dev`,
+   por una identidad con `cloudscheduler.jobs.run` en el proyecto de servicio. Después, volver
+   a correr el trabajo. La instancia queda encendida hasta el siguiente apagado programado.
+3. O, si qa no puede esperar, lanzar `apply.yml` a mano con `omitir_prueba_de_humo = true`
+   (queda registrado).
+
 Reglas:
 
 - `0-bootstrap` no está en el pipeline: la aplica una persona administradora, una vez y a mano
@@ -192,6 +209,16 @@ Reglas:
 - Código 1: el trabajo falla.
 
 La incidencia no se cierra sola cuando el drift desaparece: se cierra a mano al resolverlo.
+
+El flujo corre a las 12:17 UTC (06:17 en Monterrey): con `off_hours_shutdown` (ADR 0028), dev
+y qa están apagados en ese momento. Lo que cambian los trabajos de Cloud Scheduler (estado de
+Cloud SQL y autoescalado de los pools de GKE) está en `ignore_changes` y el tamaño del MIG lo
+decide su autoescalador, así que el apagado no da código 2. El plan muestra la advertencia
+del `check "cloud_sql_encendida"`, que no cambia el código de salida. En cambio, una instancia
+de Cloud SQL detenida donde el apagado no está permitido (prod, o dev y qa sin
+`off_hours_shutdown`) hace fallar el plan (`postcondition` del módulo `cloud-sql`): el trabajo
+de esa raíz termina en error (código 1), no en incidencia. Un trabajo de Cloud Scheduler
+pausado a mano sí da código 2.
 
 **Recursos no administrados** (`recursos no administrados (<carpeta>)`, uno por cada carpeta
 de `1-org`: common, dev, qa y prod; common tiene los proyectos del hub de red, seguridad,

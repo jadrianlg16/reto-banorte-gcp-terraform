@@ -96,13 +96,44 @@ fija el `Service` de Kubernetes, fuera de Terraform.
   Terraform (`gcloud sql instances promote-replica`). Después hay que reconciliar el estado
   (la réplica promovida deja de ser réplica) antes del siguiente `apply`.
 
+## Apagado fuera de horario (`off_hours_shutdown`, ADR 0028)
+
+Solo dev y qa: se rechaza en prod y con `enable_dr`. Por defecto está apagado; los
+`terraform.tfvars.example` de dev y qa lo encienden de 07:00 a 20:00 de lunes a viernes
+(`America/Monterrey`). Exige `enable_off_hours_shutdown = true` en `4-projects/<env>` (una
+precondición lo comprueba con la salida `scheduler_service_accounts`). Con `enabled = true`
+(`off_hours.tf`):
+
+| Recurso | Qué pasa fuera del horario | Cómo |
+|---|---|---|
+| Cloud SQL | Detenida (`activation_policy = NEVER`); se siguen cobrando almacenamiento e IP | Trabajos `sql-primary-stop` y `sql-primary-start` del módulo `off-hours-shutdown` |
+| GKE (`enable_gke`) | Cada pool en 0 nodos; el clúster sigue (y cobra su cuota) | Cuatro trabajos por pool (`setAutoscaling` y `setSize`, con 10 minutos entre pasos); pools con `scheduled_scaling` |
+| MIG (`enable_mig`) | 0 VM; durante el horario, `mig_min_replicas` VM fijas (sin autoescalado por CPU) | Programa de escalado del autoescalador (`business_hours`) |
+| Cloud Run | Ya escala a 0 (`min_instances = 0`) | Nada |
+| Memorystore, Filestore | Siguen encendidos y cobrando | No se pueden detener (HYPOTHESIS, ADR 0028); apagarlos es `enable_* = false` |
+| Backup and DR | La ventana diaria de 6 horas empieza en la primera hora en punto desde el encendido | `operations.tf`; la variable valida que quepa en el horario |
+
+Sin deriva: el módulo `cloud-sql` ignora `activation_policy` y los pools `scheduled` ignoran
+`autoscaling`; la salida `off_hours_shutdown` solo lleva valores de la configuración. El
+`check "cloud_sql_encendida"` avisa en cada plan con la instancia detenida (no cambia el código
+de salida). Un apply fuera de horario no enciende nada; si necesita la base (crear bases o
+usuarios), lanzar antes el trabajo de encendido:
+
+```sh
+terraform output -json off_hours_shutdown | jq -r '.job_ids["sql-primary-start"]'
+gcloud scheduler jobs run <id>
+```
+
+La prueba de humo de dev falla con un mensaje claro si la instancia está detenida (no la
+enciende); ver `docs/pipeline.md` §1.2.
+
 ## Lecturas de otras etapas (`remote_state.tf`)
 
 | Prefijo | Salidas que usa (§7) |
 |---|---|
 | `2-security` | `kms_key_ids` (map(map(map(string)))) |
 | `3-networks/<env>` | `network_self_link`, `subnets` (map(object)), `psa_range_name`, `secure_tags`, `secure_tag_keys`, `reserved_cidrs` (map(string)), `lb_backend_ports` (list(string), opcional) |
-| `4-projects/<env>` | `service_project_ids`, `service_accounts` (map(map(string))) |
+| `4-projects/<env>` | `service_project_ids`, `service_accounts` (map(map(string))), `scheduler_service_accounts` (map(string), solo con `off_hours_shutdown`) |
 
 La fila de §6.1 admite también `1-org`, pero esta etapa no usa ninguna de sus salidas y no lo
 lee. `terraform_data.upstream_checks` comprueba en el plan que esas salidas traigan las llaves
@@ -123,7 +154,9 @@ apply sin `gke_lb_negs`, despliegue de la carga en el clúster, segundo apply co
 Prueba sin GCP: `terraform test` (proveedores simulados; `tests/workloads.tftest.hcl` cubre
 prod normal, prod en conmutación con y sin NEG de DR, solo GKE en conmutación, los dos pasos de
 la vuelta con `dr_teardown`, el certificado interno de DR antes del incidente, dev con solo
-Cloud Run y SQL, qa, puertos de backend y entradas rechazadas).
+Cloud Run y SQL, qa, dev con GKE y apagado fuera de horario, puertos de backend y entradas
+rechazadas, entre ellas el apagado en prod, con DR, con crons inválidos o sin la cuenta de la
+etapa 4).
 
 Pasos fuera de Terraform: registros DNS A de `domain_names` hacia `lb_ip_address` (el
 certificado se activa entonces); registros de `internal_lb_dns_authorization_records_by_region`
@@ -149,7 +182,10 @@ cuentas de ejecución a Cloud SQL, que el módulo `cloud-sql` otorga). Sobre rec
 (`roles/iam.serviceAccountUser`) sobre cada cuenta de ejecución, `roles/iam.serviceAccountAdmin`
 sobre la cuenta `workload` (enlace de Workload Identity), `roles/compute.networkUser` en las
 subredes `app` y `run` (y `_dr`), `roles/compute.networkViewer` en el host de la Shared VPC y
-`roles/resourcemanager.tagUser` sobre los valores de `lb_backend` e `iap_ssh` (§7.4). La etapa 0
+`roles/resourcemanager.tagUser` sobre los valores de `lb_backend` e `iap_ssh` (§7.4). Con
+`enable_off_hours_shutdown` en la etapa 4 (dev y qa): `roles/cloudscheduler.admin` en el
+proyecto de servicio y `roles/iam.serviceAccountUser` solo sobre la cuenta
+`<prefix>-<env>-<app>-sched` (ADR 0028). La etapa 0
 le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lectura del estado:
 `roles/storage.objectViewer` condicionado a los prefijos de §6.1.
 
@@ -184,6 +220,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="module_memorystore"></a> [memorystore](#module\_memorystore) | ../../../../modules/memorystore | n/a |
 | <a name="module_mig"></a> [mig](#module\_mig) | ../../../../modules/compute-mig | n/a |
 | <a name="module_observability"></a> [observability](#module\_observability) | ../../../../modules/observability | n/a |
+| <a name="module_off_hours_shutdown"></a> [off\_hours\_shutdown](#module\_off\_hours\_shutdown) | ../../../../modules/off-hours-shutdown | n/a |
 | <a name="module_storage"></a> [storage](#module\_storage) | ../../../../modules/storage | n/a |
 
 ## Resources
@@ -246,6 +283,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="input_mig_max_replicas"></a> [mig\_max\_replicas](#input\_mig\_max\_replicas) | Máximo de VM del autoescalador. | `number` | `4` | no |
 | <a name="input_mig_min_replicas"></a> [mig\_min\_replicas](#input\_mig\_min\_replicas) | Mínimo de VM del autoescalador (al menos 2 en prod, lo valida el módulo). | `number` | `2` | no |
 | <a name="input_multi_region"></a> [multi\_region](#input\_multi\_region) | Multirregión del bucket de doble región con enable\_dr (anillo de llaves de la etapa 2 de esa ubicación). Debe contener primary\_region y dr\_region. | `string` | `"us"` | no |
+| <a name="input_off_hours_shutdown"></a> [off\_hours\_shutdown](#input\_off\_hours\_shutdown) | Apagado fuera de horario de dev y qa (ADR 0028). Con enabled = true:<br/>- Cloud SQL se detiene a la hora de stop\_schedule y se enciende a la de start\_schedule<br/>  (trabajos de Cloud Scheduler, módulo off-hours-shutdown);<br/>- el MIG (enable\_mig) baja a 0 VM fuera del horario con un programa de escalado nativo y<br/>  tiene mig\_min\_replicas VM durante el horario, sin autoescalado por CPU;<br/>- los pools de GKE (enable\_gke) se llevan a 0 nodos y vuelven a su mínimo con el<br/>  autoescalado reactivado;<br/>- la ventana de Backup and DR pasa al horario encendido.<br/>Cloud Run ya escala a 0 (min\_instances = 0); Memorystore y Filestore no se pueden detener.<br/>Los crons van en time\_zone con la forma "M H * * D" (minuto, hora, días de la semana 0-6) y<br/>los mismos días en los dos. Exige enable\_off\_hours\_shutdown = true en 4-projects/<env> (la<br/>cuenta de los trabajos). Se rechaza en prod y con enable\_dr. | <pre>object({<br/>    enabled        = bool<br/>    time_zone      = optional(string, "America/Mexico_City")<br/>    start_schedule = optional(string, "0 7 * * 1-5")<br/>    stop_schedule  = optional(string, "0 20 * * 1-5")<br/>  })</pre> | <pre>{<br/>  "enabled": false<br/>}</pre> | no |
 | <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). | `string` | `"us-central1"` | no |
 | <a name="input_region_codes"></a> [region\_codes](#input\_region\_codes) | Mapa región → código corto para los nombres (§4.2). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_sql_database_version"></a> [sql\_database\_version](#input\_sql\_database\_version) | Versión de PostgreSQL de Cloud SQL (POSTGRES\_<n>). | `string` | `"POSTGRES_16"` | no |
@@ -273,6 +311,7 @@ le da `roles/serviceusage.serviceUsageConsumer` en el proyecto semilla y la lect
 | <a name="output_internal_lb_ip_addresses"></a> [internal\_lb\_ip\_addresses](#output\_internal\_lb\_ip\_addresses) | Mapa región → IP interna del balanceador interno de esa región (la de DR solo con dr\_active). Vacío sin enable\_internal\_lb. |
 | <a name="output_lb_ip_address"></a> [lb\_ip\_address](#output\_lb\_ip\_address) | IP pública global del balanceador HTTPS externo (para los registros DNS A de domain\_names). null si no hay ningún backend habilitado. |
 | <a name="output_mig_instance_groups"></a> [mig\_instance\_groups](#output\_mig\_instance\_groups) | Mapa región → URL del grupo de instancias del MIG (vacío con enable\_mig = false). |
+| <a name="output_off_hours_shutdown"></a> [off\_hours\_shutdown](#output\_off\_hours\_shutdown) | Apagado fuera de horario (ADR 0028): horario encendido (zona horaria, crons, minutos del día y duración) e IDs de los trabajos de Cloud Scheduler (sql-primary-start enciende Cloud SQL a mano con gcloud scheduler jobs run). null si está apagado. |
 | <a name="output_redis_host"></a> [redis\_host](#output\_redis\_host) | IP privada de Memorystore (null con enable\_memorystore = false). |
 | <a name="output_sql_instance_connection_name"></a> [sql\_instance\_connection\_name](#output\_sql\_instance\_connection\_name) | Nombre de conexión de la instancia primaria de Cloud SQL (<proyecto>:<región>:<instancia>). |
 | <a name="output_sql_replica_connection_name"></a> [sql\_replica\_connection\_name](#output\_sql\_replica\_connection\_name) | Nombre de conexión de la réplica de Cloud SQL en dr\_region (null sin enable\_dr). Se promueve en el runbook de conmutación. |

@@ -20,6 +20,14 @@ de servicio de Compute del proyecto de servicio necesita
 (los da la etapa 4). Las reglas de firewall del spoke usan etiquetas seguras: se pasan en
 `resource_manager_tags` como `tagKeys/<id>` → `tagValues/<id>`.
 
+Apagado fuera de horario (ADR 0028, solo dev y qa; se rechaza en prod): con `business_hours`
+el autoescalador usa un programa de escalado (`business-hours`) como única señal, con
+`min_replicas = 0`: durante el horario exige `min_replicas` VM y fuera de él el grupo baja a 0.
+No hay autoescalado por CPU mientras `business_hours` esté puesto. Es declarativo (sin
+trabajos ni deriva). Como `cpu_utilization` es Optional+Computed en el proveedor, cambiar entre
+la señal de CPU y el programa reemplaza el autoescalador (`replace_triggered_by`) en vez de
+actualizarlo. La salida `autoscaling` resume la política.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -33,6 +41,7 @@ de servicio de Compute del proyecto de servicio necesita
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
+| <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
 
@@ -46,6 +55,7 @@ No modules.
 | [google_compute_region_autoscaler.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_autoscaler) | resource |
 | [google_compute_region_instance_group_manager.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_instance_group_manager) | resource |
 | [google_compute_region_instance_template.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_instance_template) | resource |
+| [terraform_data.autoscaler_signal](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 
 ## Inputs
 
@@ -57,12 +67,13 @@ No modules.
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
 | <a name="input_machine_type"></a> [machine\_type](#input\_machine\_type) | Tipo de máquina de las instancias (por ejemplo, e2-standard-2). | `string` | n/a | yes |
 | <a name="input_max_replicas"></a> [max\_replicas](#input\_max\_replicas) | Máximo de instancias del autoescalador; no puede ser menor que min\_replicas. | `number` | n/a | yes |
-| <a name="input_min_replicas"></a> [min\_replicas](#input\_min\_replicas) | Mínimo de instancias del autoescalador. En prod, al menos 2. | `number` | n/a | yes |
+| <a name="input_min_replicas"></a> [min\_replicas](#input\_min\_replicas) | Mínimo de instancias del autoescalador. En prod, al menos 2. Con business\_hours es el número de VM durante el horario encendido (fuera de él, 0). | `number` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (por ejemplo, bnt). | `string` | n/a | yes |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crean la plantilla, el MIG y el autoescalador. | `string` | n/a | yes |
 | <a name="input_region"></a> [region](#input\_region) | Región del MIG regional (primaria, o la de DR durante una conmutación). | `string` | n/a | yes |
 | <a name="input_service_account"></a> [service\_account](#input\_service\_account) | Correo de la cuenta de servicio dedicada de las instancias (uso mig de la etapa 4). No se admite la cuenta de Compute por defecto. | `string` | n/a | yes |
 | <a name="input_subnet"></a> [subnet](#input\_subnet) | Self link (o ruta projects/<host>/regions/<región>/subnetworks/<subred>) de la subred compartida del proyecto host. | `string` | n/a | yes |
+| <a name="input_business_hours"></a> [business\_hours](#input\_business\_hours) | Apagado fuera de horario (solo dev y qa, ADR 0028): programa de escalado del autoescalador con el cron de encendido (schedule), su duración en segundos (duration\_sec) y su zona horaria IANA (time\_zone). Durante el programa el MIG tiene min\_replicas VM; fuera de él, 0. En este modo no hay señal de CPU: un autoescalador por CPU no puede bajar a 0. null: autoescalado por CPU sin horario. | <pre>object({<br/>    schedule     = string<br/>    duration_sec = number<br/>    time_zone    = string<br/>  })</pre> | `null` | no |
 | <a name="input_cooldown_period"></a> [cooldown\_period](#input\_cooldown\_period) | Segundos que el autoescalador espera tras iniciar una instancia antes de leer sus métricas. | `number` | `120` | no |
 | <a name="input_cpu_target"></a> [cpu\_target](#input\_cpu\_target) | Uso de CPU objetivo del autoescalador (entre 0.1 y 0.9). | `number` | `0.6` | no |
 | <a name="input_disk_size_gb"></a> [disk\_size\_gb](#input\_disk\_size\_gb) | Tamaño del disco de arranque en GB. | `number` | `50` | no |
@@ -80,6 +91,7 @@ No modules.
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_autoscaling"></a> [autoscaling](#output\_autoscaling) | Política configurada del autoescalador: min\_replicas, max\_replicas, señal (cpu o schedule con business\_hours) y programas de escalado (nombre → cron, zona horaria, duración en segundos y VM requeridas). |
 | <a name="output_health_check_id"></a> [health\_check\_id](#output\_health\_check\_id) | ID de la verificación de salud global de la autocuración. |
 | <a name="output_health_check_self_link"></a> [health\_check\_self\_link](#output\_health\_check\_self\_link) | Self link de la verificación de salud global. |
 | <a name="output_instance_group"></a> [instance\_group](#output\_instance\_group) | URL del grupo de instancias del MIG regional; es el backend que recibe el módulo load-balancer. |

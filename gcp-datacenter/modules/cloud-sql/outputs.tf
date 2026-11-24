@@ -8,6 +8,11 @@ output "connection_name" {
   value       = google_sql_database_instance.this.connection_name
 }
 
+output "activation_policy" {
+  description = "Política de activación de la primaria según el estado: ALWAYS (encendida) o NEVER (detenida, por ejemplo por el apagado fuera de horario)."
+  value       = google_sql_database_instance.this.settings[0].activation_policy
+}
+
 output "private_ip" {
   description = "IP privada de la primaria dentro del rango de Private Service Access."
   value       = google_sql_database_instance.this.private_ip_address

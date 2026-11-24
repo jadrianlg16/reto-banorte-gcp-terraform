@@ -55,6 +55,18 @@ El módulo no demuestra el RPO; aporta dos mecanismos que lo hacen alcanzable:
 Si el retraso medido supera 15 minutos, el objetivo no se cumple: es una verificación del
 primer apply (marcada `VERIFICAR-EN-APPLY` en `main.tf`).
 
+## Apagado fuera de horario (ADR 0028)
+
+La instancia se crea con `activation_policy = "ALWAYS"` y el módulo ignora los cambios de
+`settings[0].activation_policy`: en dev y qa los trabajos de Cloud Scheduler del módulo
+`off-hours-shutdown` la detienen (`NEVER`) y la encienden (`ALWAYS`), y eso no debe aparecer
+como deriva. Como `ignore_changes` no puede depender de una variable, aplica en todos los
+entornos; lo compensa una `postcondition`: con `allow_scheduled_stop = false` (obligatorio en
+prod y con `enable_dr`) el plan falla si la instancia no está en `ALWAYS`, con el comando para
+encenderla. Antes de este cambio el plan habría propuesto encenderla; ahora falla y `drift.yml`
+termina en error en vez de abrir una incidencia. La salida `activation_policy` da el valor
+leído del estado.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -96,6 +108,7 @@ No modules.
 | <a name="input_region"></a> [region](#input\_region) | Región primaria de la instancia. | `string` | n/a | yes |
 | <a name="input_additional_database_flags"></a> [additional\_database\_flags](#input\_additional\_database\_flags) | Banderas de PostgreSQL adicionales. No pueden reemplazar las banderas obligatorias de autenticación IAM y auditoría que fija el módulo. | `map(string)` | `{}` | no |
 | <a name="input_allocated_ip_range"></a> [allocated\_ip\_range](#input\_allocated\_ip\_range) | Nombre del rango de Private Service Access de donde se toma la IP (psa\_range\_name de la etapa 3). Nulo: cualquier rango de la conexión. | `string` | `null` | no |
+| <a name="input_allow_scheduled_stop"></a> [allow\_scheduled\_stop](#input\_allow\_scheduled\_stop) | Permite que la primaria esté detenida (activation\_policy NEVER) por el apagado fuera de horario de dev y qa (módulo off-hours-shutdown, ADR 0028). Con false, un plan con la instancia detenida falla. Se rechaza en prod y con enable\_dr (una réplica de lectura no se puede detener). | `bool` | `false` | no |
 | <a name="input_availability_type"></a> [availability\_type](#input\_availability\_type) | REGIONAL (alta disponibilidad) o ZONAL. Nulo: REGIONAL en prod y ZONAL en dev y qa. En prod solo se acepta REGIONAL. | `string` | `null` | no |
 | <a name="input_backup_location"></a> [backup\_location](#input\_backup\_location) | Ubicación de los respaldos (región o multirregión). Nulo: la multirregión más cercana a la instancia. | `string` | `null` | no |
 | <a name="input_backup_plan_managed"></a> [backup\_plan\_managed](#input\_backup\_plan\_managed) | true cuando un plan de Backup and DR (módulo backup-dr) protege la instancia (respaldos mejorados): el plan define horario, retención y días de registros, y el módulo deja de declarar backup\_start\_time, retained\_backups y transaction\_log\_retention\_days (fijar log\_retention\_days del plan con el mismo valor). Respaldos y PITR quedan encendidos. | `bool` | `false` | no |
@@ -124,6 +137,7 @@ No modules.
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_activation_policy"></a> [activation\_policy](#output\_activation\_policy) | Política de activación de la primaria según el estado: ALWAYS (encendida) o NEVER (detenida, por ejemplo por el apagado fuera de horario). |
 | <a name="output_connection_name"></a> [connection\_name](#output\_connection\_name) | Nombre de conexión de la primaria (<proyecto>:<región>:<instancia>) para los conectores de Cloud SQL. |
 | <a name="output_database_names"></a> [database\_names](#output\_database\_names) | Bases de datos creadas. |
 | <a name="output_iam_user_names"></a> [iam\_user\_names](#output\_iam\_user\_names) | Mapa correo → nombre del usuario de base de datos (las cuentas de servicio van sin .gserviceaccount.com). |

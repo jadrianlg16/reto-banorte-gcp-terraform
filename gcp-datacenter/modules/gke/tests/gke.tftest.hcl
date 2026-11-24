@@ -49,6 +49,94 @@ run "nombres_siguen_la_convencion" {
     condition     = google_container_cluster.this.location == "us-central1"
     error_message = "El clúster de prod debe ser regional."
   }
+  # Sin scheduled_scaling (prod y por defecto) Terraform administra el autoscaling de los pools.
+  assert {
+    condition     = length(google_container_node_pool.scheduled) == 0 && length(google_container_node_pool.this) == 1
+    error_message = "Sin scheduled_scaling los pools son google_container_node_pool.this."
+  }
+  assert {
+    condition = output.node_pools["general"] == {
+      name           = "bnt-prod-app-np-general"
+      location       = "us-central1"
+      cluster        = "bnt-prod-app-gke-usc1"
+      min_node_count = 1
+      max_node_count = 3
+      scheduled      = false
+    }
+    error_message = "node_pools debe publicar nombre, ubicación, clúster, autoescalado y scheduled de cada pool."
+  }
+}
+
+# Apagado fuera de horario (ADR 0028): el pool "scheduled" debe tener la misma configuración
+# que exige_configuracion_de_la_especificacion comprueba en "this", con otro nombre.
+run "scheduled_scaling_misma_configuracion" {
+  command = plan
+
+  variables {
+    environment       = "qa"
+    scheduled_scaling = true
+    labels = {
+      env         = "qa"
+      app         = "app"
+      owner       = "plataforma"
+      cost_center = "ti-001"
+      managed_by  = "terraform"
+    }
+  }
+
+  assert {
+    condition     = length(google_container_node_pool.this) == 0 && length(google_container_node_pool.scheduled) == 1
+    error_message = "Con scheduled_scaling los pools son google_container_node_pool.scheduled."
+  }
+  assert {
+    condition     = google_container_node_pool.scheduled["general"].name == "bnt-qa-app-nps-general" && output.node_pool_names["general"] == "bnt-qa-app-nps-general"
+    error_message = "El pool con apagado se llama <prefix>-<env>-app-nps-<llave>."
+  }
+  assert {
+    condition = (
+      google_container_node_pool.scheduled["general"].autoscaling[0].min_node_count == 1 &&
+      google_container_node_pool.scheduled["general"].autoscaling[0].max_node_count == 3 &&
+      google_container_node_pool.scheduled["general"].initial_node_count == 1
+    )
+    error_message = "El pool con apagado se crea con el autoescalado de gke_node_pools."
+  }
+  assert {
+    condition = (
+      google_container_node_pool.scheduled["general"].management[0].auto_repair &&
+      google_container_node_pool.scheduled["general"].management[0].auto_upgrade &&
+      google_container_node_pool.scheduled["general"].upgrade_settings[0].strategy == "SURGE"
+    )
+    error_message = "El pool con apagado debe tener autorreparación, autoactualización y SURGE."
+  }
+  assert {
+    condition = (
+      google_container_node_pool.scheduled["general"].node_config[0].shielded_instance_config[0].enable_secure_boot &&
+      google_container_node_pool.scheduled["general"].node_config[0].shielded_instance_config[0].enable_integrity_monitoring &&
+      google_container_node_pool.scheduled["general"].node_config[0].boot_disk_kms_key == var.kms_key &&
+      google_container_node_pool.scheduled["general"].node_config[0].service_account == var.node_service_account &&
+      google_container_node_pool.scheduled["general"].node_config[0].workload_metadata_config[0].mode == "GKE_METADATA" &&
+      google_container_node_pool.scheduled["general"].node_config[0].image_type == "COS_CONTAINERD" &&
+      google_container_node_pool.scheduled["general"].node_config[0].machine_type == "e2-standard-4" &&
+      google_container_node_pool.scheduled["general"].node_config[0].kubelet_config[0].insecure_kubelet_readonly_port_enabled == "FALSE" &&
+      google_container_node_pool.scheduled["general"].node_config[0].metadata["disable-legacy-endpoints"] == "true" &&
+      google_container_node_pool.scheduled["general"].node_config[0].resource_labels == var.labels
+    )
+    error_message = "El pool con apagado debe tener Shielded VM, CMEK, la cuenta dedicada, GKE_METADATA, COS, el puerto de solo lectura apagado y las etiquetas."
+  }
+  assert {
+    condition     = output.node_pools["general"].scheduled && output.node_pools["general"].cluster == "bnt-qa-app-gke-usc1" && output.node_pools["general"].location == "us-central1"
+    error_message = "node_pools debe marcar scheduled y publicar el clúster y la ubicación que usa off-hours-shutdown."
+  }
+}
+
+run "rechaza_scheduled_scaling_en_prod" {
+  command = plan
+
+  variables {
+    scheduled_scaling = true
+  }
+
+  expect_failures = [var.scheduled_scaling]
 }
 
 run "exige_configuracion_de_la_especificacion" {

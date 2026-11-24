@@ -137,7 +137,8 @@ resource "google_container_cluster" "this" {
   }
 
   # El pool por defecto se elimina en cuanto se crea el clúster; los pools reales son
-  # google_container_node_pool.this. Mientras existe, usa la misma configuración endurecida.
+  # google_container_node_pool.this (o .scheduled). Mientras existe, usa la misma configuración
+  # endurecida.
   remove_default_node_pool = true
   initial_node_count       = 1
 
@@ -184,8 +185,18 @@ resource "google_container_cluster" "this" {
   }
 }
 
+# Pools de nodos. Hay dos recursos con la misma configuración porque ignore_changes no puede
+# depender de una variable:
+# - this: autoscaling administrado por Terraform (prod, y dev y qa sin apagado).
+# - scheduled: solo con scheduled_scaling (apagado fuera de horario de dev y qa, ADR 0028). Los
+#   trabajos de Cloud Scheduler desactivan el autoescalado y llevan el pool a 0 de noche, así
+#   que Terraform ignora autoscaling para no marcarlo como deriva; min y max llegan al pool en
+#   el siguiente encendido (los lleva el trabajo). Nombre con "nps" para que el cambio de un
+#   recurso al otro cree el pool nuevo y borre el viejo sin chocar por nombre.
+# Cualquier cambio en un bloque se repite en el otro; la prueba scheduled_scaling_misma_configuracion
+# comprueba en scheduled lo mismo que exige_configuracion_de_la_especificacion en this.
 resource "google_container_node_pool" "this" {
-  for_each = var.gke_node_pools
+  for_each = var.scheduled_scaling ? {} : var.gke_node_pools
 
   project  = var.project_id
   location = var.location
@@ -260,6 +271,87 @@ resource "google_container_node_pool" "this" {
 
     precondition {
       condition     = length("${var.prefix}-${var.environment}-app-np-${each.key}") <= 40
+      error_message = "El nombre del pool supera 40 caracteres; acorta prefix o la llave del pool."
+    }
+  }
+}
+
+# VERIFICAR-EN-APPLY: que después de un apagado y un encendido de los trabajos de Cloud
+# Scheduler (setAutoscaling y setSize) el plan de la etapa 5 no muestre cambios en estos pools ni
+# en el clúster, con el pool en 0 nodos y con el autoescalado reactivado.
+resource "google_container_node_pool" "scheduled" {
+  for_each = var.scheduled_scaling ? var.gke_node_pools : {}
+
+  project  = var.project_id
+  location = var.location
+  cluster  = google_container_cluster.this.name
+  name     = "${var.prefix}-${var.environment}-app-nps-${each.key}"
+
+  node_locations     = each.value.node_locations
+  initial_node_count = max(each.value.min_node_count, 1)
+
+  autoscaling {
+    min_node_count = each.value.min_node_count
+    max_node_count = each.value.max_node_count
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  upgrade_settings {
+    strategy        = "SURGE"
+    max_surge       = each.value.max_surge
+    max_unavailable = each.value.max_unavailable
+  }
+
+  node_config {
+    machine_type      = each.value.machine_type
+    image_type        = "COS_CONTAINERD"
+    disk_size_gb      = each.value.disk_size_gb
+    disk_type         = each.value.disk_type
+    boot_disk_kms_key = var.kms_key
+    spot              = each.value.spot
+
+    service_account = var.node_service_account
+    oauth_scopes    = local.oauth_scopes
+    metadata        = local.node_metadata
+
+    labels          = each.value.k8s_labels
+    resource_labels = var.labels
+
+    resource_manager_tags = var.node_resource_manager_tags
+
+    dynamic "taint" {
+      for_each = each.value.taints
+      content {
+        key    = taint.value.key
+        value  = taint.value.value
+        effect = taint.value.effect
+      }
+    }
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+
+    kubelet_config {
+      insecure_kubelet_readonly_port_enabled = "FALSE"
+    }
+  }
+
+  lifecycle {
+    # autoscaling lo cambian los trabajos del apagado fuera de horario (ADR 0028).
+    ignore_changes = [initial_node_count, autoscaling]
+
+    precondition {
+      condition     = length("${var.prefix}-${var.environment}-app-nps-${each.key}") <= 40
       error_message = "El nombre del pool supera 40 caracteres; acorta prefix o la llave del pool."
     }
   }

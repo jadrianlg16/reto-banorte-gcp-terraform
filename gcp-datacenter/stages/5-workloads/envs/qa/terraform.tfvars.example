@@ -45,6 +45,17 @@ lb_backend_paths = {
 
 notification_emails = ["alertas-qa@example.com"]
 
+# Apagado fuera de horario (ADR 0028): Cloud SQL detenida y el MIG en 0 VM de 20:00 a 07:00
+# (hora de Monterrey) y todo el fin de semana; durante el horario el MIG tiene mig_min_replicas
+# VM sin autoescalado por CPU. Memorystore no se puede detener. Exige
+# enable_off_hours_shutdown = true en 4-projects/qa.
+off_hours_shutdown = {
+  enabled        = true
+  time_zone      = "America/Monterrey"
+  start_schedule = "0 7 * * 1-5"
+  stop_schedule  = "0 20 * * 1-5"
+}
+
 labels = {
   app         = "app"
   owner       = "plataforma"

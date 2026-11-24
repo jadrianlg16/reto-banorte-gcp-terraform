@@ -70,6 +70,7 @@ su diagrama y deben decirlo.
 | 0024 | Un repositorio de Artifact Registry multirregional por aplicación y una política de Binary Authorization por proyecto de servicio que solo admite ese repositorio | GKE y Cloud Run ya exigían Binary Authorization sin política propia ni registro; la imagen debe sobrevivir a la región primaria | Aclaración |
 | 0025 | Plan, aprobación y apply separados: plan sin entorno, apply en el entorno de GitHub con la misma huella del plan; `common` protegido como `prod`; `plan-gate` y prueba de humo de dev | La aprobación debe ver el plan que se aplica | Aclaración |
 | 0026 | `googleapis.com`, `gcr.io`, `pkg.dev` y `run.app` resuelven al VIP de `google_apis_vip` (`restricted` por defecto en los tres entornos) | Imágenes y Cloud Run salían por IP públicas sin pasar por el VIP | Aclaración |
+| 0028 | Apagado fuera de horario opcional de dev y qa (`off_hours_shutdown`, rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler que llaman a la API; MIG con programa de escalado; la cuenta de los trabajos y su rol mínimo los crea la etapa 4 | Mitigación de costo de §8, sin deriva falsa en `drift.yml` y sin dar a la etapa 5 permisos para crear roles | Aclaración |
 
 Los ADR 0001, 0002, 0005 a 0008, 0010, 0012, 0013, 0015 y 0018 se enmendaron el 21 nov 2026
 (ver la línea de estado de cada uno).
@@ -546,14 +547,18 @@ prod, una regla de entrada del perímetro por aplicación con publicadores, limi
 cuenta de la etapa 5 sobre cada proyecto de servicio (`workloads_project_roles` y
 `projectIamAdmin` condicionado a `roles/cloudsql.client` y `roles/cloudsql.instanceUser`),
 `serviceAccountAdmin` solo sobre la cuenta `workload` (enlace de Workload Identity) y
-`compute.networkViewer` en el host (ADR 0023).
+`compute.networkViewer` en el host (ADR 0023). Con `enable_off_hours_shutdown` (dev y qa; se
+rechaza en prod, ADR 0028): API de Cloud Scheduler, cuenta `<prefix>-<env>-<app>-sched` por
+aplicación con el rol personalizado `<prefix>OffHoursScheduler` (`cloudsql.instances.get`,
+`cloudsql.instances.update`, `container.clusters.update`) en su proyecto, y para la cuenta de la
+etapa 5 `cloudscheduler.admin` en el proyecto y `serviceAccountUser` solo sobre esa cuenta.
 
 Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `environment`,
 `primary_region`, `dr_region`, `applications` (map nombre → `{ apis, secrets }`),
 `workloads_service_account`, `artifact_registry_location`,
 `binary_authorization_allowlist_patterns`, `binary_authorization_attestors`,
-`artifact_registry_publishers` (map aplicación → miembros), `deletion_policy`, `labels`,
-`state_bucket`.
+`artifact_registry_publishers` (map aplicación → miembros), `deletion_policy`,
+`enable_off_hours_shutdown`, `labels`, `state_bucket`.
 
 | Salida | Tipo | Contenido |
 |---|---|---|
@@ -562,6 +567,7 @@ Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `environment`
 | `service_accounts` | map(map(string)) | `[aplicación][uso]` → correo; usos `gke_nodes`, `workload`, `mig`, `run` |
 | `artifact_registry_repositories` | map(string) | aplicación → URL del repositorio (`<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>`) |
 | `service_agents` | map(map(string)) | `[aplicación][agente]` → miembro de IAM de los agentes de servicio con permisos (incluye `artifactregistry`) |
+| `scheduler_service_accounts` | map(string) | aplicación → correo de la cuenta de los trabajos del apagado fuera de horario; vacío sin `enable_off_hours_shutdown` |
 
 ### 7.6 `5-workloads/envs/<env>`
 
@@ -582,14 +588,18 @@ clúster de GKE y del servicio de Cloud Run de DR, para que la vuelta (`dr_activ
 pueda destruir en prod. Con GKE, la cuenta de Kubernetes
 `<gke_workload_namespace>/<gke_workload_ksa_name>` se enlaza a la cuenta `workload` por Workload
 Identity. Las subredes y los rangos reservados salen del estado de la etapa 3 (`subnets`,
-`reserved_cidrs`); la raíz no tiene `subnet_cidrs`.
+`reserved_cidrs`); la raíz no tiene `subnet_cidrs`. Con `off_hours_shutdown.enabled` (dev y qa;
+se rechaza en prod y con `enable_dr`, ADR 0028): trabajos de Cloud Scheduler (módulo
+`off-hours-shutdown`, con la cuenta `scheduler_service_accounts` de la etapa 4) que detienen y
+encienden Cloud SQL y llevan a 0 y devuelven los pools de GKE; programa de escalado en el MIG; y
+la ventana de Backup and DR dentro del horario encendido.
 
 Entradas: `prefix`, `environment`, `primary_region`, `dr_region`, `enable_dr`, `dr_active`,
 `dr_teardown`, `application`, los interruptores, `gke_node_pools`, `gke_workload_namespace`,
 `gke_workload_ksa_name`, `gke_lb_negs`, `cloud_run_image`, `sql_tier`, `sql_database_version`,
-`domain_names` (certificado), `internal_domain_names`, `notification_emails`, `labels`,
-`state_bucket` (más los ajustes de cada carga, con valor por defecto; lista completa en el README
-de la raíz).
+`domain_names` (certificado), `internal_domain_names`, `notification_emails`,
+`off_hours_shutdown`, `labels`, `state_bucket` (más los ajustes de cada carga, con valor por
+defecto; lista completa en el README de la raíz).
 
 | Salida | Tipo | Contenido |
 |---|---|---|
@@ -606,7 +616,8 @@ de la raíz).
 Salidas adicionales: `sql_replica_connection_name`, `cloud_run_service_names`,
 `mig_instance_groups`, `internal_lb_dns_authorization_records`, `internal_lb_certificate_ids`,
 `redis_host`,
-`filestore_ip_address`, `backup_vault_id`, `backup_plan_ids`, `active_region`.
+`filestore_ip_address`, `backup_vault_id`, `backup_plan_ids`, `active_region`,
+`off_hours_shutdown` (ventana e IDs de los trabajos; null sin apagado).
 
 ---
 
@@ -643,12 +654,17 @@ que se pueda apagar en prod.
 | `observability` | Canales de notificación, verificaciones de disponibilidad, alertas, tableros, SLO | Alertas y tableros base; SLO 99.9 % | `project_id`, `notification_emails`, `uptime_checks`, `slo_target` | `notification_channel_ids`, `dashboard_ids` |
 | `log-export` | Bucket de logs y sink | Retención bloqueada (por variable) | `project_id`, `parent` (organización, carpeta o proyecto), `filter`, `retention_days`, `retention_locked`, `kms_key` | `bucket_name`, `writer_identity` |
 | `backup-dr` | Bóveda y plan de Backup and DR; plan de Backup for GKE | Política diaria; retención de 30 días; región secundaria | `project_id`, `region`, `dr_region`, `retention_days`, `gke_cluster_id` (opcional), `sql_log_retention_days` (7 por defecto) | `vault_id`, `plan_ids` |
+| `off-hours-shutdown` | Trabajos de Cloud Scheduler que detienen y encienden Cloud SQL (`instances.patch`) y llevan a 0 y devuelven pools de GKE (`setAutoscaling`, `setSize`) | Solo dev y qa (validación); crons `M H * * D` con los mismos días; token OAuth de una cuenta administrada por el usuario (ADR 0028) | `project_id`, `environment`, `region`, `time_zone`, `start_schedule`, `stop_schedule`, `service_account_email`, `sql_instances`, `gke_node_pools` | `job_names`, `job_ids`, `window` |
+
+Con el apagado fuera de horario (ADR 0028), `cloud-sql` recibe `allow_scheduled_stop` (ignora
+`activation_policy`; sin él, una `postcondition` exige `ALWAYS`), `compute-mig` recibe
+`business_hours` (programa de escalado, mínimo 0 fuera del horario) y `gke` recibe
+`scheduled_scaling` (pools en un recurso que ignora `autoscaling`); los tres se rechazan en prod.
 
 Sin módulo propio, a propósito: Persistent Disk (lo crean `compute-mig` y `gke`), Cloud
 Interconnect (interruptor dentro de `hybrid-connectivity`), Cloud IDS y Private Service
 Connect (aparecen en la especificación como servicios, no como configuración mínima exigida;
-no se construyen y se anota en `docs/pendientes-apply.md` como alcance no cubierto), y el
-apagado de dev fuera de horario (mitigación de costo opcional, no construida).
+no se construyen y se anota en `docs/pendientes-apply.md` como alcance no cubierto).
 
 El repositorio de Artifact Registry y la política de Binary Authorization no tienen módulo: los
 crea la raíz de la etapa 4 (`artifacts.tf`), un recurso de cada uno por aplicación (ADR 0024).

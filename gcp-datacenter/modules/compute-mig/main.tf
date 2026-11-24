@@ -175,6 +175,17 @@ resource "google_compute_region_instance_group_manager" "this" {
   wait_for_instances = false
 }
 
+# Señal del autoescalador: "cpu" (uso de CPU) o "schedule" (solo el programa de horario de
+# business_hours). cpu_utilization es opcional y calculado en el proveedor: al quitar el bloque
+# de la configuración, el plan conserva el valor del estado y lo vuelve a mandar. Por eso un
+# cambio de señal reemplaza el autoescalador (replace_triggered_by) en lugar de actualizarlo.
+resource "terraform_data" "autoscaler_signal" {
+  triggers_replace = var.business_hours == null ? "cpu" : "schedule"
+}
+
+# Con business_hours (apagado fuera de horario de dev y qa, ADR 0028) el MIG baja a 0 fuera del
+# programa: un autoescalador que usa CPU no puede bajar a 0, así que en ese modo la única señal
+# es el programa, que exige min_replicas VM durante el horario y libera todas fuera de él.
 resource "google_compute_region_autoscaler" "this" {
   project = var.project_id
   region  = var.region
@@ -182,13 +193,36 @@ resource "google_compute_region_autoscaler" "this" {
   target  = google_compute_region_instance_group_manager.this.id
 
   autoscaling_policy {
-    min_replicas    = var.min_replicas
+    min_replicas    = var.business_hours == null ? var.min_replicas : 0
     max_replicas    = var.max_replicas
     cooldown_period = var.cooldown_period
     mode            = "ON"
 
-    cpu_utilization {
-      target = var.cpu_target
+    dynamic "cpu_utilization" {
+      for_each = var.business_hours == null ? [1] : []
+      content {
+        target = var.cpu_target
+      }
     }
+
+    # VERIFICAR-EN-APPLY: que la API no agregue la señal de CPU por defecto a una política que
+    # solo tiene el programa (describe del autoescalador sin cpuUtilization) y que el MIG quede
+    # en 0 VM fuera del horario y en min_replicas dentro.
+    dynamic "scaling_schedules" {
+      for_each = var.business_hours == null ? [] : [var.business_hours]
+      content {
+        name                  = "business-hours"
+        description           = "Horario encendido de ${var.environment} (apagado fuera de horario, ADR 0028)."
+        schedule              = scaling_schedules.value.schedule
+        time_zone             = scaling_schedules.value.time_zone
+        duration_sec          = scaling_schedules.value.duration_sec
+        min_required_replicas = var.min_replicas
+        disabled              = false
+      }
+    }
+  }
+
+  lifecycle {
+    replace_triggered_by = [terraform_data.autoscaler_signal]
   }
 }
