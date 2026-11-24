@@ -2,8 +2,10 @@
 
 Políticas en Rego que se evalúan sobre el plan de Terraform en JSON (`terraform show -json`)
 y rechazan la configuración que viola las reglas mínimas de §9.1 del contrato
-(`docs/CONTRATO.md`). Se escriben en sintaxis Rego v1 (Conftest con OPA 1.x), en el paquete
-`main`, con reglas `deny`.
+(`docs/CONTRATO.md`). Sin organización no hay políticas de organización: las reglas 8 a 11
+cubren las que el módulo `org` aplicaría y la 12, la regla de recursos únicos de las raíces de
+entorno (`docs/adr/0029-un-solo-proyecto.md`, §1 y §4). Se escriben en sintaxis Rego v1 (Conftest
+con OPA 1.x), en el paquete `main`, con reglas `deny`.
 
 ## Qué revisan
 
@@ -24,9 +26,74 @@ e índice: `[kms_rotation] module.kms.google_kms_crypto_key.this["sql"]: ...`.
 | 5 | `sql_public_ip.rego` | `google_sql_database_instance` sin `settings.ip_configuration.ipv4_enabled = false` o sin `private_network` |
 | 6 | `kms_rotation.rego` | `google_kms_crypto_key` de propósito `ENCRYPT_DECRYPT` sin `rotation_period` o con más de 7 776 000 s (90 días) |
 | 7 | `iam_user_principal.rego` | Cualquier `google_*_iam_member`, `_binding` o `_policy` (proyecto, carpeta, organización, bucket, cuenta de servicio, KMS, secreto...) con un principal `user:` |
+| 8 | `iam_public_principal.rego` | Cualquier `google_*_iam_member`, `_binding` o `_policy` que no sea de Cloud Storage (eso lo rechaza la regla 1) con `allUsers` o `allAuthenticatedUsers` |
+| 9 | `service_account_key.rego` | Cualquier `google_service_account_key` (llave generada o subida), también uno que ya existe |
+| 10 | `bucket_uniform_access.rego` | `google_storage_bucket` sin `uniform_bucket_level_access = true` |
+| 11 | `resource_locations.rego` | `location`, `region` o `zone` de un recurso `google_*`, regiones de un bucket de doble región, réplicas de un secreto, o región o zona del bloque `provider "google"` de la raíz, fuera de `us-central1`, `us-east4` (y sus zonas), `us` y `global` |
+| 12 | `env_root_scope.rego` | En una raíz de entorno (variable `environment` = `dev`, `qa` o `prod`): tipos únicos del proyecto, llaves, secretos y repositorios (los crea `1-base`), roles de proyecto para principales que la raíz no crea y nombres sin `<prefix>-<env>-` |
 
 `lib.rego` tiene las funciones comunes (recursos a revisar, valores desconocidos, lectura de
 principales de IAM en sus tres formas y formato de mensajes).
+
+### Políticas de organización (reglas 8 a 11)
+
+El ADR 0029 §1 deja las políticas de organización solo para cuando hay organización
+(`modules/org`, desde `1-base`). Sin ella, cada una tiene su regla aquí:
+
+| Política de `modules/org` | Regla | Qué no cubre |
+|---|---|---|
+| `compute.vmExternalIpAccess` | 4 `compute_public_ip` | Ver limitaciones de la regla 4 |
+| `iam.disableServiceAccountKeyCreation` | 9 `service_account_key` | — |
+| `gcp.resourceLocations` | 11 `resource_locations` | Ver limitaciones de la regla 11 |
+| `compute.requireShieldedVm` | 2 `shielded_vm` | Ver limitaciones de la regla 2 |
+| `storage.publicAccessPrevention` | 1 `bucket_public_access` | — |
+| `storage.uniformBucketLevelAccess` | 10 `bucket_uniform_access` | — |
+| `sql.restrictPublicIp` | 5 `sql_public_ip` | — |
+| `iam.allowedPolicyMemberDomains` (solo con Cloud Identity) | 8 `iam_public_principal` y 1 (Storage) | La restricción por dominio: sin Cloud Identity no hay dominio que admitir |
+
+Conftest solo ve lo que declara Terraform: lo que se crea a mano en la consola no pasa por aquí
+(`drift.yml` lo reporta como recurso no administrado, sin revisar su configuración).
+
+Regla 8: no hay excepción legítima en el código. Cloud Run público va detrás del balanceador con
+la verificación del invocador desactivada y sin `allUsers` (ADR 0020), y los módulos `iam`, `kms`,
+`secrets` y `cloud-run` ya rechazan los dos principales por validación.
+
+Regla 11: la lista sale de lo que `1-base` le pasa a `modules/org`: `primary_region` y `dr_region`
+(grupos `in:<región>-locations`, que incluyen sus zonas) y `additional_allowed_locations`, que
+por defecto es `us` (bucket de estado, llaveros y repositorios multirregionales). Se agrega
+`global` (notificación de SCC, Certificate Manager), que no es una región. Un bucket de doble
+región configurable tiene `location = "US"`, y sus dos regiones se revisan aparte. Para cambiar de
+región (por ejemplo, `northamerica-south1`, ADR 0002) se cambia la lista de la regla junto con
+esas variables.
+
+### Recursos únicos en las raíces de entorno (regla 12)
+
+Se aplica solo cuando el plan trae la variable `environment` con `dev`, `qa` o `prod`: los planes
+de `2-networks/envs/<env>` y `3-workloads/envs/<env>`. `0-bootstrap`, `1-base` y el hub no
+declaran esa variable. Rechaza:
+
+1. Los tipos que existen una vez por proyecto (ADR 0029 §2 y §4.1): los de `PROJECT_SINGLETONS` en
+   `scripts/destroy-plan-check.py`, más `google_project` y las familias
+   `google_compute_project_metadata*` y `google_scc_*notification*`. Si se agrega un tipo a una
+   lista, se agrega a la otra.
+2. Lo que el §4 pasa a `1-base` aunque sea por entorno: `google_kms_key_ring`,
+   `google_kms_crypto_key`, `google_secret_manager_secret` y
+   `google_artifact_registry_repository`. La raíz del entorno solo da permisos sobre ellos.
+3. `google_project_iam_member` (y `_member_remove`) para un principal que no sea
+   `serviceAccount:<prefix>-<env>-...` (§4.2: cuentas del pipeline, grupos, agentes de servicio, la
+   cuenta de Compute por defecto, cuentas de otro entorno).
+4. Nombres sin `<prefix>-<env>-` (§4.3), solo en `google_compute_network`,
+   `google_compute_subnetwork`, `google_compute_router`, las políticas de firewall de red (global
+   y regional), `google_service_account` (`account_id`) y `google_storage_bucket`. Son los que el
+   ADR reconoce por el nombre (§8: sin etiquetas) y los buckets, cuyo `storage.admin` de entorno
+   va condicionado al prefijo (§3). Los demás tipos no se revisan: GCP les da el nombre (alertas,
+   claves de etiqueta), son hijos con el nombre del padre (bases de datos de Cloud SQL, registros
+   DNS) o se reconocen por la etiqueta `env`.
+
+3 y 4 toman el prefijo de la variable `prefix` del plan; sin ella no se revisan. Con los
+recursos reales de los planes de destroy del spoke y de cargas de `dev`
+(`scripts/testdata/destroy/plan-real-*.json`, 130 recursos pasados a `create`), la regla no
+rechaza nada con `environment = "dev"` y rechaza 32 nombres y permisos con `environment = "prod"`.
 
 ### Etiquetas (regla 3)
 
@@ -70,6 +137,15 @@ Lo que Terraform calcula en el apply no aparece en `after`, sino marcado en
 | 4 | Lista `ipv6_access_config` | Acepta si el `stack_type` planeado de esa interfaz es `IPV4_ONLY`, o si la interfaz es un bloque escrito en la configuración que no declara `ipv6_access_config` ni `stack_type` y `stack_type` no tiene valor en el plan. Si no, rechaza |
 | 4 | `enable_private_nodes` del clúster | Rechaza: debe ser `true` conocido |
 | 4 | `enable_private_nodes` de un pool | Acepta: si el pool no lo declara, hereda el valor del clúster |
+| 5 | `ipv4_enabled` | Rechaza |
+| 5 | `private_network` (VPC creada en el mismo plan) | Acepta |
+| 6 | `rotation_period` | Rechaza: debe llegar por variable |
+| 8 | Principal de IAM | No se puede leer; no rechaza |
+| 9 | Cualquier atributo | Rechaza igual: el tipo basta |
+| 10 | `uniform_bucket_level_access` (calculado si no se declara; comprobado en un plan real de google 6.50.0) | Rechaza: debe ser `true` en el código |
+| 11 | Ubicación del recurso (por ejemplo, `region` omitida: el plan la deja desconocida) | Acepta; la región del bloque `provider` sí se revisa |
+| 11 | Región del bloque `provider` que no es constante ni `var.<nombre>` de la raíz | Acepta: no se resuelve |
+| 12 | Nombre o principal | Acepta |
 
 La excepción de IPv6 existe porque google 6.50.0 deja `ipv6_access_config` desconocido en
 `google_compute_region_instance_template` aunque no se declare (en
@@ -79,9 +155,6 @@ conforme del MIG se rechazaba en un plan real. Los dos casos aceptados y uno rec
 (`compute_public_ip_*_real_mig_*.json`). Para saber si la interfaz declara algo, la regla lee
 la sección `configuration` del plan siguiendo `module_calls` con los nombres de
 `module_address` sin índices.
-| 5 | `ipv4_enabled` | Rechaza |
-| 5 | `private_network` (VPC creada en el mismo plan) | Acepta |
-| 6 | `rotation_period` | Rechaza: debe llegar por variable |
 
 ### Limitaciones conocidas
 
@@ -100,10 +173,22 @@ la sección `configuration` del plan siguiendo `module_calls` con los nombres de
   del módulo `compute-mig` lo declara.
 - Regla 4, GKE: un pool sin `network_config` hereda los nodos privados del clúster; si el
   clúster está en otra raíz, la regla no lo ve.
-- Los siete pares `<regla>_pass.json` y `<regla>_fail.json` se escribieron a mano con la forma
-  de `terraform show -json`. Los `*_real_*.json` se recortaron de planes reales del proveedor
-  google 6.50.0 hechos sin GCP (ver abajo). Ninguno salió del plan de una raíz de etapa: esas
-  leen el estado remoto de las anteriores y necesitan GCP.
+- Regla 8: los accesos de BigQuery que no son IAM (`google_bigquery_dataset_access`, bloques
+  `access` del dataset) no se revisan; el código no los usa.
+- Regla 11: las zonas anidadas (Cloud SQL, Memorystore, `node_locations` de GKE) no se leen;
+  quedan dentro de la región del recurso, que sí se revisa. Un bloque `provider` dentro de un
+  módulo o con una región que no es constante ni `var.<nombre>` no se resuelve. Una doble región
+  predefinida (por ejemplo, `NAM4`) se rechaza: su nombre no está en la lista.
+- Regla 12: solo ve la raíz que se planea; no compara con lo que declaran las demás raíces. Un
+  rol de proyecto para un
+  principal `principal://` o `principalSet://` se rechaza aunque sea del entorno: el ADR solo
+  permite las cuentas que la raíz crea.
+- Los pares `<regla>_pass.json` y `<regla>_fail.json` se escribieron a mano con la forma de
+  `terraform show -json` (los de la regla 12 llevan la sección `variables`). Los `*_real_*.json`
+  se recortaron de planes reales del proveedor google 6.50.0 hechos sin GCP (ver abajo). Ninguno
+  salió del plan de una raíz de etapa: esas leen el estado remoto de las anteriores y necesitan
+  GCP. `scripts/cut-plan.py` descarta `variables`, así que la regla 12 no tiene planes `_real_`;
+  su prueba con recursos reales está en la sección de la regla 12.
 
 ## Cómo se corre
 
@@ -136,20 +221,24 @@ conftest test tfplan.json --policy policies
   difíciles (valores desconocidos, eliminaciones, reemplazos, etiquetas solo en
   `terraform_labels`, direcciones dentro de módulos). `helpers_test.rego` arma los planes.
 - `fixtures/<regla>_pass.json` y `fixtures/<regla>_fail.json`: dos planes por regla, escritos
-  a mano. El de `pass` cumple las siete reglas; el de `fail` viola solo su regla.
+  a mano. El de `pass` cumple las doce reglas; el de `fail` viola solo su regla.
 - `fixtures/<regla>_pass_real_<caso>.json` y `fixtures/<regla>_fail_real_<caso>.json`:
-  recortados de planes reales del proveedor google 6.50.0 (ejemplos de módulo y una sonda con
+  recortados de planes reales del proveedor google 6.50.0 (ejemplos de módulo y sondas con
   recursos sueltos). Cubren la plantilla regional del MIG con y sin `stack_type`, la plantilla
   de doble pila, los nodos públicos y sin arranque seguro de GKE, el ejemplo de GKE completo,
   los tipos de etiquetas agregados (sin etiquetas y con ellas: Backup and DR, Certificate
-  Manager, Monitoring, VPN, Artifact Registry).
+  Manager, Monitoring, VPN, Artifact Registry), el bucket sin `uniform_bucket_level_access`
+  declarado (queda desconocido), el bucket de doble región, la subred sin `region` (queda
+  desconocida), ubicaciones fuera de `us` (bucket, subred, llavero, réplica de secreto y una
+  región de la doble región), principales públicos en secreto, Cloud Run y proyecto, y una
+  llave de cuenta de servicio.
 - Todos usan valores de ejemplo (`example-project`, `@example.com`, `000000000000`), nunca IDs
   ni correos reales; los valores sensibles de los planes reales salen como `REDACTADO`.
 
 `scripts/policy-check.sh` corre `conftest verify` y luego cada plan de ejemplo: un `_pass` debe
 pasar, y un `_fail` debe ser rechazado únicamente por mensajes de su regla. Un `_fail` que pasa,
-o que rechaza otra regla, es un error y el script sale con código distinto de cero. Hoy: 83
-pruebas de Rego y 27 planes de ejemplo.
+o que rechaza otra regla, es un error y el script sale con código distinto de cero. Hoy: 134
+pruebas de Rego y 42 planes de ejemplo.
 
 ### Sacar un plan de ejemplo de un plan real
 
