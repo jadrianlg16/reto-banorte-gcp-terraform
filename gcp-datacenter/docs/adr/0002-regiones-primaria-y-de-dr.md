@@ -5,6 +5,9 @@
 Aceptado, 2026-11-20. Enmendado el 2026-11-21: lo que la conmutación no puede depender de la
 región primaria (estado, VPN de DR, balanceador interno por región) está en el ADR
 [0022](0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md).
+Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md)) los
+llaveros por ubicación los crea `1-base` (antes la etapa 2) y `gcp.resourceLocations` solo existe
+si hay organización.
 
 Tipo: Conforme.
 
@@ -14,14 +17,14 @@ La especificación, en su sección de recuperación ante desastres, propone una 
 y una secundaria en Estados Unidos y menciona una región en México como opción si hubiera
 requisitos de residencia de datos. Varios componentes dependen del par de regiones: la réplica
 de Cloud SQL (`cloud-sql`, `dr_region`), el bucket de doble región con turbo replication
-(`storage`, `dual_region`), los llaveros de KMS por ubicación (etapa 2), la bóveda de Backup
+(`storage`, `dual_region`), los llaveros de KMS por ubicación (`1-base`), la bóveda de Backup
 and DR (`backup-dr`) y las subredes `*_dr` del plan de direccionamiento (§5).
 
 ## Decisión
 
 `primary_region = "us-central1"` y `dr_region = "us-east4"`, ambas como variables de todas las
 raíces que las usan. Los nombres de recursos regionales agregan el código corto que sale de un
-mapa (`usc1`, `use4`, y `nas1` para `northamerica-south1`), nunca escrito a mano. La etapa 2
+mapa (`usc1`, `use4`, y `nas1` para `northamerica-south1`), nunca escrito a mano. `1-base`
 crea además llaveros en la multirregión `us` para los buckets de doble región y los
 repositorios de Artifact Registry, porque la llave de un bucket o de un repositorio debe estar
 en la misma ubicación que él.
@@ -52,11 +55,12 @@ de DR sin tocar el primario; y las imágenes de contenedor están en un reposito
 
 - Positivas: cambiar de región es cambiar dos variables y, si hace falta, agregar una entrada
   al mapa de códigos cortos; ningún módulo tiene regiones fijas.
-- Negativas: `gcp.resourceLocations` (módulo `org`) debe admitir ambas regiones y además la
-  multirregión `us` (para llaveros y buckets de doble región) por
-  `additional_allowed_locations`; si falta `us`, la etapa 2, el bucket de DR y los repositorios
-  de imágenes fallan. (La etapa 0 corre antes de que exista `gcp.resourceLocations`, así que el
-  bucket de estado en `US` no depende de esa política.)
+- Negativas: con organización, `gcp.resourceLocations` (módulo `org`, aplicado por `1-base`)
+  debe admitir ambas regiones y además la multirregión `us` (para llaveros y buckets de doble
+  región) por `additional_allowed_locations`; si falta `us`, los llaveros de `1-base`, el bucket
+  de DR y los repositorios de imágenes fallan. (`0-bootstrap` corre antes de que exista
+  `gcp.resourceLocations`, así que el bucket de estado en `US` no depende de esa política.) Sin
+  organización no hay esa política.
 - La VPN de DR duplica los túneles del hub (cuatro en lugar de dos) y on-premises real debe
   configurar las dos VPN (ADR 0022).
 - Si el cliente exige residencia en México, tiene que confirmar qué estrategia de DR acepta

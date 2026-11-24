@@ -4,6 +4,10 @@
 
 Aceptado, 2026-11-20. Enmendado el 2026-11-21: balanceador interno uno por región con acceso
 global (ADR [0022](0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md)).
+Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md)) ya no hay
+proyecto de servicio; el balanceador y Cloud Armor viven en la raíz de cargas de cada entorno,
+`stages/3-workloads/envs/<env>`, con su propio estado. El título y el nombre del archivo se
+conservan.
 
 Tipo: Desviación del diagrama de red de la especificación.
 
@@ -20,13 +24,18 @@ de otro proyecto de la organización (referencia de servicios entre proyectos). 
 el balanceador en el hub sería posible; el criterio de la decisión no es la factibilidad, sino
 la propiedad y el radio de impacto.
 
+Con el proyecto único (ADR 0029) el hub, los spokes y las cargas están en el mismo proyecto, así
+que la pregunta ya no es en qué proyecto, sino en qué raíz y qué estado: la del hub
+(`stages/2-networks`, cuenta `tf-net`, entorno de GitHub `common`) o la de cargas de cada entorno
+(`stages/3-workloads/envs/<env>`, cuenta `tf-wl-<env>`).
+
 ## Decisión
 
 El módulo `load-balancer` con `type = "external"` (`EXTERNAL_MANAGED`) y el módulo
-`cloud-armor` se instancian en la etapa 5, en el proyecto de servicio del entorno
-(`<prefix>-<env>-app`). `security_policy` es obligatoria por validación en el externo. El
-balanceador interno (`type = "internal"`, `INTERNAL_MANAGED`) también vive en el proyecto de
-servicio y usa la subred proxy-only del spoke de su región (`proxy`, `proxy_dr`). Es uno por
+`cloud-armor` se instancian en `stages/3-workloads/envs/<env>`, con nombres
+`<prefix>-<env>-…`. `security_policy` es obligatoria por validación en el externo. El
+balanceador interno (`type = "internal"`, `INTERNAL_MANAGED`) también vive en esa raíz y usa la
+subred proxy-only del spoke de su región (`proxy`, `proxy_dr`). Es uno por
 región con cómputo (`module.internal_lb["primary"]` y, con `dr_active`,
 `module.internal_lb["dr"]`), y sus reglas de reenvío tienen `allow_global_access = true`:
 on-premises llega a cualquiera de los dos por la VPN de cualquier región (ADR 0022). El tráfico
@@ -34,21 +43,20 @@ desde on-premises sí entra solo por el hub (HA VPN y peering, ADR 0003 y 0006).
 
 ## Alternativas consideradas
 
-- **Balanceador y Cloud Armor en el proyecto hub, con referencia de servicios entre
-  proyectos.** Factible según la documentación, pero rechazada: el equipo de red sería dueño
-  del frontend de todas las aplicaciones, la raíz `3-networks` tendría que conocer los backends
-  de la etapa 5 (dependencia inversa entre etapas), y un cambio en el mapa de URL de prod
-  compartiría plan y estado con dev. La política de Cloud Armor se adjunta al servicio de
-  backend, que de todos modos vive en el proyecto de servicio.
-- **Un balanceador por entorno en el proyecto `net-spoke`.** Rechazada: mezcla recursos de
-  aplicación en el proyecto host, que la etapa 4 reserva para red.
+- **Balanceador y Cloud Armor en la raíz del hub.** Factible, pero rechazada: el equipo de red
+  sería dueño del frontend de todas las aplicaciones, la raíz `2-networks` tendría que conocer
+  los backends de `3-workloads` (dependencia inversa entre etapas), y un cambio en el mapa de
+  URL de prod compartiría plan y estado con dev. La política de Cloud Armor se adjunta al
+  servicio de backend, que de todos modos vive en la raíz de cargas.
+- **Un balanceador por entorno en la raíz del spoke (`2-networks/envs/<env>`).** Rechazada:
+  mezcla recursos de aplicación en la raíz de red y separa el frontend de sus backends.
 
 ## Consecuencias
 
 - Positivas: cada entorno tiene su IP, su certificado, su política de Cloud Armor y su registro
   de solicitudes; el despliegue de una aplicación no toca el hub. La conmutación a DR
   (`dr_active`) cambia los backends del externo y agrega el interno de DR dentro del mismo
-  estado de la etapa 5, sin destruir nada en la región primaria.
+  estado de `3-workloads/envs/<env>`, sin destruir nada en la región primaria.
 - El balanceador interno de DR tiene otra IP (`internal_lb_ip_addresses`) y su propio
   certificado regional, que existe con `enable_dr` antes de cualquier incidente: sus registros
   de autorización (`internal_lb_dns_authorization_records_by_region`) se crean al dar de alta el

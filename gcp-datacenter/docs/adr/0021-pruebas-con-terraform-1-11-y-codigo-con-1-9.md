@@ -4,6 +4,15 @@
 
 Aceptado, 2026-11-21. Modifica el ADR 0001 solo para los archivos `*.tftest.hcl`.
 
+Enmendado el 2026-11-24: la decisión no cambia con el proyecto único
+([ADR 0029](0029-un-solo-proyecto.md)). La evidencia de abajo se tomó con las raíces del diseño
+de varios proyectos (etapas 1 a 5) y no se repitió. Al 2026-11-24, contados con la herramienta
+de búsqueda del repositorio sobre `*.tftest.hcl` (patrón `override_during`, desde
+`gcp-datacenter/`), hay 36 usos en 11 archivos: `modules/audit-alerts`, `modules/firewall`,
+`modules/observability`, `stages/0-bootstrap`, `stages/2-networks` (hub y los tres spokes) y las
+tres raíces de `stages/3-workloads/envs`. Esas raíces son las que necesitan
+`-test-directory=.sin-pruebas` en un `terraform init` a mano con Terraform anterior a 1.11.
+
 Tipo: Aclaración.
 
 ## Contexto

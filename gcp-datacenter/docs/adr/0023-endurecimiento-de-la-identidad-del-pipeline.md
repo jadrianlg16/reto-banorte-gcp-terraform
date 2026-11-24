@@ -4,105 +4,141 @@
 
 Aceptado, 2026-11-21. Completa los ADR 0007, 0010 y 0015.
 
+Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md) §3 y §5)
+se conservan los cuatro principios (WIF por IDs numéricos, política de denegación, roles
+personalizados sin acceso a valores y lecturas de estado mínimas) y cambian los detalles: nueve
+cuentas en lugar de cinco; WIF además por entorno de GitHub, con `tf-read` para los `plan`; la
+política de denegación va en el proyecto y reconoce lo protegido por la etiqueta
+`<prefix>-proteccion = etapa-0`; todos los roles de proyecto de las cuentas los da
+`0-bootstrap`, condicionados por nombre donde el servicio lo admite; `tf-wl-<env>` usa el rol
+`<prefix>TfServiceAccountManager` en lugar de `iam.serviceAccountAdmin`. El texto de abajo
+describe el diseño vigente; el de varios proyectos vive en la rama `archivo/multiproyecto`.
+
 Tipo: Aclaración.
 
 ## Contexto
 
-Las cinco cuentas de etapa (`<prefix>-tf-<etapa>`, ADR 0017) aplican la infraestructura con
-Workload Identity Federation (ADR 0007). La revisión independiente encontró caminos por los que
-una de ellas, o quien controle el repositorio, obtenía más de lo que su etapa necesita:
+Las cuentas del pipeline aplican la infraestructura con Workload Identity Federation (ADR 0007).
+La revisión independiente del 21 nov 2026 encontró caminos por los que una de ellas, o quien
+controle el repositorio, obtenía más de lo que su raíz necesita: el proveedor de WIF confiaba en
+el **nombre** del repositorio (que se puede volver a registrar si se borra o se renombra; los IDs
+numéricos no se reutilizan), una cuenta con roles de organización alcanzaba por herencia a la
+etapa 0, y el pipeline podía leer valores de secretos en contra del ADR 0015.
 
-- El proveedor de WIF y el `principalSet` confiaban en el **nombre** del repositorio
-  (`assertion.repository`). La guía de WIF para pipelines de Google advierte que un nombre de
-  repositorio o de dueño se puede volver a registrar si se borra o se renombra; los IDs
-  numéricos no se reutilizan.
-- `1-org` tiene `roles/iam.securityAdmin` y `roles/resourcemanager.folderAdmin` en la
-  organización. Por herencia cubren la carpeta `bootstrap`: podía darse permiso para tomar la
-  identidad de las cuentas 2 a 5 o ampliar su acceso al bucket de estado.
-- `5-workloads` recibía roles en las carpetas de entorno, que también contienen el host
-  `net-spoke` de la etapa 3: `compute.securityAdmin` le permitía cambiar el firewall del host y
-  `iam.serviceAccountUser` de carpeta anulaba el `actAs` por cuenta de la etapa 4.
-- `2-security` tenía el rol predefinido de administrador de Secret Manager (incluye
-  `secretmanager.versions.access`) y un `projectIamAdmin` sin condición en `security`: el
-  pipeline podía leer valores de secretos, en contra del ADR 0015.
+Con el proyecto único (ADR 0029) el problema cambia de forma: ya no hay carpetas ni proyectos que
+separen a las cuentas. Los tres entornos, el estado y las nueve cuentas están en el mismo
+proyecto, así que la cuenta de un entorno no debe alcanzar el estado, las cuentas ni los recursos
+con nombre de otro entorno, y nada de eso puede depender de la herencia entre carpetas.
 
 ## Decisión
 
-- **WIF por IDs numéricos (etapa 0).** Variables obligatorias `github_repository_id` y
+- **WIF por IDs numéricos y por entorno (`stages/0-bootstrap/wif.tf` y
+  `service_accounts.tf`).** Variables obligatorias `github_repository_id` y
   `github_repository_owner_id` (solo dígitos; `gh api repos/<dueño>/<repositorio> --jq '.id,
   .owner.id'`). `attribute_condition` exige
   `assertion.repository_id == "<id>" && assertion.repository_owner_id == "<id del dueño>"`; el
-  mapeo agrega `attribute.repository_id` y `attribute.repository_owner_id` y conserva
-  `attribute.repository`, `attribute.ref` y `attribute.environment`; cada cuenta de etapa da
-  `roles/iam.workloadIdentityUser` a
-  `principalSet://iam.googleapis.com/<pool>/attribute.repository_id/<github_repository_id>`.
-  `github_repository` queda solo como dato legible (descripción del proveedor y registros).
-- **Política de denegación en la carpeta `bootstrap` (etapa 0, `deny_policy.tf`).**
-  `google_iam_deny_policy.bootstrap_folder` niega al principal de la cuenta de `1-org` cambiar
-  el IAM, mover o borrar la carpeta y el proyecto semilla; cambiar el IAM de las cuentas de
-  servicio, tomar su identidad (`actAs`, `getAccessToken`, `getOpenIdToken`,
-  `implicitDelegation`, `signBlob`, `signJwt`), cambiarlas, borrarlas, deshabilitarlas o crearles
-  llaves; cambiar el IAM, la configuración o borrar el bucket de estado; y cambiar el IAM o la
-  llave del estado o destruir sus versiones. Una denegación se impone a cualquier permiso
-  concedido. Quien corre la etapa 0 necesita además `roles/iam.denyAdmin` en la organización.
-- **5-workloads solo en sus proyectos de servicio.** `1-org` ya no le da ningún rol. `4-projects`,
-  que crea los proyectos de servicio, le da en cada uno los 13 roles de los recursos que crea la
-  etapa 5 (`backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`,
-  `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`,
-  `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`,
-  `run.admin`, `storage.admin`), `roles/resourcemanager.projectIamAdmin` con la condición
-  `api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(['roles/cloudsql.client',
-  'roles/cloudsql.instanceUser'])`, `roles/iam.serviceAccountAdmin` solo sobre la cuenta
-  `workload` (para el enlace de Workload Identity) y `roles/compute.networkViewer` en el host.
-  El uso de subredes y de etiquetas seguras sigue siendo por subred y por valor.
-- **Concesiones delegadas de 4-projects en las carpetas de entorno (etapa 1).**
-  `projectIamAdmin` condicionado a `roles/compute.networkUser`, `roles/compute.networkViewer` y
-  `roles/container.hostServiceAgentUser`, para dar esos roles en el host del spoke.
-- **Secretos sin acceso a valores.** La etapa 0 crea un segundo rol personalizado de
-  organización, `<prefix>TfSecretContainerAdmin` (salida `secret_container_admin_role_id`):
+  mapeo trae `attribute.repository_id`, `attribute.repository_owner_id`, `attribute.repository`,
+  `attribute.ref` y `attribute.environment`. `roles/iam.workloadIdentityUser`:
+  - `tf-base` y `tf-net`: `principalSet://iam.googleapis.com/<pool>/attribute.environment/common`;
+  - `tf-net-<env>` y `tf-wl-<env>`: `…/attribute.environment/<env>`;
+  - `tf-read`: `…/attribute.repository_id/<github_repository_id>`.
+
+  Un trabajo sin entorno de GitHub solo obtiene `tf-read`. `github_repository` queda solo como
+  dato legible.
+- **Etiqueta y política de denegación del proyecto (`stages/0-bootstrap/deny_policy.tf`).**
+  Las condiciones de denegación solo admiten funciones de etiquetas
+  ([deny](https://docs.cloud.google.com/iam/docs/deny-overview)), así que lo protegido se marca
+  con la clave `<prefix>-proteccion` (padre `projects/<id>`) y el valor `etapa-0`, ligado al
+  bucket de estado, al llavero del estado y a las nueve cuentas. La política
+  `<prefix>-bootstrap-sec-deny-pipeline` niega a las nueve cuentas:
+  - con la etiqueta: borrar el bucket o cambiar su configuración, su IAM y sus etiquetas; cambiar
+    el IAM del llavero o de la llave, cambiar la llave o destruir versiones; cambiar el IAM de
+    las cuentas, tomar su identidad (`actAs`, `getAccessToken`, `getOpenIdToken`,
+    `implicitDelegation`, `signBlob`, `signJwt`), cambiarlas, borrarlas o deshabilitarlas;
+  - sin condición: crear, cambiar o borrar pools y proveedores de WIF y roles personalizados,
+    crear llaves de cuentas de servicio y borrar el proyecto.
+
+  Una denegación se impone a cualquier permiso concedido. Quien aplica `0-bootstrap` necesita
+  `roles/iam.denyAdmin` en el proyecto. `enable_protection_tags` y `enable_deny_policy` (ambas
+  `true` por defecto) permiten apagarlas si no funcionan sin organización.
+- **Roles de proyecto solo desde `0-bootstrap`, con condiciones**
+  ([atributos](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes)). Ninguna
+  raíz de entorno da roles de proyecto a una cuenta del pipeline (regla de recursos únicos,
+  contrato §7.5). Lista completa en el contrato §6.3; lo esencial:
+  - `roles/storage.admin` solo con condición: buckets `<prefix>-common-` para `tf-base` y
+    `<prefix>-<env>-` para `tf-wl-<env>`; ninguna alcanza el bucket de estado
+    (`<prefix>-bootstrap-…`).
+  - `tf-base` tiene `cloudkms.admin` con condición que excluye el llavero del estado.
+  - `tf-wl-<env>` da IAM de llaves y secretos con `<prefix>TfKmsSecretIamGranter`, condicionado a
+    los llaveros y secretos `<prefix>-<env>-` (formato exacto de la condición: HYPOTHESIS).
+  - `roles/resourcemanager.projectIamAdmin` solo con la concesión delegada
+    `api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`: `tf-base`
+    para los roles de lectura de los grupos y `tagUser` de los agentes; `tf-wl-<env>` para los
+    roles mínimos de sus cuentas de ejecución y el rol del apagado.
+  - Compute, GKE, Cloud Run, Cloud SQL, Memorystore, Filestore, cuentas de servicio y etiquetas,
+    **sin condición** (una condición por nombre sobre un tipo que no la admite niega todo).
+- **Cuentas de servicio sin `serviceAccountAdmin`.** `tf-wl-<env>` crea sus cuentas de ejecución
+  con el rol personalizado `<prefix>TfServiceAccountManager` (crear, cambiar, borrar,
+  deshabilitar y dar IAM sobre cuentas, sin `createTagBinding` ni `deleteTagBinding`), más
+  `iam.serviceAccountUser` y `resourcemanager.tagUser`. `iam.serviceAccountAdmin` incluye
+  `deleteTagBinding`, que no se puede negar: con `tagUser` dejaría quitar la etiqueta de
+  protección de una cuenta del pipeline.
+- **Secretos sin acceso a valores.** `<prefix>TfSecretContainerAdmin` (de `tf-base`):
   `secretmanager.secrets.{create,delete,get,list,update}` y `secretmanager.locations.{get,list}`,
-  sin permisos de versiones ni `secrets.setIamPolicy`. `1-org` lo da a `2-security` en
-  `security`. `2-security` ya no tiene `projectIamAdmin` en ningún ámbito: el rol personalizado
-  de `4-projects` sobre `security` (`kms_secret_iam_role_id`) lo asigna `1-org`, dueña del
-  proyecto.
-- **Lecturas de estado mínimas (etapa 0).** `3-networks` solo lee `1-org` y `5-workloads` ya no
-  lee `1-org`: se otorga lo que cada raíz lee, no todo lo que permitía la tabla de §6.1.
+  sin versiones ni `secrets.setIamPolicy`. Los roles personalizados viven en `0-bootstrap`
+  (salida `custom_role_ids`), así que ninguna cuenta necesita `iam.roleAdmin`.
+- **Lecturas de estado mínimas.** Cada cuenta escribe su prefijo y lee solo los de la lista
+  `reads` de su raíz (contrato §6.1): el hub no lee nada, cada spoke lee `2-networks/hub` y las
+  cargas leen `1-base` y `2-networks/<env>`. `tf-read` lee todo el bucket. Los `plan` corren con
+  `tf-read` y `-lock=false` (ADR 0025).
 
 ## Alternativas consideradas
 
-- **Condicionar WIF por `attribute.ref` o `attribute.environment`.** Cierra el riesgo de que
-  cualquier rama tome la identidad de las cuentas, pero exige cuentas de solo lectura separadas
-  para los `plan` de los PR. No se construye en esta ronda.
-- **Quitar `iam.securityAdmin` de organización a `1-org`.** Rechazada: es la etapa que
-  administra el IAM por grupos de la organización.
-- **`projectIamAdmin` condicional para 2-security en `security`.** Se probó y se descartó: la
-  condición limita los roles, no a quién se asignan, así que `2-security` podía darse a sí misma
-  el rol de `4-projects` y con él `secretAccessor`.
+- **Condicionar WIF por `attribute.ref`.** Ataría cada cuenta a una rama y rompería los `plan`
+  de los PR, que corren en ramas. Se eligió el entorno de GitHub, que además lleva revisores y
+  reglas de rama configurables (`pipeline.md` §4).
+- **Política de denegación en una carpeta `bootstrap`.** Era el diseño de varios proyectos; sin
+  organización no hay carpetas (ADR 0029 §5).
+- **`iam.serviceAccountAdmin` para `tf-wl-<env>`.** Rechazada: incluye `deleteTagBinding`
+  (ver arriba).
+- **Que `1-base` cree las cuentas de ejecución y dé `actAs` por cuenta.** Quitaría a
+  `tf-wl-<env>` el `setIamPolicy` sobre cuentas a nivel de proyecto. Propuesta abierta del
+  constructor; no se construyó porque cambia la regla de que cada entorno crea sus principales
+  (ADR 0029 §4).
 
 ## Consecuencias
 
 Riesgos residuales (análisis de la documentación de Google, sin probar en GCP):
 
-- **WIF sigue filtrando solo por repositorio:** cualquier rama o flujo del repositorio (incluido
-  un PR desde una rama del mismo repositorio) puede tomar la identidad de las cuentas de etapa
-  ([`pipeline.md`](../pipeline.md) §5).
-- **La política de denegación no se protege a sí misma:** los permisos `iam.denypolicies.*` no
-  se pueden negar; `1-org` podría darse `roles/iam.denyAdmin` en la organización y borrarla. Queda
-  en los registros de actividad administrativa.
-- **Los permisos de objeto de Cloud Storage no se niegan:** `1-org` los necesita para su propio
-  prefijo y una condición de denegación solo admite etiquetas. Si `1-org` se diera un rol de
-  Storage en la organización, podría leer otros prefijos del estado.
-- **4-projects puede darse `secretAccessor`:** su rol personalizado incluye
-  `secretmanager.secrets.setIamPolicy` (lo necesita para dar `secretAccessor` a las cuentas de
-  ejecución), y una concesión delegada no se admite en un secreto.
-- **Las concesiones delegadas limitan roles, no destinatarios:** `4-projects` puede dar
-  `networkUser`, `networkViewer` o `hostServiceAgentUser` en el host a cualquier identidad, y
-  `5-workloads` puede dar `cloudsql.client` e `instanceUser` a cualquier identidad en su
-  proyecto de servicio.
-- **`serviceAccountAdmin` sobre la cuenta `workload`** también deja a `5-workloads` deshabilitarla
-  o borrarla. Un rol personalizado más estrecho es posible; no se construyó.
+- **Las etiquetas y la denegación en un proyecto sin organización son HYPOTHESIS**
+  (`VERIFICAR-EN-APPLY` en `deny_policy.tf`). Si no funcionan, la protección queda en que ninguna
+  cuenta tiene `storage.admin` sin condición, `iam.serviceAccountAdmin` ni `projectIamAdmin` sin
+  condición. En ese caso `tf-wl-<env>`, con `setIamPolicy` sobre cuentas a nivel de proyecto
+  (`<prefix>TfServiceAccountManager`) e `iam.serviceAccountUser`, podría darse acceso a otra
+  cuenta del pipeline, por ejemplo a `tf-base`.
+- **Algunos permisos no se pueden negar:** `iam.serviceAccounts.createTagBinding` y
+  `deleteTagBinding`, `cloudkms.keyRings.deleteTagBinding` y `iam.denypolicies.*`. Ninguna cuenta
+  tiene esos permisos sobre lo protegido ni `iam.denyAdmin`. Las cuentas de spoke tienen
+  `resourcemanager.tagAdmin` en el proyecto, que alcanza también la clave de protección (su IAM
+  y sus valores); sin permisos de enlace sobre cuentas, buckets ni llaves no deberían poder quitar
+  la etiqueta de lo protegido (HYPOTHESIS, riesgo abierto).
+- **Los permisos de objeto de Cloud Storage no se niegan:** los prefijos del estado se separan
+  solo con condiciones de IAM (ADR 0010).
+- **Permisos sin condición entre entornos:** una cuenta de dev puede, técnicamente, cambiar
+  recursos de prod de Compute, GKE, Cloud Run, Cloud SQL, Memorystore y Filestore (ADR 0029 §9).
+  Lo frenan que solo un trabajo del entorno `dev` obtiene esa cuenta y que todo cambio pasa por
+  un PR con plan revisado.
+- **WIF depende de la configuración manual de los entornos de GitHub:** sin reglas de rama en
+  cada entorno, cualquier rama que declare `environment: prod` obtiene `tf-wl-prod`
+  ([`pipeline.md`](../pipeline.md) §4 y §5).
+- **Las concesiones delegadas limitan roles, no destinatarios:** `tf-wl-<env>` puede dar los
+  roles de su lista a cualquier identidad del proyecto.
+- **`<prefix>TfKmsSecretIamGranter` permite darse `secretAccessor`** sobre los secretos de su
+  entorno (lo necesita para darlo a las cuentas de ejecución).
+- **`orgpolicy.policyAdmin` de `tf-base`** solo se puede dar en la organización y alcanza a toda
+  ella (solo con `org_id`).
 
-Primer apply: la política de denegación (punto 32), los roles personalizados (punto 33), el rol
-personalizado asignado en un proyecto (punto 35), la concesión delegada en carpetas y en
-proyectos (punto 28) y el enlace de Workload Identity (punto 46) de
-[`docs/pendientes-apply.md`](../pendientes-apply.md).
+Primer apply: la política de denegación y la etiqueta, los roles personalizados, las condiciones
+por nombre de KMS y Secret Manager, la concesión delegada y el mapeo de `attribute.environment`
+en trabajos sin entorno (`VERIFICAR-EN-APPLY` de `stages/0-bootstrap/` y puntos de
+[`docs/pendientes-apply.md`](../pendientes-apply.md)).

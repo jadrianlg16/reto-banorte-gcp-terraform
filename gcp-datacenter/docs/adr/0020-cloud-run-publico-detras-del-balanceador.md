@@ -2,7 +2,11 @@
 
 ## Estado
 
-Aceptado, 2026-11-21.
+Aceptado, 2026-11-21. Enmendado el 2026-11-24: con el proyecto único
+([ADR 0029](0029-un-solo-proyecto.md) §1) `iam.allowedPolicyMemberDomains` solo existe si hay
+organización y `directory_customer_id` (el módulo `org` la aplica entonces al proyecto). Sin
+organización, lo que impide `allUsers` es la validación del módulo `cloud-run` y la regla 7 de
+Conftest para `user:`; la decisión no cambia.
 
 Tipo: Aclaración.
 
@@ -33,9 +37,9 @@ En ningún caso se concede `allUsers`.
 
 ## Alternativas consideradas
 
-- **Excepción de `iam.allowedPolicyMemberDomains` en el proyecto de servicio para permitir
-  `allUsers`.** Rechazada: debilita una de las nueve políticas de la línea base, y la excepción
-  serviría para cualquier recurso del proyecto, no solo para el servicio.
+- **Excepción de `iam.allowedPolicyMemberDomains` en el proyecto para permitir `allUsers`.**
+  Rechazada: debilita una de las políticas de la línea base, y la excepción serviría para
+  cualquier recurso del proyecto (ahora, de los tres entornos), no solo para el servicio.
 - **IAP en el servicio de backend, con `roles/run.invoker` al agente de servicio de IAP.**
   Correcta para aplicaciones internas con usuarios de la organización, pero no sirve para
   tráfico público anónimo. Se mantiene como opción con `public_via_load_balancer = false`.

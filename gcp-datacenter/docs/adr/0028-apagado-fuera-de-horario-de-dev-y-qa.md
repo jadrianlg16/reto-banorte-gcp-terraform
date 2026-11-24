@@ -2,11 +2,16 @@
 
 ## Estado
 
-Aceptado, 2026-11-23.
+Aceptado, 2026-11-23. Enmendado el 2026-11-24: con el proyecto único
+([ADR 0029](0029-un-solo-proyecto.md)) el rol `<prefix>OffHoursScheduler` lo crea
+`0-bootstrap` una sola vez y `1-base` lo publica como `off_hours_role_id`; la cuenta
+`<prefix>-<env>-<app>-sched` y su permiso los crea `stages/3-workloads/envs/<env>` cuando
+`off_hours_shutdown.enabled`; la API de Cloud Scheduler la habilita `0-bootstrap`, y
+`cloudscheduler.admin` para `tf-wl-dev` y `tf-wl-qa` (nunca prod) también lo da `0-bootstrap`.
+Ya no existe `enable_off_hours_shutdown`.
 
 Tipo: Aclaración. Construye la mitigación de costo opcional que el contrato (§8) dejaba sin
-construir; no cambia la especificación. La cuenta que usan los trabajos de la etapa 5 la crea
-la etapa 4, como las cuentas de ejecución (ver Decisión).
+construir; no cambia la especificación.
 
 ## Contexto
 
@@ -25,7 +30,7 @@ apagado tiene que cumplir cuatro condiciones:
 
 ## Decisión
 
-Variable `off_hours_shutdown` en las raíces de `stages/5-workloads/envs/*`:
+Variable `off_hours_shutdown` en las raíces de `stages/3-workloads/envs/*`:
 `{ enabled, time_zone, start_schedule, stop_schedule }`.
 
 - Por defecto vale `{ enabled = false }`. Se rechaza en prod y con `enable_dr`.
@@ -35,20 +40,22 @@ Variable `off_hours_shutdown` en las raíces de `stages/5-workloads/envs/*`:
 - Los `terraform.tfvars.example` de dev y qa la encienden: de 07:00 a 20:00 de lunes a viernes,
   zona `America/Monterrey`.
 
-En `stages/4-projects/envs/*`, la variable `enable_off_hours_shutdown` (rechazada en prod) hace
-cuatro cosas:
+Quién crea cada pieza en el proyecto único:
 
-- habilita `cloudscheduler.googleapis.com`;
-- crea la cuenta `<prefix>-<env>-<app>-sched`, que firma los tokens de los trabajos;
-- crea el rol personalizado `<prefix>OffHoursScheduler`, con solo los permisos de las llamadas
-  (`cloudsql.instances.get`, `cloudsql.instances.update` y `container.clusters.update`), y lo
-  asigna a esa cuenta en el proyecto de servicio;
-- da a la cuenta de la etapa 5 `roles/cloudscheduler.admin` en el proyecto y
-  `roles/iam.serviceAccountUser` solo sobre esa cuenta (actAs).
+- `0-bootstrap` habilita `cloudscheduler.googleapis.com` (con las demás APIs), crea el rol
+  personalizado `<prefix>OffHoursScheduler`, con solo los permisos de las llamadas
+  (`cloudsql.instances.get`, `cloudsql.instances.update` y `container.clusters.update`), y da a
+  `tf-wl-dev` y `tf-wl-qa` `roles/cloudscheduler.admin` en el proyecto. `tf-wl-<env>` ya tiene
+  `iam.serviceAccountUser` en el proyecto (para sus cuentas de ejecución) y puede dar el rol del
+  apagado por su concesión delegada.
+- `1-base` publica el ID del rol en la salida `off_hours_role_id`.
+- `stages/3-workloads/envs/<env>`, con `off_hours_shutdown.enabled`, crea la cuenta
+  `<prefix>-<env>-<app>-sched`, que firma los tokens de los trabajos, y le da el rol en el
+  proyecto, **sin condición**: el rol junta permisos de Cloud SQL y de GKE, y una condición por
+  nombre sobre un tipo que no la admite niega todo (ADR 0029 §3).
 
-La cuenta la crea la etapa 4 porque crear roles personalizados y cuentas desde la etapa 5 le
-exigiría `iam.roleAdmin`. Con ese rol se podría dar a sí misma cualquier permiso. Además, un actAs
-a nivel de proyecto incluiría la cuenta de Compute por defecto.
+El rol vive en `0-bootstrap` porque crear roles personalizados desde una raíz de entorno le
+exigiría `iam.roleAdmin`, y con ese rol una cuenta podría darse a sí misma cualquier permiso.
 
 ### Mecanismo por recurso
 
@@ -126,8 +133,8 @@ Cloud Scheduler:
 - **`ignore_changes` condicional.** Terraform no lo permite. En GKE se resolvió con dos recursos.
   En Cloud SQL, duplicar la instancia obligaría a mover el estado de una base de datos con datos
   al activar el apagado, así que se eligió `ignore_changes` más la `postcondition`.
-- **Que la etapa 5 cree la cuenta y el rol.** Rechazada por la escalada de privilegios descrita
-  en Decisión.
+- **Que la raíz de cargas cree el rol.** Rechazada por la escalada de privilegios descrita en
+  Decisión. La cuenta sí la crea la raíz de cargas: es un principal del entorno (ADR 0029 §4).
 - **Roles predefinidos para la cuenta `-sched`.** Rechazada: los roles predefinidos que incluyen
   esos permisos traen muchos más.
 - **Apagar con `terraform apply` o `destroy` nocturnos.** Rechazada: un apply cada noche necesita
@@ -151,6 +158,10 @@ Cloud Scheduler:
     VPN y el almacenamiento de Cloud SQL se siguen cobrando.
   - No hay alerta si un trabajo de Cloud Scheduler falla (limitación en
     [`pendientes-apply.md`](../pendientes-apply.md) §5).
+  - La cuenta `-sched` de dev tiene el rol en todo el proyecto: técnicamente podría detener la
+    instancia o cambiar los pools de qa o de prod; sus trabajos solo apuntan a los de su entorno
+    (riesgo aceptado, ADR 0029 §9). `cloudscheduler.admin` de `tf-wl-dev` y `tf-wl-qa` también
+    alcanza los trabajos del otro entorno.
 - **Fórmula de ahorro:**
   - Horas apagadas por semana: `H = 168 − días × (hora de apagado − hora de encendido)`.
   - Ahorro mensual: `730 × H / 168 × (vCPU y memoria de Cloud SQL por hora + VM y disco del MIG

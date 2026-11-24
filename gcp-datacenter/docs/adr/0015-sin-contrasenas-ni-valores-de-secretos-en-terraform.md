@@ -5,7 +5,10 @@
 Aceptado, 2026-11-20. Enmendado el 2026-11-21: `run` y `mig` también son usuarios IAM de
 Cloud SQL; las cuentas del pipeline no pueden leer valores de secretos (ADR
 [0023](0023-endurecimiento-de-la-identidad-del-pipeline.md)), con un riesgo residual en la
-etapa 4.
+etapa 4. Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md))
+los contenedores de secretos los crea `1-base` con `tf-base`; el IAM de los secretos y de Cloud
+SQL lo da `tf-wl-<env>` desde `stages/3-workloads/envs/<env>`; el riesgo residual pasa de la
+cuenta de la etapa 4 a `tf-wl-<env>`, limitado a los secretos de su entorno.
 
 Tipo: Aclaración.
 
@@ -25,14 +28,16 @@ estado está cifrado con CMEK (ADR 0008), pero lo leen las cuentas del pipeline 
   `root_password` y ningún usuario integrado con contraseña. Con `grant_iam_login_roles = true`
   el módulo da `roles/cloudsql.client` y `roles/cloudsql.instanceUser`, condicionados a la
   instancia, a cuentas de servicio y grupos (nunca a `user:`). Las conexiones exigen TLS
-  (`ssl_mode`). La etapa 5 da de alta como usuario IAM a cada cuenta de ejecución cuyo cómputo
-  está encendido: `workload` (GKE, por Workload Identity), `run` (Cloud Run) y `mig` (MIG). Los
-  roles los asigna con el `projectIamAdmin` condicionado que le da la etapa 4 sobre el proyecto
-  de servicio (solo `roles/cloudsql.client` y `roles/cloudsql.instanceUser`).
-- **Cuentas del pipeline.** La de `2-security` administra los contenedores con el rol
+  (`ssl_mode`). `stages/3-workloads/envs/<env>` da de alta como usuario IAM a cada cuenta de
+  ejecución cuyo cómputo está encendido: `workload` (GKE, por Workload Identity), `run` (Cloud
+  Run) y `mig` (MIG). Los roles los asigna `tf-wl-<env>` con el `projectIamAdmin` de concesión
+  delegada que le da `0-bootstrap` (su lista incluye `roles/cloudsql.client` y
+  `roles/cloudsql.instanceUser`).
+- **Cuentas del pipeline.** `tf-base` administra los contenedores (`1-base`) con el rol
   personalizado `<prefix>TfSecretContainerAdmin` (sin permisos de versiones ni de IAM del
-  secreto), no con `roles/secretmanager.admin`; la de `4-projects` asigna IAM de secretos con el
-  rol personalizado de la etapa 0 (`kms_secret_iam_role_id`), sin permisos de versiones.
+  secreto), no con `roles/secretmanager.admin`; `tf-wl-<env>` asigna IAM de los secretos de su
+  entorno con el rol personalizado `<prefix>TfKmsSecretIamGranter` de `0-bootstrap`, condicionado
+  a los secretos `<prefix>-<env>-` y sin permisos de versiones.
 - **Secret Manager** (`secrets`) crea contenedores con replicación administrada por el usuario
   y CMEK por región, y da `roles/secretmanager.secretAccessor`; no tiene ninguna variable por
   la que entre un valor ni crea `google_secret_manager_secret_version`. Las versiones las carga
@@ -63,10 +68,11 @@ estado está cifrado con CMEK (ADR 0008), pero lo leen las cuentas del pipeline 
   firewall deje pasar puede usar la caché.
 - Excepción conocida: el secreto compartido de la HA VPN sí queda en el estado del hub
   (ADR 0006), porque el túnel lo exige como argumento.
-- Riesgo residual: la cuenta de `4-projects` tiene `secretmanager.secrets.setIamPolicy` (la
-  necesita para dar `secretAccessor` a las cuentas de ejecución), así que podría darse
-  `secretAccessor` a sí misma. Lo frena la revisión del plan (ADR 0025), no un control técnico
-  (ADR 0023).
+- Riesgo residual: `tf-wl-<env>` tiene `secretmanager.secrets.setIamPolicy` sobre los secretos
+  de su entorno (lo necesita para dar `secretAccessor` a las cuentas de ejecución), así que podría
+  darse `secretAccessor` a sí misma sobre ellos. Lo frena la revisión del plan (ADR 0025), no un
+  control técnico (ADR 0023). Que la condición por nombre limite de verdad a los secretos del
+  entorno es HYPOTHESIS (ADR 0029 §3).
 - Primer apply: que las banderas y los roles condicionados se acepten
   (`VERIFICAR-EN-APPLY` en `modules/cloud-sql/main.tf`; punto 14 de
   [`docs/pendientes-apply.md`](../pendientes-apply.md)) y que los permisos de los roles

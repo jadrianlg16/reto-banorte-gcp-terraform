@@ -4,6 +4,13 @@
 
 Aceptado, 2026-11-21. Completa el ADR 0007.
 
+Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md) §3) el
+trabajo `plan <raíz>` corre con la cuenta de solo lectura `<prefix>-tf-read`
+(`GCP_AUDIT_SERVICE_ACCOUNT`, salida `read_service_account` de `0-bootstrap`) y `-lock=false`,
+porque esa cuenta no puede escribir el candado del estado; el trabajo `apply <raíz>` vuelve a
+planear con candado con la cuenta de la raíz (`fromJSON(GCP_STAGE_SERVICE_ACCOUNTS)[stage]`),
+que WIF solo entrega en el entorno de GitHub de esa raíz. `common` agrupa `1-base` y el hub.
+
 Tipo: Aclaración.
 
 ## Contexto
@@ -24,13 +31,14 @@ probar en dev. La revisión independiente encontró que el pipeline no lo garant
 ## Decisión
 
 - **Dos trabajos por raíz** en `_terraform-root.yml`:
-  - `plan <raíz>`, sin entorno de GitHub: plan, huella del plan
+  - `plan <raíz>`, sin entorno de GitHub, con `tf-read` y `-lock=false`: plan, huella del plan
     (`scripts/plan-fingerprint.py`: SHA-256 de dirección, acciones, `after`, `after_unknown` y
     `after_sensitive` de cada cambio y de las acciones de las salidas; sin el estado anterior ni
     la fecha), Conftest sobre el plan y un resumen en la página de la ejecución con la línea
     `Plan:`, la huella y los recursos con cambios.
   - `apply <raíz>`, en el entorno de la raíz y **solo si el plan tiene cambios** (sin cambios no
-    hay pedido de aprobación): vuelve a planear el mismo commit, compara la huella con la
+    hay pedido de aprobación): con la cuenta de la raíz, vuelve a planear el mismo commit
+    tomando el candado, compara la huella con la
     revisada y, si difiere, falla sin aplicar; si es igual, corre Conftest y aplica ese `tfplan`.
 - **Se vuelve a planear en lugar de pasar `tfplan` entre trabajos**: el archivo del plan y su
   JSON llevan valores sensibles en claro y un artefacto de Actions lo descarga cualquiera con
@@ -62,8 +70,10 @@ Detalle de cada paso y de la configuración de GitHub en [`pipeline.md`](../pipe
 - Positivas: quien aprueba ve el resumen del plan que se aplica; un plan que cambió entre la
   revisión y el apply no se aplica; una violación de política en el plan real bloquea el merge
   **si** `plan-gate` está marcado como comprobación obligatoria de `main`.
-- Negativas: cada raíz con cambios en `common` o `prod` pide su propia aprobación (hasta tres por
-  entorno); una ejecución que espera aprobación retiene el grupo de concurrencia
+- Negativas: cada raíz con cambios en `common` o `prod` pide su propia aprobación (hasta dos por
+  entorno: `1-base` y el hub en `common`, spoke y cargas en `prod`); un plan sin candado puede
+  leer un estado que otro apply está cambiando, pero la huella lo detecta antes de aplicar; una
+  ejecución que espera aprobación retiene el grupo de concurrencia
   `apply-gcp-datacenter`. Un valor que el proveedor recalcule en cada plan haría fallar el apply
   (nunca aplicaría algo no revisado).
 - **Depende de configurar GitHub:** ni `plan-gate` ni las aprobaciones bloquean nada hasta que

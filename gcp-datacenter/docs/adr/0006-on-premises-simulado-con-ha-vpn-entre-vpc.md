@@ -4,7 +4,11 @@
 
 Aceptado, 2026-11-20. Enmendado el 2026-11-21: VPN de DR en los dos lados, política de red de
 `onprem-sim` para probar el reenvío DNS y secreto real por versión numérica con rotación por
-túnel.
+túnel. Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md)
+§6) la raíz del hub es `stages/2-networks/` y crea `onprem-sim` en el proyecto único; sin
+política jerárquica, la política de red de `onprem-sim` es la única que admite el reenvío DNS
+(ya no hay delegación con `goto_next`); el estado del hub, con el secreto, lo leen `tf-net`, las
+cuentas de los spokes y `tf-read`.
 
 Tipo: Supuesto.
 
@@ -17,8 +21,8 @@ sesiones BGP, los anuncios personalizados y la zona de reenvío de DNS no se pue
 
 ## Decisión
 
-Con `simulate_onprem = true`, la raíz del hub (`stages/3-networks/`) crea en el proyecto
-`net-hub` una VPC `onprem-sim` (módulo `network-hub` con `network_suffix`, subred
+Con `simulate_onprem = true`, la raíz del hub (`stages/2-networks/`) crea en el proyecto
+único una VPC `onprem-sim` (módulo `network-hub` con `network_suffix`, subred
 `192.168.0.0/24` dentro de `onprem_cidrs = 192.168.0.0/16`) con su Cloud Router (ASN
 `onprem_asn = 65001`, que en este modo debe ser privado: la validación de `onprem_asn` lo exige).
 El módulo `hybrid-connectivity` se instancia una vez por punta y por VPN con
@@ -32,11 +36,11 @@ módulo recibe `peer.type = "external"` con `onprem_vpn_gateway_ips` (las mismas
 VPN; la de DR crea su propio gateway externo `…-vpn-onprem-dr-peer`), `onprem-sim` no se crea y
 `onprem_asn` puede ser un ASN público de 2 o 4 bytes.
 
-Para poder probar el reenvío de DNS en modo simulado, la política jerárquica de la organización
-delega `35.199.192.0/19` (TCP y UDP 53) con `goto_next` solo hacia la VPC `onprem-sim`
-(`delegate-dns-onprem-sim`, con `target_resources`), y `onprem-sim` tiene su propia política de
-red (`<prefix>-common-net-fw-onprem-sim`, `module.firewall_onprem_sim`) que permite esas
-consultas y SSH por IAP; lo demás lo deniega. Falta solo la VM DNS, que se crea a mano.
+Para poder probar el reenvío de DNS en modo simulado, `onprem-sim` tiene su propia política de
+firewall de red (`<prefix>-common-net-fw-onprem-sim`, `module.firewall_onprem_sim`) que permite
+`35.199.192.0/19` (TCP y UDP 53) y SSH por IAP; lo demás lo deniega la regla por defecto del
+módulo. Sin política jerárquica (ADR 0029 §6), esa política es la única que decide. Falta solo
+la VM DNS, que se crea a mano.
 
 Secreto compartido de IKE: entra por `shared_secret` (variable `sensitive`, sin valor por
 defecto, mínimo 32 caracteres; ninguna salida lo expone). En modo simulado la raíz lo genera con
@@ -45,8 +49,10 @@ defecto, mínimo 32 caracteres; ninguna salida lo expone). En modo simulado la r
 (`onprem_vpn_secret_version`; `latest` no se admite) y, para rotar de a un túnel, con versiones
 por túnel en `onprem_vpn_secret_version_overrides` (llaves `primary-if0`, `primary-if1`,
 `dr-if0`, `dr-if1`); el valor lo carga el equipo de red fuera de Terraform. En los dos casos el
-valor queda en el estado de la raíz `3-networks/hub`, cifrado con la llave CMEK del bucket de
-estado (ADR 0008) y legible solo por la cuenta de esa etapa (ADR 0010).
+valor queda en el estado de la raíz `2-networks/hub`, cifrado con la llave CMEK del bucket de
+estado (ADR 0008) y legible por `tf-net`, por las cuentas de los spokes (`tf-net-<env>`, que leen
+el prefijo del hub para el peering) y por `tf-read` (ADR 0010). Con on-premises real, `tf-net`
+todavía no tiene permiso para leer el secreto en Secret Manager (abierto, contrato §12).
 
 ## Alternativas consideradas
 
@@ -70,7 +76,7 @@ estado (ADR 0008) y legible solo por la cuenta de esa etapa (ADR 0010).
   reemplazo del túnel y no existe la variante de solo escritura: rotar el secreto recrea el
   túnel. Por eso la versión es numérica (una rotación entra por PR) y se rota de a un túnel con
   `onprem_vpn_secret_version_overrides`, mientras los otros tres mantienen la conectividad
-  (procedimiento en el README de `stages/3-networks`).
+  (procedimiento en el README de `stages/2-networks`).
 - Primer apply: propagación de rutas BGP del hub a los spokes y de los /16 de los spokes hacia
   on-premises, y anuncio de `35.199.192.0/19` con respuesta de DNS (puntos 6, 7 y 36); las dos
   VPN con su preferencia (punto 37) y el regreso asimétrico (punto 38) de
