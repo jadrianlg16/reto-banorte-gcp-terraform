@@ -189,7 +189,7 @@ variable "binary_authorization_allowlist_patterns" {
 }
 
 variable "binary_authorization_attestors" {
-  description = "Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y las reglas de los clústeres de prod. Vacío (por defecto): sin atestaciones, se niega todo lo que no esté en la lista de permitidos."
+  description = "Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y todas las reglas de clúster (todos a la vez: Binary Authorization pide la atestación de cada uno). Vacío (por defecto): sin atestaciones comunes; sin binary_authorization_env_attestors se niega todo lo que no esté en la lista de permitidos."
   type        = list(string)
   default     = []
   nullable    = false
@@ -197,6 +197,22 @@ variable "binary_authorization_attestors" {
   validation {
     condition     = alltrue([for a in var.binary_authorization_attestors : can(regex("^projects/[^/]+/attestors/[^/]+$", a))])
     error_message = "Cada atestador debe tener la forma projects/<proyecto>/attestors/<nombre>."
+  }
+}
+
+variable "binary_authorization_env_attestors" {
+  description = "Mapa entorno → atestador (projects/<p>/attestors/<a>), uno por entorno de environments. Con él, los repositorios del proyecto salen de la lista de permitidos (queda solo binary_authorization_allowlist_patterns), cada clúster <prefix>-<env>-<app>-gke[-dr] exige el atestador de su entorno y la regla por defecto (Cloud Run y clústeres fuera de la convención) exige binary_authorization_attestors o, si está vacío, el atestador del primer entorno de la promoción (dev, qa, prod). Vacío (por defecto): la lista de permitidos global con los repositorios de los tres entornos (una imagen de dev se puede desplegar en prod; riesgo del ADR 0024). Los atestadores no los crea esta etapa."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for e, a in var.binary_authorization_env_attestors : contains(var.environments, e) && can(regex("^projects/[^/]+/attestors/[^/]+$", a))])
+    error_message = "Cada llave de binary_authorization_env_attestors debe ser un entorno de environments y cada valor un atestador projects/<proyecto>/attestors/<nombre>."
+  }
+  validation {
+    condition     = length(var.binary_authorization_env_attestors) == 0 || alltrue([for e in var.environments : contains(keys(var.binary_authorization_env_attestors), e)])
+    error_message = "binary_authorization_env_attestors debe tener un atestador para cada entorno de environments (o quedar vacío): sin él, los clústeres de ese entorno no podrían admitir imágenes de su repositorio."
   }
 }
 

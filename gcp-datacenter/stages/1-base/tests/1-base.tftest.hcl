@@ -256,6 +256,15 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "Una sola política: repositorios del proyecto permitidos, lo demás negado y reglas por clúster de prod por convención."
   }
+  # Sin atestadores por entorno: la lista global admite el repositorio de dev en cualquier clúster
+  # (riesgo del ADR 0024 escrito en artifacts.tf).
+  assert {
+    condition = alltrue([
+      contains([for p in google_binary_authorization_policy.this.admission_whitelist_patterns : p.name_pattern], "us-docker.pkg.dev/example-project-id/bnt-dev-app/**"),
+      alltrue([for r in google_binary_authorization_policy.this.cluster_admission_rules : r.evaluation_mode == "ALWAYS_DENY"]),
+    ])
+    error_message = "Sin atestadores por entorno se conserva el comportamiento de hoy: lista global con los tres repositorios."
+  }
 
   # --- IAM de personas y agentes ---
   assert {
@@ -331,6 +340,84 @@ run "con_scc_y_atestadores" {
     ])
     error_message = "SCC opcional con tema CMEK; con atestadores, la política las exige."
   }
+}
+
+# Con un atestador por entorno: los repositorios salen de la lista de permitidos, cada clúster
+# exige el atestador de su entorno y la regla por defecto (Cloud Run) el del primer entorno.
+run "atestadores_por_entorno" {
+  command = plan
+
+  variables {
+    binary_authorization_env_attestors = {
+      dev  = "projects/example-project-id/attestors/bnt-dev"
+      qa   = "projects/example-project-id/attestors/bnt-qa"
+      prod = "projects/example-project-id/attestors/bnt-prod"
+    }
+    binary_authorization_allowlist_patterns = ["us-docker.pkg.dev/cloudrun/container/hello*"]
+  }
+
+  assert {
+    condition     = [for p in google_binary_authorization_policy.this.admission_whitelist_patterns : p.name_pattern] == ["us-docker.pkg.dev/cloudrun/container/hello*"]
+    error_message = "Con atestadores por entorno la lista de permitidos solo tiene binary_authorization_allowlist_patterns."
+  }
+  assert {
+    condition = alltrue([
+      google_binary_authorization_policy.this.default_admission_rule[0].evaluation_mode == "REQUIRE_ATTESTATION",
+      toset(google_binary_authorization_policy.this.default_admission_rule[0].require_attestations_by) == toset(["projects/example-project-id/attestors/bnt-dev"]),
+    ])
+    error_message = "La regla por defecto exige el atestador del primer entorno de la promoción (dev)."
+  }
+  assert {
+    condition = alltrue([
+      toset([for r in google_binary_authorization_policy.this.cluster_admission_rules : r.cluster]) == toset([
+        "us-central1.bnt-dev-app-gke", "us-east4.bnt-dev-app-gke-dr",
+        "us-central1.bnt-qa-app-gke", "us-east4.bnt-qa-app-gke-dr",
+        "us-central1.bnt-prod-app-gke", "us-east4.bnt-prod-app-gke-dr",
+      ]),
+      alltrue([for r in google_binary_authorization_policy.this.cluster_admission_rules : r.evaluation_mode == "REQUIRE_ATTESTATION" && r.enforcement_mode == "ENFORCED_BLOCK_AND_AUDIT_LOG"]),
+      alltrue([
+        for r in google_binary_authorization_policy.this.cluster_admission_rules :
+        toset(r.require_attestations_by) == toset(["projects/example-project-id/attestors/bnt-${split("-", split(".", r.cluster)[1])[1]}"])
+      ]),
+    ])
+    error_message = "Cada clúster de cada entorno exige solo el atestador de su entorno."
+  }
+}
+
+# Atestadores comunes (por ejemplo, el de un análisis de vulnerabilidades) junto con los de
+# entorno: la regla por defecto exige los comunes y cada clúster los suyos más los comunes.
+run "atestadores_por_entorno_y_comunes" {
+  command = plan
+
+  variables {
+    binary_authorization_attestors = ["projects/example-project-id/attestors/bnt-scan"]
+    binary_authorization_env_attestors = {
+      dev  = "projects/example-project-id/attestors/bnt-dev"
+      qa   = "projects/example-project-id/attestors/bnt-qa"
+      prod = "projects/example-project-id/attestors/bnt-prod"
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      length(google_binary_authorization_policy.this.admission_whitelist_patterns) == 0,
+      toset(google_binary_authorization_policy.this.default_admission_rule[0].require_attestations_by) == toset(["projects/example-project-id/attestors/bnt-scan"]),
+      toset([for r in google_binary_authorization_policy.this.cluster_admission_rules : r.require_attestations_by if r.cluster == "us-central1.bnt-prod-app-gke"][0]) == toset(["projects/example-project-id/attestors/bnt-prod", "projects/example-project-id/attestors/bnt-scan"]),
+    ])
+    error_message = "La regla por defecto exige los atestadores comunes y cada clúster el de su entorno más los comunes."
+  }
+}
+
+run "rechaza_atestadores_de_entorno_incompletos" {
+  command = plan
+
+  variables {
+    binary_authorization_env_attestors = {
+      prod = "projects/example-project-id/attestors/bnt-prod"
+    }
+  }
+
+  expect_failures = [var.binary_authorization_env_attestors]
 }
 
 run "sin_prod_no_hay_reglas_de_cluster" {

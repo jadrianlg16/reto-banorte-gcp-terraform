@@ -25,6 +25,14 @@ secret_names = {
 #   dev = { app = ["serviceAccount:ci-app@example-project-id.iam.gserviceaccount.com"] }
 # }
 
+# Binary Authorization por entorno (ADR 0024): un atestador por entorno. Sin él, la lista de
+# permitidos es global y una imagen del repositorio de dev se admite en un clúster de prod.
+# binary_authorization_env_attestors = {
+#   dev  = "projects/example-project-id/attestors/bnt-dev"
+#   qa   = "projects/example-project-id/attestors/bnt-qa"
+#   prod = "projects/example-project-id/attestors/bnt-prod"
+# }
+
 # Alertas de auditoría (CIS 2.5 a 2.12).
 security_alert_email = "seguridad@example.com"
 

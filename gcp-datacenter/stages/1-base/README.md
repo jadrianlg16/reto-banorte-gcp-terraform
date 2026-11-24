@@ -66,16 +66,26 @@ etapa lea valores de secretos aunque pueda cambiar su IAM.
 - `artifactregistry.writer` solo para quien diga `artifact_registry_publishers`, por repositorio.
 - El agente de Cloud Run lee todos los repositorios (uno por proyecto); los nodos de GKE y las
   VM del MIG reciben la lectura de su repositorio en `runtime_accounts.tf`.
-- La política de Binary Authorization admite los repositorios del proyecto y
-  `binary_authorization_allowlist_patterns`, y niega lo demás (`ALWAYS_DENY`) o exige
-  atestaciones si hay `binary_authorization_attestors`.
+- La política de Binary Authorization tiene dos modos, según
+  `binary_authorization_env_attestors` (entorno → atestador, uno por entorno de `environments`):
 
-**Desviación del ADR 0029 §4.** La lista de permitidos es global y una imagen que coincide con
-ella se admite sin importar las reglas (descripción del campo en el proveedor 6.x). Una regla por
-clúster no puede, entonces, limitar los clústeres de prod (`<prefix>-prod-<app>-gke` y
-`-gke-dr`, por convención de nombres) al repositorio de prod. Esas reglas existen y aplican la
-misma evaluación que la regla por defecto. Separar las imágenes de prod exige atestaciones
-(propuesta para una fase siguiente).
+| | Sin atestadores por entorno (por defecto) | Con atestadores por entorno |
+|---|---|---|
+| Lista de permitidos | repositorios de los tres entornos y `binary_authorization_allowlist_patterns` | solo `binary_authorization_allowlist_patterns` |
+| Reglas de clúster | `<prefix>-prod-<app>-gke[-dr]`, con la evaluación de la regla por defecto | `<prefix>-<env>-<app>-gke[-dr]` de cada entorno, con el atestador de su entorno (más `binary_authorization_attestors`) |
+| Regla por defecto (Cloud Run y clústeres fuera de la convención) | `ALWAYS_DENY`, o los `binary_authorization_attestors` | `binary_authorization_attestors` o, si está vacío, el atestador del primer entorno de la promoción (dev, qa, prod) |
+
+**Riesgo sin atestadores por entorno (ADR 0024; desviación del ADR 0029 §4).** La lista de
+permitidos es global y una imagen que coincide con ella se admite sin mirar las reglas: una
+imagen del repositorio de dev se puede desplegar en un clúster de prod. Las reglas de los
+clústeres de prod existen por convención de nombres pero no lo impiden.
+
+**Con atestadores por entorno.** Binary Authorization exige las atestaciones de **todos** los
+atestadores de una regla, así que "cualquiera de los atestadores" no se puede expresar en la
+regla por defecto; por eso exige el del primer entorno, que toda imagen promovida trae. Cloud Run
+solo admite la regla por defecto: Cloud Run de qa y prod no exige el atestador de su entorno
+(riesgo aceptado). Los atestadores no los crea esta etapa; si están en otro proyecto, el agente de
+Binary Authorization de este necesita `roles/binaryauthorization.attestorsVerifier` allí.
 
 ## Organización
 
@@ -121,11 +131,13 @@ su exclusión, los llaveros y sus agentes, los repositorios, su IAM y la políti
 Authorization, los roles de grupos y agentes, las cuentas de ejecución y sus permisos (roles,
 condición de Cloud SQL, secretos, repositorio, `serviceAccountUser` de las cuentas de cargas y
 el enlace de Workload Identity con y sin `gke_workload_identity_bindings`), los nombres de llave
-de `kms_key_ids`, que no haya roles de organización, las variantes con SCC y atestadores, sin
-prod y con patrones de imagen válidos; y que se rechazan entradas inválidas (proyecto distinto
-del de 0-bootstrap, contactos que no cubren las categorías obligatorias, grupo desconocido,
-publicador `user:`, secretos fuera de dev, qa y prod, una aplicación
-de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un registro entero).
+de `kms_key_ids`, que no haya roles de organización, las variantes con SCC y atestadores, con
+atestadores por entorno (solos y con comunes: lista sin repositorios, atestador de cada entorno
+en sus clústeres y regla por defecto), sin prod y con patrones de imagen válidos; y que se
+rechazan entradas inválidas (proyecto distinto del de 0-bootstrap, contactos que no cubren las
+categorías obligatorias, grupo desconocido, publicador `user:`, secretos fuera de dev, qa y prod,
+una aplicación de más de 8 caracteres, el apagado en prod, atestadores por entorno que no cubren
+todos los entornos y un patrón de imagen que admite un registro entero).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -189,7 +201,8 @@ de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un
 | <a name="input_artifact_registry_location"></a> [artifact\_registry\_location](#input\_artifact\_registry\_location) | Ubicación de los repositorios de Artifact Registry: la multirregión us (por defecto; sobrevive a la pérdida de una región) o primary\_region o dr\_region. Se cifran con la llave artifacts de esa ubicación. | `string` | `"us"` | no |
 | <a name="input_artifact_registry_publishers"></a> [artifact\_registry\_publishers](#input\_artifact\_registry\_publishers) | Mapa entorno → aplicación → miembros que publican imágenes (roles/artifactregistry.writer solo sobre ese repositorio), por ejemplo la cuenta del CI de la aplicación. Sin user:. | `map(map(list(string)))` | `{}` | no |
 | <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado), con la forma <registro>/<ruta>[/*\|/**\|*]: comodines solo al final, * al final del nombre o después de una /, ** solo después de una /. Globales: valen para todos los clústeres y Cloud Run. | `list(string)` | `[]` | no |
-| <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y las reglas de los clústeres de prod. Vacío (por defecto): sin atestaciones, se niega todo lo que no esté en la lista de permitidos. | `list(string)` | `[]` | no |
+| <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y todas las reglas de clúster (todos a la vez: Binary Authorization pide la atestación de cada uno). Vacío (por defecto): sin atestaciones comunes; sin binary\_authorization\_env\_attestors se niega todo lo que no esté en la lista de permitidos. | `list(string)` | `[]` | no |
+| <a name="input_binary_authorization_env_attestors"></a> [binary\_authorization\_env\_attestors](#input\_binary\_authorization\_env\_attestors) | Mapa entorno → atestador (projects/<p>/attestors/<a>), uno por entorno de environments. Con él, los repositorios del proyecto salen de la lista de permitidos (queda solo binary\_authorization\_allowlist\_patterns), cada clúster <prefix>-<env>-<app>-gke[-dr] exige el atestador de su entorno y la regla por defecto (Cloud Run y clústeres fuera de la convención) exige binary\_authorization\_attestors o, si está vacío, el atestador del primer entorno de la promoción (dev, qa, prod). Vacío (por defecto): la lista de permitidos global con los repositorios de los tres entornos (una imagen de dev se puede desplegar en prod; riesgo del ADR 0024). Los atestadores no los crea esta etapa. | `map(string)` | `{}` | no |
 | <a name="input_enable_scc_notification"></a> [enable\_scc\_notification](#input\_enable\_scc\_notification) | Si es true, crea el tema de Pub/Sub con CMEK y la notificación de hallazgos de Security Command Center del proyecto. SCC se activa a mano en el proyecto antes (ADR 0029 §7); por eso es false por defecto. | `bool` | `false` | no |
 | <a name="input_environments"></a> [environments](#input\_environments) | Entornos con llaveros, llaves, contenedores de secretos y repositorios de imágenes. | `list(string)` | <pre>[<br/>  "dev",<br/>  "qa",<br/>  "prod"<br/>]</pre> | no |
 | <a name="input_essential_contacts_language"></a> [essential\_contacts\_language](#input\_essential\_contacts\_language) | Idioma de las notificaciones de Essential Contacts (etiqueta BCP-47, por ejemplo es o en). | `string` | `"es"` | no |
