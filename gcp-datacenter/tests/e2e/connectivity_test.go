@@ -74,8 +74,27 @@ func optionalOutput(t *testing.T, ctx context.Context, opts *terraform.Options, 
 	return s, true, nil
 }
 
+// sqlStoppedError devuelve un error si la instancia (respuesta de `gcloud sql instances
+// describe --format=json`) está detenida y nil si no. Una instancia detenida conserva state
+// RUNNABLE ("running, or has been stopped by owner" en la referencia v1 de DatabaseInstance);
+// lo que la distingue es settings.activationPolicy NEVER. En dev y qa la detiene el apagado
+// fuera de horario (ADR 0028) y la prueba de humo no la enciende: la cuenta de auditoría es de
+// solo lectura y encenderla fuera de horario la dejaría prendida hasta el siguiente apagado.
+func sqlStoppedError(inst map[string]any) error {
+	if helpers.PathString(inst, "settings.activationPolicy") != "NEVER" {
+		return nil
+	}
+	return fmt.Errorf("la instancia %s está detenida (settings.activationPolicy NEVER), "+
+		"normalmente por el apagado fuera de horario (ADR 0028), y no se puede probar la conexión; "+
+		"la prueba de humo no la enciende. Vuelve a correr el trabajo (Re-run failed jobs) "+
+		"después de la hora de encendido, o enciéndela antes con el trabajo de Cloud Scheduler "+
+		"sql-primary-start (salida off_hours_shutdown.job_ids de 5-workloads/envs/dev: "+
+		"gcloud scheduler jobs run <id>) y vuelve a correrlo; ver docs/pipeline.md §1.2",
+		helpers.PathString(inst, "name"))
+}
+
 // sqlPrivateIP devuelve la IP privada (PSA) de la instancia de un nombre de conexión
-// <proyecto>:<región>:<instancia>.
+// <proyecto>:<región>:<instancia>. Falla con un mensaje claro si la instancia está detenida.
 func sqlPrivateIP(t *testing.T, ctx context.Context, conn string) (string, error) {
 	parts := strings.Split(conn, ":")
 	if len(parts) != 3 {
@@ -84,6 +103,9 @@ func sqlPrivateIP(t *testing.T, ctx context.Context, conn string) (string, error
 	inst, err := helpers.GcloudObjectE(t, ctx, "sql", "instances", "describe", parts[2], "--project="+parts[0])
 	if err != nil {
 		return "", fmt.Errorf("gcloud sql instances describe %s: %w", parts[2], err)
+	}
+	if err := sqlStoppedError(inst); err != nil {
+		return "", err
 	}
 	for _, a := range helpers.PathList(inst, "ipAddresses") {
 		if helpers.PathString(a, "type") == "PRIVATE" {

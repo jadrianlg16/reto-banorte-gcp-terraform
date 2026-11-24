@@ -39,8 +39,22 @@ output "endpoint" {
 }
 
 output "node_pool_names" {
-  description = "Mapa llave de gke_node_pools → nombre del pool de nodos."
-  value       = { for k, p in google_container_node_pool.this : k => p.name }
+  description = "Mapa llave de gke_node_pools → nombre del pool de nodos (con scheduled_scaling, los pools <prefix>-<env>-app-nps-<llave>)."
+  value       = { for k, p in merge(google_container_node_pool.this, google_container_node_pool.scheduled) : k => p.name }
+}
+
+output "node_pools" {
+  description = "Mapa llave de gke_node_pools → nombre del pool, ubicación y nombre del clúster, autoescalado configurado por zona (min_node_count y max_node_count) y si sus trabajos de apagado lo administran (scheduled). Lo usa el módulo off-hours-shutdown."
+  value = {
+    for k, p in merge(google_container_node_pool.this, google_container_node_pool.scheduled) : k => {
+      name           = p.name
+      location       = p.location
+      cluster        = p.cluster
+      min_node_count = var.gke_node_pools[k].min_node_count
+      max_node_count = var.gke_node_pools[k].max_node_count
+      scheduled      = var.scheduled_scaling
+    }
+  }
 }
 
 output "deletion_protection" {

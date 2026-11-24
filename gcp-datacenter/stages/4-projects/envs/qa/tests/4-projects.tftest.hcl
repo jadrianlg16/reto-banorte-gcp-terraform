@@ -415,6 +415,112 @@ run "dev_con_valores_de_ejemplo" {
     condition     = length(google_access_context_manager_service_perimeter_resource.this) == 0 && length(google_access_context_manager_service_perimeter_dry_run_resource.this) == 0 && length(data.google_project.host) == 0
     error_message = "Solo prod se agrega al perímetro (ni servicio ni host)."
   }
+
+  # Sin enable_off_hours_shutdown (por defecto) no hay nada del apagado fuera de horario.
+  assert {
+    condition = (
+      length(google_service_account.scheduler) == 0 && length(google_project_iam_custom_role.off_hours_scheduler) == 0 &&
+      output.scheduler_service_accounts == {} &&
+      !contains(module.project["app"].enabled_apis, "cloudscheduler.googleapis.com") &&
+      !anytrue([for k in keys(module.iam.bindings) : startswith(k, "offhours/")])
+    )
+    error_message = "Sin enable_off_hours_shutdown no se crean la cuenta, el rol ni sus permisos, y Cloud Scheduler no se habilita."
+  }
+}
+
+# Apagado fuera de horario (ADR 0028): cuenta dedicada con un rol personalizado de tres permisos;
+# la etapa 5 administra los trabajos y solo puede adjuntar esa cuenta.
+run "dev_apagado_fuera_de_horario" {
+  command = plan
+
+  variables {
+    enable_off_hours_shutdown = true
+  }
+
+  assert {
+    condition     = google_service_account.scheduler["app"].account_id == "bnt-dev-app-sched" && google_service_account.scheduler["app"].project == "bnt-dev-app"
+    error_message = "La cuenta del apagado se llama <prefix>-<env>-<app>-sched y vive en el proyecto de servicio."
+  }
+  assert {
+    condition = (
+      google_project_iam_custom_role.off_hours_scheduler["app"].project == "bnt-dev-app" &&
+      google_project_iam_custom_role.off_hours_scheduler["app"].role_id == "bntOffHoursScheduler" &&
+      google_project_iam_custom_role.off_hours_scheduler["app"].permissions == toset(["cloudsql.instances.get", "cloudsql.instances.update", "container.clusters.update"])
+    )
+    error_message = "El rol personalizado tiene exactamente los permisos de instances.patch de Cloud SQL y de setAutoscaling/setSize de GKE."
+  }
+  assert {
+    condition = module.iam.bindings["offhours/app/scheduler"] == {
+      scope    = "project"
+      resource = "bnt-dev-app"
+      role     = "projects/bnt-dev-app/roles/bntOffHoursScheduler"
+      member   = "serviceAccount:mock-sa@bnt-dev-app.iam.gserviceaccount.com"
+    }
+    error_message = "La cuenta del apagado recibe el rol personalizado en su proyecto."
+  }
+  assert {
+    condition     = length([for b in values(module.iam.bindings) : b if b.member == "serviceAccount:mock-sa@bnt-dev-app.iam.gserviceaccount.com" && startswith(b.role, "projects/")]) == 1
+    error_message = "El rol personalizado se asigna una sola vez."
+  }
+  assert {
+    condition = (
+      module.iam.bindings["offhours/app/workloads/roles/cloudscheduler.admin"].resource == "bnt-dev-app" &&
+      module.iam.bindings["offhours/app/workloads/roles/cloudscheduler.admin"].member == "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com" &&
+      module.iam.bindings["offhours/app/workloads/actas"] == {
+        scope    = "service_account"
+        resource = "projects/bnt-dev-app/serviceAccounts/mock-sa@bnt-dev-app.iam.gserviceaccount.com"
+        role     = "roles/iam.serviceAccountUser"
+        member   = "serviceAccount:bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gserviceaccount.com"
+      }
+    )
+    error_message = "La etapa 5 administra los trabajos del proyecto y tiene actAs solo sobre la cuenta del apagado."
+  }
+  assert {
+    condition     = length([for k, b in module.iam.bindings : k if startswith(k, "offhours/")]) == 3
+    error_message = "El apagado agrega exactamente tres permisos por aplicación."
+  }
+  assert {
+    condition     = contains(module.project["app"].enabled_apis, "cloudscheduler.googleapis.com")
+    error_message = "Con el apagado se habilita Cloud Scheduler en el proyecto de servicio."
+  }
+  assert {
+    condition     = output.scheduler_service_accounts == { app = "mock-sa@bnt-dev-app.iam.gserviceaccount.com" }
+    error_message = "scheduler_service_accounts publica la cuenta del apagado por aplicación (la lee la etapa 5)."
+  }
+}
+
+# Primer apply con el apagado: llaves conocidas aunque los correos no lo sean.
+run "dev_apagado_primer_apply_con_valores_desconocidos" {
+  command = plan
+
+  providers = {
+    google      = google.primer_apply
+    google-beta = google-beta.primer_apply
+  }
+
+  variables {
+    enable_off_hours_shutdown = true
+  }
+
+  assert {
+    condition = alltrue([
+      for k in ["offhours/app/scheduler", "offhours/app/workloads/roles/cloudscheduler.admin", "offhours/app/workloads/actas"] :
+      contains(keys(module.iam.bindings), k)
+    ])
+    error_message = "Los permisos del apagado tienen llaves conocidas en el plan."
+  }
+}
+
+run "rechaza_apagado_fuera_de_horario_en_prod" {
+  command = plan
+
+  variables {
+    environment               = "prod"
+    deletion_policy           = "PREVENT"
+    enable_off_hours_shutdown = true
+  }
+
+  expect_failures = [var.enable_off_hours_shutdown]
 }
 
 run "prod_perimetro_en_dry_run_y_dr" {

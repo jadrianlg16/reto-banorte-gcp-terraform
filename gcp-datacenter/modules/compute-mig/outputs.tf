@@ -42,3 +42,20 @@ output "named_ports" {
   description = "Puertos con nombre del grupo (nombre → puerto)."
   value       = var.named_ports
 }
+
+output "autoscaling" {
+  description = "Política configurada del autoescalador: min_replicas, max_replicas, señal (cpu o schedule con business_hours) y programas de escalado (nombre → cron, zona horaria, duración en segundos y VM requeridas)."
+  value = {
+    min_replicas = google_compute_region_autoscaler.this.autoscaling_policy[0].min_replicas
+    max_replicas = google_compute_region_autoscaler.this.autoscaling_policy[0].max_replicas
+    signal       = terraform_data.autoscaler_signal.triggers_replace
+    scaling_schedules = {
+      for s in google_compute_region_autoscaler.this.autoscaling_policy[0].scaling_schedules : s.name => {
+        schedule              = s.schedule
+        time_zone             = s.time_zone
+        duration_sec          = s.duration_sec
+        min_required_replicas = s.min_required_replicas
+      }
+    }
+  }
+}

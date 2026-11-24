@@ -89,6 +89,22 @@ variable "enable_dr" {
   default     = false
 }
 
+variable "allow_scheduled_stop" {
+  description = "Permite que la primaria esté detenida (activation_policy NEVER) por el apagado fuera de horario de dev y qa (módulo off-hours-shutdown, ADR 0028). Con false, un plan con la instancia detenida falla. Se rechaza en prod y con enable_dr (una réplica de lectura no se puede detener)."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.environment != "prod" || !var.allow_scheduled_stop
+    error_message = "allow_scheduled_stop no se admite en prod: el apagado fuera de horario es solo para dev y qa (ADR 0028)."
+  }
+  validation {
+    condition     = !var.allow_scheduled_stop || !var.enable_dr
+    error_message = "allow_scheduled_stop no se admite con enable_dr: la réplica de lectura no se puede detener y seguiría cobrando (ADR 0028)."
+  }
+}
+
 variable "sql_tier" {
   description = "Tipo de máquina de Cloud SQL (por ejemplo db-custom-2-7680). Debe ser compatible con edition."
   type        = string

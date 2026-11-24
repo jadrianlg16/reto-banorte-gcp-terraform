@@ -35,6 +35,7 @@ se cita solo por nombre de sección.
 | [0024](0024-artifact-registry-y-binary-authorization-por-proyecto.md) | Artifact Registry y Binary Authorization por proyecto | Aclaración | Un repositorio multirregional por aplicación y una política que solo admite ese repositorio. |
 | [0025](0025-plan-aprobacion-y-apply-separados.md) | Plan, aprobación y apply separados | Aclaración | Plan sin entorno, apply en el entorno con la misma huella; `common` protegido; `plan-gate` y prueba de humo de dev. |
 | [0026](0026-api-de-google-por-el-vip-restringido-en-todos-los-entornos.md) | API de Google por el VIP restringido | Aclaración | Zonas de `googleapis.com`, `gcr.io`, `pkg.dev` y `run.app` hacia el VIP de `google_apis_vip` (`restricted` en los tres entornos). |
+| [0028](0028-apagado-fuera-de-horario-de-dev-y-qa.md) | Apagado fuera de horario de dev y qa | Aclaración | `off_hours_shutdown` (rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler, MIG con programa de escalado; sin deriva por `ignore_changes` y `postcondition`; cuenta y rol mínimos creados por la etapa 4. |
 
 ## Formato
 

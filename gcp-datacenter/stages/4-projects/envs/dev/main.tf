@@ -1,6 +1,7 @@
 # Etapa 4 (§7.5): proyectos de servicio por aplicación, unidos al host de Shared VPC del spoke
 # del entorno, y sus cuentas de servicio de ejecución. Los permisos están en iam.tf y el alta en
-# el perímetro de VPC-SC en vpc_sc.tf.
+# el perímetro de VPC-SC en vpc_sc.tf. Con enable_off_hours_shutdown (dev y qa), además la
+# cuenta de los trabajos del apagado fuera de horario de la etapa 5 (ADR 0028).
 
 locals {
   # §4.3. Cada proyecto agrega app = <llave de la aplicación>.
@@ -38,6 +39,10 @@ locals {
     "sqladmin.googleapis.com",
     "storage.googleapis.com",
   ])
+
+  # Cloud Scheduler solo donde la etapa 5 crea los trabajos del apagado fuera de horario.
+  off_hours_apis = var.enable_off_hours_shutdown ? toset(["cloudscheduler.googleapis.com"]) : toset([])
+  off_hours_apps = var.enable_off_hours_shutdown ? toset(keys(var.applications)) : toset([])
 
   # Usos de las cuentas de servicio de ejecución (§7.5) → roles mínimos en su proyecto.
   # gke_nodes sigue la lista mínima de la cuenta de nodos de GKE; workload es la cuenta de los
@@ -104,7 +109,7 @@ module "project" {
   project_suffix          = var.project_suffix
   folder_id               = data.google_folder.env.name
   billing_account         = var.billing_account
-  apis                    = setunion(local.base_apis, each.value.apis)
+  apis                    = setunion(local.base_apis, local.off_hours_apis, each.value.apis)
   shared_vpc_host_project = local.host_project_id
   deletion_policy         = var.deletion_policy
   labels                  = merge(local.labels, { app = each.key })
@@ -122,6 +127,26 @@ resource "google_service_account" "runtime" {
     precondition {
       condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", each.value.account_id))
       error_message = "El ID de cuenta de servicio <prefix>-<environment>-<app>-<uso> debe tener de 6 a 30 caracteres (ADR 0017)."
+    }
+  }
+}
+
+# Cuenta de los trabajos de Cloud Scheduler del apagado fuera de horario (ADR 0028). La crea esta
+# etapa, no la 5: así la etapa 5 no necesita crear cuentas ni roles personalizados (con
+# iam.roleAdmin podría ampliar el rol que ella misma usa). Su único permiso es el rol
+# personalizado de iam.tf; la etapa 5 solo la adjunta a los trabajos (actAs sobre esta cuenta).
+resource "google_service_account" "scheduler" {
+  for_each = local.off_hours_apps
+
+  project      = module.project[each.key].project_id
+  account_id   = "${var.prefix}-${var.environment}-${each.key}-sched"
+  display_name = "${each.key} apagado fuera de horario (${var.environment})"
+  description  = "Token OAuth de los trabajos de Cloud Scheduler que detienen y encienden Cloud SQL y los pools de GKE de ${each.key} en ${var.environment} (ADR 0028). Administrada por Terraform (etapa 4)."
+
+  lifecycle {
+    precondition {
+      condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "${var.prefix}-${var.environment}-${each.key}-sched"))
+      error_message = "El ID de cuenta de servicio <prefix>-<environment>-<app>-sched debe tener de 6 a 30 caracteres (ADR 0017)."
     }
   }
 }

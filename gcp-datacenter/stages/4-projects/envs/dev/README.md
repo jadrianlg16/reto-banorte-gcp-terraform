@@ -128,6 +128,27 @@ de Google (MIG y grupos de nodos) y el agente de GKE las aplica a los nodos; por
 la reciben. El agente de Compute (`compute-system`) no crea instancias y no la recibe
 (VERIFICAR-EN-APPLY).
 
+### Apagado fuera de horario (`enable_off_hours_shutdown`, ADR 0028)
+
+Solo dev y qa (se rechaza en prod); hace falta para `off_hours_shutdown` de la etapa 5. Por
+aplicación:
+
+- API `cloudscheduler.googleapis.com` en el proyecto de servicio.
+- Cuenta `<prefix>-<env>-<app>-sched` (salida `scheduler_service_accounts`): firma el token
+  OAuth de los trabajos de Cloud Scheduler. Recibe en su proyecto el rol personalizado
+  `<prefix>OffHoursScheduler`, con solo `cloudsql.instances.get` y `cloudsql.instances.update`
+  (`instances.patch` con `activationPolicy`) y `container.clusters.update` (`setAutoscaling` y
+  `setSize` de los pools).
+- Para la cuenta de la etapa 5: `roles/cloudscheduler.admin` en el proyecto (crear los
+  trabajos) y `roles/iam.serviceAccountUser` solo sobre la cuenta `-sched` (actAs, que Cloud
+  Scheduler exige a quien crea un trabajo con esa cuenta).
+
+La cuenta y el rol los crea esta etapa y no la 5: crear roles personalizados exige
+`iam.roleAdmin`, con el que la etapa 5 podría darse cualquier permiso, y un actAs en el proyecto
+incluiría la cuenta de Compute por defecto. Apagar la variable borra la cuenta, el rol y los
+permisos; la etapa 5 debe apagar antes `off_hours_shutdown` (su precondición falla si la cuenta
+no existe).
+
 ## Estado remoto que lee
 
 | Prefijo | Salidas |
@@ -203,6 +224,11 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 - El agente de GKE puede necesitar `roles/compute.securityAdmin` en el host para crear sus
   reglas de firewall; no se otorga (mínimo privilegio): sin él GKE emite eventos con las reglas
   que hay que crear en la etapa 3.
+- Con `enable_off_hours_shutdown`: que esta etapa pueda crear el rol personalizado en el
+  proyecto de servicio como su creadora, que los tres permisos se admitan en roles
+  personalizados y basten para las llamadas de los trabajos (`iam.tf`, punto 73 de
+  `docs/pendientes-apply.md`); y que apagar y volver a encender la variable recree el rol
+  (punto 74).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -241,7 +267,9 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 | [google_artifact_registry_repository_iam_member.reader](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository_iam_member) | resource |
 | [google_artifact_registry_repository_iam_member.writer](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository_iam_member) | resource |
 | [google_binary_authorization_policy.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/binary_authorization_policy) | resource |
+| [google_project_iam_custom_role.off_hours_scheduler](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_custom_role) | resource |
 | [google_service_account.runtime](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
+| [google_service_account.scheduler](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
 | [google_tags_tag_value_iam_member.tag_user](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_tag_value_iam_member) | resource |
 | [google_folder.env](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/folder) | data source |
 | [google_project.host](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/project) | data source |
@@ -269,6 +297,7 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 | <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imagen adicionales al repositorio de la aplicación que admite la política de Binary Authorization (registro/ruta; comodines solo al final: * al final del nombre o después de una /, ** solo después de una /). Vacío por defecto: ningún registro público. | `list(string)` | `[]` | no |
 | <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<nombre>) que la política exige a las imágenes fuera de la lista de permitidos. Vacío: la regla por defecto niega todo (ALWAYS\_DENY); con atestadores pasa a REQUIRE\_ATTESTATION. | `list(string)` | `[]` | no |
 | <a name="input_deletion_policy"></a> [deletion\_policy](#input\_deletion\_policy) | deletion\_policy de los proyectos de servicio: PREVENT (falla al destruir), ABANDON o DELETE. En prod solo PREVENT (lo exige project-factory); en dev se puede usar DELETE para el destroy de prueba. | `string` | `"PREVENT"` | no |
+| <a name="input_enable_off_hours_shutdown"></a> [enable\_off\_hours\_shutdown](#input\_enable\_off\_hours\_shutdown) | Prepara el apagado fuera de horario de la etapa 5 (solo dev y qa, ADR 0028) en cada proyecto de servicio: habilita cloudscheduler.googleapis.com, crea la cuenta <prefix>-<environment>-<app>-sched con un rol personalizado que solo detiene y enciende Cloud SQL y cambia autoescalado y tamaño de los pools de GKE, y da a la cuenta de la etapa 5 roles/cloudscheduler.admin en el proyecto y actAs solo sobre esa cuenta. Debe estar en true antes de encender off\_hours\_shutdown en la etapa 5. Se rechaza en prod. | `bool` | `false` | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional para que los IDs de proyecto sean únicos a nivel mundial; se agrega al final con un guion. Vacío: sin sufijo. | `string` | `""` | no |
 
 ## Outputs
@@ -276,6 +305,7 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_artifact_registry_repositories"></a> [artifact\_registry\_repositories](#output\_artifact\_registry\_repositories) | Aplicación → URL del repositorio Docker (<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>); es la única fuente de imágenes que admite Binary Authorization además de binary\_authorization\_allowlist\_patterns. |
+| <a name="output_scheduler_service_accounts"></a> [scheduler\_service\_accounts](#output\_scheduler\_service\_accounts) | Aplicación → correo de la cuenta de los trabajos del apagado fuera de horario (ADR 0028). Vacío sin enable\_off\_hours\_shutdown (siempre en prod). |
 | <a name="output_service_accounts"></a> [service\_accounts](#output\_service\_accounts) | [aplicación][uso] → correo de la cuenta de servicio de ejecución; usos gke\_nodes, workload, mig y run. |
 | <a name="output_service_agents"></a> [service\_agents](#output\_service\_agents) | [aplicación][agente] → miembro de IAM (serviceAccount:<correo>) de los agentes de servicio que recibieron permisos: apis, artifactregistry, compute, filestore, gke, gkebackup, redis, run, sql y storage. |
 | <a name="output_service_project_ids"></a> [service\_project\_ids](#output\_service\_project\_ids) | Aplicación → ID del proyecto de servicio. |

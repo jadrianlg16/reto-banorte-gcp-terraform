@@ -76,6 +76,8 @@ lb_backend_paths = {
 
 notification_emails = ["alertas-prod@example.com"]
 
+# Sin apagado fuera de horario: off_hours_shutdown.enabled = true se rechaza en prod (ADR 0028).
+
 labels = {
   app         = "app"
   owner       = "plataforma"

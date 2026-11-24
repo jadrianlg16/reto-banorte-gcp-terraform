@@ -298,6 +298,18 @@ variable "teardown" {
   nullable    = false
 }
 
+variable "scheduled_scaling" {
+  description = "Apagado fuera de horario (solo dev y qa, ADR 0028): los pools se crean como <prefix>-<env>-app-nps-<llave> y Terraform ignora su autoscaling, que cambian los trabajos de Cloud Scheduler del módulo off-hours-shutdown. Cambiarlo reemplaza los pools (crea los nuevos y borra los viejos). Se rechaza en prod."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.environment != "prod" || !var.scheduled_scaling
+    error_message = "scheduled_scaling no se admite en prod: el apagado fuera de horario es solo para dev y qa (ADR 0028)."
+  }
+}
+
 variable "labels" {
   description = "Etiquetas comunes. Obligatorias: env, app, owner, cost_center, managed_by."
   type        = map(string)

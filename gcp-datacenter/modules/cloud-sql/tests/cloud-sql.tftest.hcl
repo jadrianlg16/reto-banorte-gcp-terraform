@@ -169,6 +169,16 @@ run "prod_cumple_exige" {
     condition     = google_sql_database_instance.this.deletion_protection && google_sql_database_instance.this.settings[0].deletion_protection_enabled
     error_message = "La protección contra borrado debe estar activa."
   }
+
+  # Encendida al crear; sin apagado programado en prod (ADR 0028).
+  assert {
+    condition     = google_sql_database_instance.this.settings[0].activation_policy == "ALWAYS" && output.activation_policy == "ALWAYS"
+    error_message = "La primaria se crea con activation_policy ALWAYS y la salida lo publica."
+  }
+  assert {
+    condition     = var.allow_scheduled_stop == false
+    error_message = "allow_scheduled_stop vale false por defecto."
+  }
   assert {
     condition     = google_sql_database_instance.this.settings[0].user_labels == var.labels
     error_message = "Las etiquetas van en settings.user_labels."
@@ -230,6 +240,59 @@ run "respaldos_administrados_por_el_plan" {
     condition     = length(google_sql_database_instance.this.settings[0].backup_configuration[0].backup_retention_settings) == 0
     error_message = "Con el plan, el módulo no declara retención de respaldos ni días de registros (los define el plan)."
   }
+}
+
+# Apagado fuera de horario (ADR 0028): en dev sin DR se admite y la instancia nace encendida;
+# los trabajos de Cloud Scheduler la detienen y encienden después.
+run "dev_admite_apagado_programado" {
+  command = plan
+
+  variables {
+    environment          = "dev"
+    enable_dr            = false
+    dr_region            = null
+    dr_kms_key           = null
+    allow_scheduled_stop = true
+    labels = {
+      env         = "dev"
+      app         = "app"
+      owner       = "example-team"
+      cost_center = "example-cc"
+      managed_by  = "terraform"
+    }
+  }
+
+  assert {
+    condition     = google_sql_database_instance.this.settings[0].activation_policy == "ALWAYS"
+    error_message = "Con allow_scheduled_stop la instancia se crea encendida igual."
+  }
+}
+
+run "rechaza_apagado_programado_en_prod" {
+  command = plan
+  variables {
+    enable_dr            = false
+    dr_region            = null
+    dr_kms_key           = null
+    allow_scheduled_stop = true
+  }
+  expect_failures = [var.allow_scheduled_stop]
+}
+
+run "rechaza_apagado_programado_con_dr" {
+  command = plan
+  variables {
+    environment          = "qa"
+    allow_scheduled_stop = true
+    labels = {
+      env         = "qa"
+      app         = "app"
+      owner       = "example-team"
+      cost_center = "example-cc"
+      managed_by  = "terraform"
+    }
+  }
+  expect_failures = [var.allow_scheduled_stop]
 }
 
 run "rechaza_zonal_en_prod" {

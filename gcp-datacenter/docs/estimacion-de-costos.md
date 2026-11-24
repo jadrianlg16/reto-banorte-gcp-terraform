@@ -36,6 +36,9 @@ Una prueba de 3 días del escenario B cuesta **61.32 – 65.73 USD**; la variant
   0.5 GiB gratuitos de Artifact Registry y cualquier crédito de prueba.
 - **730 horas por mes.** Día = mes × 24 / 730, redondeado a centavos; semana y pruebas de N días
   = ese día redondeado × 7 o × N.
+- **Todo encendido las 730 horas.** Las tablas de §4 y §5 no restan el apagado fuera de horario
+  que los `terraform.tfvars.example` de dev y qa encienden (`off_hours_shutdown`, ADR 0028); su
+  ahorro se calcula aparte en la §6.2.
 - **Regiones:** `us-central1` (primaria) y `us-east4` (DR); multirregión `us`/`US`
   (`stages/1-org/terraform.tfvars.example:7-8`, `stages/2-security/main.tf:7-8`).
 - **Excluidos:** salida a Internet, impuestos y tráfico entre zonas o regiones (replicación de
@@ -97,20 +100,20 @@ Hub (`stages/3-networks/terraform.tfvars.example`): `enable_vpn_dr = true` (l. 2
 |---|---|---|
 | GKE | Clúster regional (location = región) | `stages/5-workloads/envs/prod/compute.tf:13`, `modules/gke/main.tf:31` |
 | GKE: nodos | Pool `general`, e2-standard-4, mín. 1 y máx. 3 **por zona** | `stages/5-workloads/envs/prod/terraform.tfvars.example:40-46`, `stages/5-workloads/envs/prod/variables.tf:243` |
-| GKE: zonas | 3 (sin `node_locations`, el clúster regional usa tres zonas) | `modules/gke/main.tf:195`; [regional-clusters](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/regional-clusters) |
+| GKE: zonas | 3 (sin `node_locations`, el clúster regional usa tres zonas) | `modules/gke/main.tf:206`; [regional-clusters](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/regional-clusters) |
 | GKE: disco de nodo | 100 GB pd-balanced | `stages/5-workloads/envs/prod/variables.tf:248-249` |
 | GKE: Binary Authorization | Aplicada en el clúster | `modules/gke/main.tf:88-90` |
 | MIG | e2-standard-2; qa 1 a 3 VM, prod 2 a 6 VM; regional | `stages/5-workloads/envs/qa/terraform.tfvars.example:27-29`, `stages/5-workloads/envs/prod/terraform.tfvars.example:55-57`, `modules/compute-mig/main.tf:138` |
-| MIG: disco | 50 GB pd-balanced | `modules/compute-mig/variables.tf:174`, `:185` |
+| MIG: disco | 50 GB pd-balanced | `modules/compute-mig/variables.tf:201`, `:212` |
 | Cloud Run | 1 vCPU, 512 MiB, mín. 0 instancias, máx. 10 | `modules/cloud-run/variables.tf:162`, `:173`, `:184`; `stages/5-workloads/envs/prod/variables.tf:482` |
-| Cloud SQL | Edición ENTERPRISE, PostgreSQL 16, siempre se crea | `modules/cloud-sql/variables.tf:110`, `stages/5-workloads/envs/prod/data.tf:5` |
+| Cloud SQL | Edición ENTERPRISE, PostgreSQL 16, siempre se crea | `modules/cloud-sql/variables.tf:126`, `stages/5-workloads/envs/prod/data.tf:5` |
 | Cloud SQL: tipo | dev `db-custom-1-3840` (1 vCPU, 3.75 GiB); qa y prod `db-custom-2-7680` (2 vCPU, 7.5 GiB) | `stages/5-workloads/envs/dev/terraform.tfvars.example:33`, `…/qa/…:35`, `…/prod/…:63` |
 | Cloud SQL: HA | ZONAL fuera de prod, REGIONAL (HA) en prod | `modules/cloud-sql/main.tf:6` |
-| Cloud SQL: disco | 20 GB PD_SSD con crecimiento automático | `modules/cloud-sql/main.tf:78-80`, `modules/cloud-sql/variables.tf:251` |
-| Cloud SQL: réplica de DR | Con `enable_dr`, en `dr_region`, mismo tipo, disco y disponibilidad (REGIONAL en prod) | `modules/cloud-sql/main.tf:211`, `:225-229` |
+| Cloud SQL: disco | 20 GB PD_SSD con crecimiento automático | `modules/cloud-sql/main.tf:78-80`, `modules/cloud-sql/variables.tf:267` |
+| Cloud SQL: réplica de DR | Con `enable_dr`, en `dr_region`, mismo tipo, disco y disponibilidad (REGIONAL en prod) | `modules/cloud-sql/main.tf:232`, `:246-250` |
 | Memorystore | 5 GB; BASIC fuera de prod, STANDARD_HA en prod | `…/qa/terraform.tfvars.example:39`, `…/prod/terraform.tfvars.example:67`, `modules/memorystore/main.tf:5` |
 | Filestore | REGIONAL, 1024 GiB (prod) | `stages/5-workloads/envs/prod/terraform.tfvars.example:68-69` |
-| Cloud Storage: bucket de la app | Regional sin DR; doble región `us-central1`+`us-east4` con turbo replication con `enable_dr`; STANDARD | `stages/5-workloads/envs/prod/data.tf:110-114`, `modules/storage/variables.tf:113` |
+| Cloud Storage: bucket de la app | Regional sin DR; doble región `us-central1`+`us-east4` con turbo replication con `enable_dr`; STANDARD | `stages/5-workloads/envs/prod/data.tf:114-118`, `modules/storage/variables.tf:113` |
 | Cloud Storage: estado | Multirregión US | `stages/0-bootstrap/terraform.tfvars.example:17`, `stages/0-bootstrap/main.tf:130-135` |
 | Cloud Storage: logs de auditoría | `us-central1`, STANDARD, retención de 365 días | `stages/1-org/main.tf:86-103`, `stages/1-org/terraform.tfvars.example:23`, `modules/log-export/variables.tf:83` |
 | HA VPN | 4 instancias de 2 túneles = **8 túneles**: hub primaria, onprem-sim primaria, hub de DR y onprem-sim de DR | `stages/3-networks/vpn.tf:96-122`, `:129-153`, `:185-207`, `:211-233`; 2 sesiones BGP por VPN (`stages/3-networks/vpn.tf:42-49`), un túnel por sesión (`modules/hybrid-connectivity/main.tf:63-64`) |
@@ -122,7 +125,7 @@ Hub (`stages/3-networks/terraform.tfvars.example`): `enable_vpn_dr = true` (l. 2
 | Cloud KMS | 72 llaves SOFTWARE con rotación de 90 días: 69 de la etapa 2 (3 entornos × [2 regiones × 10 usos + multirregión × 3 usos]), 2 de la etapa 1 y 1 de la etapa 0 | `stages/2-security/main.tf:8-14`, `:21-33`; `stages/1-org/main.tf:77-80`; `stages/0-bootstrap/main.tf:102-104`; `modules/kms/variables.tf:66`; `stages/2-security/terraform.tfvars.example:18` |
 | Secret Manager | 1 secreto por entorno con réplica en 2 regiones = 6 versiones activas cuando se carguen los valores; el secreto de la VPN simulada no usa Secret Manager | `stages/2-security/terraform.tfvars.example:12-16`, `stages/2-security/main.tf:83-86`, `stages/3-networks/vpn.tf:76-81` |
 | Artifact Registry | 1 repositorio Docker multirregional `us` por entorno | `stages/4-projects/envs/prod/artifacts.tf:43-60`, `stages/4-projects/envs/prod/terraform.tfvars.example:23` |
-| Backup and DR | Bóveda en `dr_region` y plan diario de Cloud SQL (30 días) en cada entorno | `stages/5-workloads/envs/prod/operations.tf:36-60`, `modules/backup-dr/main.tf:23-25` |
+| Backup and DR | Bóveda en `dr_region` y plan diario de Cloud SQL (30 días) en cada entorno | `stages/5-workloads/envs/prod/operations.tf:36-67`, `modules/backup-dr/main.tf:23-25` |
 | Backup for GKE | Solo con `enable_backup`, `enable_gke` y `enable_dr` (prod); plan en `dr_region`, todos los namespaces | `stages/5-workloads/envs/prod/operations.tf:30`, `modules/backup-dr/main.tf:88-92`, `:107-109` |
 | Cloud DNS | 19 zonas: 1 de reenvío en el hub + 6 por spoke; registro de consultas encendido | `stages/3-networks/dns.tf:23-37`, `stages/3-networks/envs/prod/dns.tf:58-96` |
 | Logging | Sink agregado de auditoría hacia el bucket de logs; Data Access en la carpeta prod y en el proyecto semilla; GKE con logs de sistema y de cargas; flow logs con muestreo 0.5; NAT solo errores | `modules/org/variables.tf:89`, `stages/1-org/main.tf:123-136`, `stages/0-bootstrap/main.tf:74-87`, `modules/gke/main.tf:123-125`, `stages/3-networks/envs/prod/terraform.tfvars.example:37`, `modules/network-spoke/main.tf:225-228` |
@@ -312,7 +315,7 @@ Todas las etapas aplicadas con estos cambios sobre los valores de ejemplo:
   `enable_mig = false`, `enable_filestore = false`, `enable_memorystore = false`,
   `enable_internal_lb = false`, `enable_cloud_run = true`; `enable_backup` sigue en `true`.
   Cloud SQL se crea siempre (`stages/5-workloads/envs/prod/data.tf:5`) y en prod sigue siendo
-  REGIONAL: el módulo lo impone (`modules/cloud-sql/main.tf:6`, `modules/cloud-sql/variables.tf:138-141`).
+  REGIONAL: el módulo lo impone (`modules/cloud-sql/main.tf:6`, `modules/cloud-sql/variables.tf:154-157`).
 - `stages/3-networks/envs/prod`: `enable_dr = false` (un solo Cloud NAT en prod).
 - Hub: `enable_vpn_dr = false` (quedan los 4 túneles de la VPN primaria; no hay interruptor para
   quitarlos mientras `simulate_onprem = true`).
@@ -420,8 +423,27 @@ variables, se marcan así: son propuestas, no cambios hechos.
 - **Cloud SQL.** El HA fuera de prod ya está apagado (ZONAL en dev y qa). En prod es obligatorio
   por diseño. Bajar el tipo: qa con `db-custom-1-3840` cuesta 52.71 (−49.31); prod HA con
   `db-custom-1-3840`, 105.42 (−98.63). La réplica de DR hereda REGIONAL
-  (`modules/cloud-sql/main.tf:227`); como ZONAL costaría cerca de la mitad (114.88\*, cambio de
+  (`modules/cloud-sql/main.tf:248`); como ZONAL costaría cerca de la mitad (114.88\*, cambio de
   código).
+- **Apagado fuera de horario de dev y qa** (`off_hours_shutdown`, ya en los ejemplos de dev y
+  qa; ADR 0028). Horas apagadas por semana: H = 168 − días × (apagado − encendido); con 5 días
+  de 07:00 a 20:00, H = 168 − 65 = 103 (61.3 %), o sea 730 × 103 / 168 = 447.56 h al mes. Se deja
+  de cobrar la vCPU y la memoria de Cloud SQL (el almacenamiento y la IP siguen) y las VM y sus
+  discos del MIG (el grupo baja a 0):
+  - Cloud SQL dev: (1 × 0.0413 + 3.75 × 0.007) × 447.56 = −30.23;
+  - Cloud SQL qa: (2 × 0.0413 + 7.5 × 0.007) × 447.56 = −60.47;
+  - MIG de qa (1 VM y 50 GiB): (0.06701142 + 50 × 0.000136986) × 447.56 = −33.06; además salen
+    de noche los cargos por VM de Cloud NAT y de la política jerárquica (menos de 1.25).
+  - Total frente a la columna baja del escenario A: −123.76 USD/mes. En el escenario B (sin MIG),
+    −90.70.
+  - Se suman los trabajos de Cloud Scheduler: 2 por instancia de Cloud SQL (4 en dev y qa) y 4
+    por pool de GKE, con 3 gratis por cuenta de facturación, al precio por trabajo al mes de
+    [scheduler/pricing](https://cloud.google.com/scheduler/pricing) (no se pudo leer el monto el
+    2026-11-23; no está en esta suma).
+  - Con el apagado, el MIG de qa tiene `mig_min_replicas` VM fijas en el horario (sin
+    autoescalado por CPU): la columna alta de qa ya no aplica a ese renglón. Con GKE en dev o qa,
+    cada pool ahorra al menos (precio por hora del nodo + su disco) × zonas × `min_node_count` ×
+    447.56 (la cuota del clúster sigue).
 - **VPN del on-premises simulado.** Cada VPN son 2 túneles del hub más 2 de onprem-sim:
   146.00 USD/mes (4.80 USD/día) por región. `enable_vpn_dr = false` quita 146.00. Con
   on-premises real (`simulate_onprem = false`) desaparecen los 4 túneles de onprem-sim (−146.00

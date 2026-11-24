@@ -115,3 +115,13 @@ output "active_region" {
   description = "Región que atiende el tráfico de los balanceadores (dr_region con dr_active)."
   value       = local.active_region
 }
+
+# Solo valores de la configuración (no del estado de la instancia ni del tamaño de los pools):
+# una salida que cambiara entre el día y la noche haría que drift.yml viera cambios.
+output "off_hours_shutdown" {
+  description = "Apagado fuera de horario (ADR 0028): horario encendido (zona horaria, crons, minutos del día y duración) e IDs de los trabajos de Cloud Scheduler (sql-primary-start enciende Cloud SQL a mano con gcloud scheduler jobs run). null si está apagado."
+  value = length(module.off_hours_shutdown) == 0 ? null : {
+    window  = module.off_hours_shutdown["this"].window
+    job_ids = module.off_hours_shutdown["this"].job_ids
+  }
+}

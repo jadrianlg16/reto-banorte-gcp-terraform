@@ -44,6 +44,10 @@ module "cloud_sql" {
   # retención de respaldos y de registros (respaldos mejorados).
   backup_plan_managed = var.enable_backup
 
+  # Apagado fuera de horario (off_hours.tf): la instancia puede estar detenida sin que el plan
+  # falle ni intente encenderla.
+  allow_scheduled_stop = local.off_hours_enabled
+
   deletion_protection = var.deletion_protection
   labels              = local.labels
 

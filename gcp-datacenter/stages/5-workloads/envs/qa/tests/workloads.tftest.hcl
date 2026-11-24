@@ -188,6 +188,10 @@ override_data {
           run       = "bnt-app-run@example-svc-app.iam.gserviceaccount.com"
         }
       }
+      # enable_off_hours_shutdown de 4-projects (dev y qa).
+      scheduler_service_accounts = {
+        app = "bnt-app-sched@example-svc-app.iam.gserviceaccount.com"
+      }
     }
   }
 }
@@ -367,6 +371,25 @@ run "prod_operacion_normal" {
   assert {
     condition     = join(",", sort(keys(module.backup["this"].plan_ids))) == "gke,sql"
     error_message = "Con enable_dr y GKE deben existir los planes sql y gke."
+  }
+
+  # Sin apagado fuera de horario en prod (ADR 0028): ni trabajos, ni pools "scheduled", ni
+  # programa del MIG; ventana de respaldo por defecto.
+  assert {
+    condition     = length(module.off_hours_shutdown) == 0 && output.off_hours_shutdown == null
+    error_message = "prod no tiene trabajos de apagado."
+  }
+  assert {
+    condition     = module.gke["primary"].node_pools["general"].scheduled == false && module.gke["primary"].node_pools["general"].name == "bnt-prod-app-np-general"
+    error_message = "En prod Terraform administra el autoscaling de los pools."
+  }
+  assert {
+    condition     = module.mig["primary"].autoscaling.signal == "cpu" && module.mig["primary"].autoscaling.min_replicas == 2 && module.mig["primary"].autoscaling.scaling_schedules == {}
+    error_message = "En prod el MIG autoescala por CPU con su mínimo y sin programas."
+  }
+  assert {
+    condition     = local.backup_window == { start_hour = 1, time_zone = "America/Mexico_City" }
+    error_message = "Sin apagado la ventana de respaldo es la del módulo backup-dr."
   }
 }
 
@@ -736,11 +759,44 @@ run "dev_solo_cloud_run_y_sql" {
     lb_backend_paths    = {}
     domain_names        = ["app.dev.example.com"]
     notification_emails = ["alertas-dev@example.com"]
+    off_hours_shutdown = {
+      enabled        = true
+      time_zone      = "America/Monterrey"
+      start_schedule = "0 7 * * 1-5"
+      stop_schedule  = "0 20 * * 1-5"
+    }
   }
 
   assert {
     condition     = output.gke_cluster_names == {} && length(google_service_account_iam_member.workload_identity) == 0
     error_message = "Sin GKE no hay clúster ni enlace de Workload Identity."
+  }
+
+  # Apagado fuera de horario (ADR 0028): en dev solo hay Cloud SQL que detener (Cloud Run ya
+  # escala a 0 y no hay MIG ni GKE).
+  assert {
+    condition     = toset(keys(module.off_hours_shutdown["this"].job_names)) == toset(["sql-primary-stop", "sql-primary-start"])
+    error_message = "En dev deben existir los trabajos de apagado y encendido de Cloud SQL, y solo esos."
+  }
+  assert {
+    condition     = module.off_hours_shutdown["this"].job_names["sql-primary-stop"] == "bnt-dev-ops-sql-primary-stop-usc1"
+    error_message = "Los trabajos siguen <prefix>-<env>-ops-<trabajo>-<región>."
+  }
+  assert {
+    condition = (
+      output.off_hours_shutdown.window.duration_sec == 46800 &&
+      output.off_hours_shutdown.window.time_zone == "America/Monterrey" &&
+      contains(keys(output.off_hours_shutdown.job_ids), "sql-primary-start")
+    )
+    error_message = "La salida off_hours_shutdown publica la ventana de 13 h y el trabajo de encendido de Cloud SQL."
+  }
+  assert {
+    condition     = local.backup_window == { start_hour = 7, time_zone = "America/Monterrey" }
+    error_message = "La ventana de respaldo debe empezar a la hora de encendido, en la zona horaria del apagado."
+  }
+  assert {
+    condition     = module.cloud_sql.activation_policy == "ALWAYS" && local.mig_business_hours.duration_sec == 46800
+    error_message = "Cloud SQL nace encendida y el programa del MIG (si lo hubiera) dura el horario encendido."
   }
   assert {
     condition     = length(module.mig) == 0 && length(module.memorystore) == 0 && length(module.filestore) == 0 && length(module.internal_lb) == 0
@@ -879,6 +935,35 @@ run "qa_mig_cloud_run_y_redis" {
     lb_backend_paths    = { mig = ["/legacy/*"] }
     domain_names        = ["app.qa.example.com"]
     notification_emails = ["alertas-qa@example.com"]
+    off_hours_shutdown = {
+      enabled        = true
+      time_zone      = "America/Monterrey"
+      start_schedule = "0 7 * * 1-5"
+      stop_schedule  = "0 20 * * 1-5"
+    }
+  }
+
+  # Apagado fuera de horario (ADR 0028): Cloud SQL por Cloud Scheduler y el MIG con el programa
+  # de escalado nativo (sin CPU, 0 VM fuera del horario).
+  assert {
+    condition     = toset(keys(module.off_hours_shutdown["this"].job_names)) == toset(["sql-primary-stop", "sql-primary-start"])
+    error_message = "En qa sin GKE solo hay trabajos de Cloud SQL (el MIG no usa Cloud Scheduler)."
+  }
+  assert {
+    condition = module.mig["primary"].autoscaling == {
+      min_replicas = 0
+      max_replicas = 3
+      signal       = "schedule"
+      scaling_schedules = {
+        business-hours = {
+          schedule              = "0 7 * * 1-5"
+          time_zone             = "America/Monterrey"
+          duration_sec          = 46800
+          min_required_replicas = 1
+        }
+      }
+    }
+    error_message = "El MIG de qa debe tener mig_min_replicas VM de 07:00 a 20:00 (lunes a viernes, Monterrey) y 0 fuera, sin señal de CPU."
   }
 
   assert {
@@ -1142,6 +1227,170 @@ run "rechaza_balanceador_interno_sin_backends" {
   variables {
     enable_mig       = false
     enable_cloud_run = false
+  }
+
+  expect_failures = [terraform_data.upstream_checks]
+}
+
+# --- Apagado fuera de horario (ADR 0028) ------------------------------------------------------
+
+# dev con GKE encendido: los pools pasan a "scheduled" (Terraform ignora su autoscaling) y cada
+# uno tiene sus cuatro trabajos, con la ubicación, el clúster y los límites del pool.
+run "dev_gke_con_apagado_fuera_de_horario" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    enable_dr           = false
+    dr_active           = false
+    enable_gke          = true
+    enable_mig          = false
+    enable_cloud_run    = true
+    enable_filestore    = false
+    enable_memorystore  = false
+    enable_internal_lb  = false
+    deletion_protection = false
+    mig_image           = null
+    lb_backend_paths    = {}
+    domain_names        = ["app.dev.example.com"]
+    notification_emails = ["alertas-dev@example.com"]
+    off_hours_shutdown = {
+      enabled        = true
+      time_zone      = "America/Monterrey"
+      start_schedule = "30 7 * * 1-5"
+      stop_schedule  = "0 21 * * 1-5"
+    }
+  }
+
+  assert {
+    condition = toset(keys(module.off_hours_shutdown["this"].job_names)) == toset([
+      "sql-primary-stop", "sql-primary-start",
+      "gke-general-stop-autoscaling", "gke-general-stop-resize",
+      "gke-general-start-resize", "gke-general-start-autoscaling",
+    ])
+    error_message = "Con GKE deben existir los dos trabajos de Cloud SQL y los cuatro del pool general."
+  }
+  assert {
+    condition = module.gke["primary"].node_pools["general"] == {
+      name           = "bnt-dev-app-nps-general"
+      location       = "us-central1"
+      cluster        = "bnt-dev-app-gke-usc1"
+      min_node_count = 1
+      max_node_count = 3
+      scheduled      = true
+    }
+    error_message = "Con el apagado los pools son los \"scheduled\" (<prefix>-<env>-app-nps-<llave>)."
+  }
+  # Encendido a las 07:30: la ventana de respaldo empieza a las 08:00.
+  assert {
+    condition     = local.backup_window.start_hour == 8 && output.off_hours_shutdown.window.duration_sec == (21 * 60 - (7 * 60 + 30)) * 60
+    error_message = "La ventana de respaldo empieza en la primera hora cerrada desde el encendido."
+  }
+}
+
+# Sin enable_dr, para que la única regla que falle sea la de prod.
+run "rechaza_apagado_fuera_de_horario_en_prod" {
+  command = plan
+
+  variables {
+    enable_dr          = false
+    enable_internal_lb = false
+    off_hours_shutdown = { enabled = true }
+  }
+
+  expect_failures = [var.off_hours_shutdown]
+}
+
+run "rechaza_apagado_fuera_de_horario_con_dr" {
+  command = plan
+
+  variables {
+    environment         = "qa"
+    deletion_protection = false
+    off_hours_shutdown  = { enabled = true }
+  }
+
+  expect_failures = [var.off_hours_shutdown]
+}
+
+run "rechaza_cron_de_apagado_invalido" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    enable_dr           = false
+    deletion_protection = false
+    off_hours_shutdown = {
+      enabled       = true
+      stop_schedule = "0 25 * * 1-5"
+    }
+  }
+
+  expect_failures = [var.off_hours_shutdown]
+}
+
+run "rechaza_cron_con_dia_del_mes" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    enable_dr           = false
+    deletion_protection = false
+    off_hours_shutdown = {
+      enabled        = true
+      start_schedule = "0 7 1 * *"
+      stop_schedule  = "0 20 1 * *"
+    }
+  }
+
+  expect_failures = [var.off_hours_shutdown]
+}
+
+run "rechaza_horario_sin_lugar_para_el_respaldo" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    enable_dr           = false
+    deletion_protection = false
+    off_hours_shutdown = {
+      enabled        = true
+      start_schedule = "15 9 * * 1-5"
+      stop_schedule  = "0 15 * * 1-5"
+    }
+  }
+
+  expect_failures = [var.off_hours_shutdown]
+}
+
+# Estado de 4-projects sin la cuenta del apagado (enable_off_hours_shutdown = false o etapa 4
+# anterior a la salida): el plan falla con un mensaje claro en lugar de crear trabajos sin cuenta.
+run "rechaza_apagado_sin_la_cuenta_de_la_etapa_4" {
+  command = plan
+
+  variables {
+    environment         = "dev"
+    enable_dr           = false
+    deletion_protection = false
+    off_hours_shutdown  = { enabled = true }
+  }
+
+  override_data {
+    target = data.terraform_remote_state.projects
+    values = {
+      outputs = {
+        service_project_ids     = { app = "example-svc-app" }
+        service_project_numbers = { app = "000000000000" }
+        service_accounts = {
+          app = {
+            gke_nodes = "bnt-app-gke-nodes@example-svc-app.iam.gserviceaccount.com"
+            workload  = "bnt-app-workload@example-svc-app.iam.gserviceaccount.com"
+            mig       = "bnt-app-mig@example-svc-app.iam.gserviceaccount.com"
+            run       = "bnt-app-run@example-svc-app.iam.gserviceaccount.com"
+          }
+        }
+      }
+    }
   }
 
   expect_failures = [terraform_data.upstream_checks]

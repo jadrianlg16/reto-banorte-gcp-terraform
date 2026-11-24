@@ -82,6 +82,10 @@ locals {
 
   workloads_member = "serviceAccount:${var.workloads_service_account}"
 
+  # Apagado fuera de horario (ADR 0028). El nombre del rol se arma aquí (en el plan se conoce) y
+  # module.iam espera al rol con depends_on.
+  off_hours_role_id = "${var.prefix}OffHoursScheduler"
+
   bindings = concat(
     # Roles mínimos de cada cuenta de ejecución en su proyecto.
     flatten([
@@ -231,6 +235,40 @@ locals {
       member   = local.workloads_member
     }],
 
+    # Apagado fuera de horario (ADR 0028), solo con enable_off_hours_shutdown (nunca en prod):
+    # - la cuenta del scheduler recibe el rol personalizado, y nada más, en su proyecto;
+    # - la etapa 5 administra los trabajos de Cloud Scheduler del proyecto (no hay un rol
+    #   predefinido más chico que cree y cambie trabajos) y adjunta esa cuenta a los trabajos
+    #   (actAs solo sobre ella, no sobre el proyecto: el actAs de proyecto alcanzaría también a la
+    #   cuenta de Compute por defecto y a las de ejecución).
+    [
+      for app in local.off_hours_apps : {
+        key      = "offhours/${app}/scheduler"
+        scope    = "project"
+        resource = module.project[app].project_id
+        role     = "projects/${module.project[app].project_id}/roles/${local.off_hours_role_id}"
+        member   = google_service_account.scheduler[app].member
+      }
+    ],
+    [
+      for app in local.off_hours_apps : {
+        key      = "offhours/${app}/workloads/roles/cloudscheduler.admin"
+        scope    = "project"
+        resource = module.project[app].project_id
+        role     = "roles/cloudscheduler.admin"
+        member   = local.workloads_member
+      }
+    ],
+    [
+      for app in local.off_hours_apps : {
+        key      = "offhours/${app}/workloads/actas"
+        scope    = "service_account"
+        resource = google_service_account.scheduler[app].name
+        role     = "roles/iam.serviceAccountUser"
+        member   = local.workloads_member
+      }
+    ],
+
     # Lectura de los secretos de cada aplicación por sus cuentas workload y run (ADR 0015: los
     # valores los carga una persona fuera de Terraform).
     flatten([
@@ -267,8 +305,33 @@ module "iam" {
 
   bindings = local.bindings
 
-  # Los agentes de sqladmin, file, redis y gkebackup deben existir antes de recibir permisos.
-  depends_on = [google_project_service_identity.this]
+  # Los agentes de sqladmin, file, redis y gkebackup deben existir antes de recibir permisos, y
+  # el rol personalizado del apagado antes de asignarse.
+  depends_on = [google_project_service_identity.this, google_project_iam_custom_role.off_hours_scheduler]
+}
+
+# Rol personalizado de la cuenta del apagado fuera de horario (ADR 0028): exactamente los
+# permisos de las tres llamadas que hacen sus trabajos, según las tablas de permisos de Cloud SQL
+# y de GKE: instances.patch de Cloud SQL Admin (cloudsql.instances.get y .update) y
+# nodePools.setAutoscaling y nodePools.setSize de GKE (container.clusters.update). Sin permisos
+# de borrar, crear ni leer datos. La etapa 4 es dueña del proyecto de servicio (lo creó), así que
+# puede crear el rol.
+# VERIFICAR-EN-APPLY: que los tres permisos se admitan en roles personalizados y basten para las
+# tres llamadas (gcloud scheduler jobs run de cada trabajo con respuesta 2xx), y que la cuenta de
+# la etapa 4 pueda crear roles en el proyecto de servicio.
+resource "google_project_iam_custom_role" "off_hours_scheduler" {
+  for_each = local.off_hours_apps
+
+  project     = module.project[each.key].project_id
+  role_id     = local.off_hours_role_id
+  title       = "Apagado fuera de horario"
+  description = "Detener y encender Cloud SQL (activationPolicy) y cambiar autoescalado y tamaño de pools de GKE (ADR 0028). Sin crear, borrar ni leer datos."
+  stage       = "GA"
+  permissions = [
+    "cloudsql.instances.get",
+    "cloudsql.instances.update",
+    "container.clusters.update",
+  ]
 }
 
 # VERIFICAR-EN-APPLY: que tagUser sobre el valor baste al agente de GKE y a <número>@cloudservices

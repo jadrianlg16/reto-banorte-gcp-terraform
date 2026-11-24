@@ -48,6 +48,13 @@ module "backup" {
   backup_plans = {
     sql = "sqladmin.googleapis.com/Instance"
   }
+  # Ventana diaria de respaldo: con el apagado fuera de horario, dentro del horario encendido
+  # (local.backup_window de off_hours.tf).
+  # VERIFICAR-EN-APPLY: que el respaldo diario de Cloud SQL se tome dentro de esa ventana con la
+  # instancia encendida, y qué pasa los días sin horario encendido (fin de semana con 1-5):
+  # respaldo omitido o fallido y si eso dispara alertas de Backup and DR.
+  backup_window_start_hour = local.backup_window.start_hour
+  backup_time_zone         = local.backup_window.time_zone
   # Ventana de PITR de Cloud SQL con respaldos mejorados: 7 días, la misma que el módulo
   # cloud-sql fija sin plan (transaction_log_retention_days).
   sql_log_retention_days = 7

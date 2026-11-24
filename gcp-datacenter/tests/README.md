@@ -26,7 +26,7 @@ tests/
   fixtures/<módulo>/      una raíz por módulo que lo llama con entradas de forma real
   fixtures/firewall-hierarchical/   segunda variante del módulo firewall
   fixtures/support/       project (proyecto efímero), cmek (llave de apoyo), network (VPC de apoyo)
-  integration/            pruebas de los 24 módulos
+  integration/            pruebas de los 25 módulos
   e2e/                    prueba de extremo a extremo, config.example.json y la prueba de humo
                           de dev (smoke_test.go)
 ```
@@ -179,6 +179,7 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestLoadBalancerExternal` | load-balancer | HTTPS 443 con certificado, HTTP 80 redirige, Cloud Armor y registro en el backend |
 | `TestObservability` | observability | Canal de correo, cuatro alertas base, SLO, tablero |
 | `TestBackupDR` | backup-dr | Bóveda en DR con retención mínima de 30 días, planes diarios de 30 días |
+| `TestOffHoursShutdown` | off-hours-shutdown | Seis trabajos de Cloud Scheduler habilitados (Cloud SQL y un pool de GKE que no existen) con su horario, zona horaria, método, URI, cuerpo y token OAuth de la cuenta del fixture; no su efecto (ADR 0028, pendiente 81) |
 
 No cubierto por integración (sí por las pruebas unitarias o por la de extremo a extremo): las
 validaciones que rechazan entradas (`user:`, prod sin HA, etc.), el balanceador interno, la réplica
@@ -259,7 +260,10 @@ Compuerta `TEST_E2E=true`. Variables:
    para la VPN hacia `onprem-sim`; VERIFICAR-EN-APPLY. Un error al
    leer una salida o al describir la instancia de Cloud SQL falla la prueba; una salida en null
    por un recurso deshabilitado (balanceador sin backend, `simulate_onprem = false`) solo omite
-   su prueba y queda en el registro.
+   su prueba y queda en el registro. Una instancia de Cloud SQL detenida por el apagado fuera de
+   horario (`settings.activationPolicy = NEVER`, ADR 0028) falla la prueba con un mensaje que
+   lo dice y cómo seguir; la detección se prueba sin GCP
+   (`go test -run TestSQLStoppedError ./e2e/`).
 6. **Destroy de dev** en orden inverso (5 → 4 → 3) y búsqueda de huérfanos con
    `gcloud asset search-all-resources --query="labels.e2e_run=<id> AND labels.env=dev"` en la
    organización, con reintentos durante 30 minutos (el índice tarda). Los proyectos en

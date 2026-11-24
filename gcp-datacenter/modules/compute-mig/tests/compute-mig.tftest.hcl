@@ -196,6 +196,104 @@ run "dev_admite_imagen_publica_y_una_replica" {
   }
 }
 
+# Sin business_hours (prod y por defecto): CPU como señal y sin programas.
+run "prod_autoescala_por_cpu_sin_programa" {
+  command = plan
+
+  assert {
+    condition = (
+      length(google_compute_region_autoscaler.this.autoscaling_policy[0].cpu_utilization) == 1 &&
+      google_compute_region_autoscaler.this.autoscaling_policy[0].cpu_utilization[0].target == 0.6 &&
+      length(google_compute_region_autoscaler.this.autoscaling_policy[0].scaling_schedules) == 0
+    )
+    error_message = "Sin business_hours el autoescalador usa CPU y no tiene programas."
+  }
+  assert {
+    condition     = terraform_data.autoscaler_signal.triggers_replace == "cpu"
+    error_message = "La señal registrada debe ser cpu."
+  }
+}
+
+# Apagado fuera de horario (ADR 0028): el programa es la única señal; el MIG baja a 0 fuera de él.
+run "qa_horario_con_programa_de_escalado" {
+  command = plan
+
+  variables {
+    environment  = "qa"
+    min_replicas = 1
+    max_replicas = 3
+    business_hours = {
+      schedule     = "0 7 * * 1-5"
+      duration_sec = 46800
+      time_zone    = "America/Monterrey"
+    }
+    labels = {
+      env         = "qa"
+      app         = "app"
+      owner       = "plataforma"
+      cost_center = "ti-001"
+      managed_by  = "terraform"
+    }
+  }
+
+  assert {
+    condition     = google_compute_region_autoscaler.this.autoscaling_policy[0].min_replicas == 0 && google_compute_region_autoscaler.this.autoscaling_policy[0].max_replicas == 3
+    error_message = "Con business_hours el mínimo del autoescalador es 0 (fuera del horario no queda ninguna VM)."
+  }
+  assert {
+    condition     = length(google_compute_region_autoscaler.this.autoscaling_policy[0].cpu_utilization) == 0
+    error_message = "Con business_hours no debe haber señal de CPU: un MIG con CPU no puede bajar a 0."
+  }
+  assert {
+    condition = alltrue([
+      for s in google_compute_region_autoscaler.this.autoscaling_policy[0].scaling_schedules :
+      s.name == "business-hours" && s.schedule == "0 7 * * 1-5" && s.duration_sec == 46800 && s.time_zone == "America/Monterrey" && s.min_required_replicas == 1 && s.disabled == false
+    ]) && length(google_compute_region_autoscaler.this.autoscaling_policy[0].scaling_schedules) == 1
+    error_message = "El programa business-hours debe pedir min_replicas VM desde el cron de encendido durante duration_sec."
+  }
+  assert {
+    condition     = terraform_data.autoscaler_signal.triggers_replace == "schedule"
+    error_message = "La señal registrada debe ser schedule (cambiarla reemplaza el autoescalador)."
+  }
+}
+
+run "rechaza_horario_en_prod" {
+  command = plan
+
+  variables {
+    business_hours = {
+      schedule     = "0 7 * * 1-5"
+      duration_sec = 46800
+      time_zone    = "America/Monterrey"
+    }
+  }
+
+  expect_failures = [var.business_hours]
+}
+
+run "rechaza_horario_mas_corto_que_cinco_minutos" {
+  command = plan
+
+  variables {
+    environment  = "dev"
+    min_replicas = 1
+    business_hours = {
+      schedule     = "0 7 * * 1-5"
+      duration_sec = 120
+      time_zone    = "America/Monterrey"
+    }
+    labels = {
+      env         = "dev"
+      app         = "app"
+      owner       = "plataforma"
+      cost_center = "ti-001"
+      managed_by  = "terraform"
+    }
+  }
+
+  expect_failures = [var.business_hours]
+}
+
 run "rechaza_sobrescribir_metadatos_endurecidos" {
   command = plan
 

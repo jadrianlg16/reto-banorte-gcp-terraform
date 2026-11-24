@@ -25,7 +25,9 @@ var smokeRoots = []stage{
 // smokeRoots contra el bucket de estado, lee sus salidas y corre las Connectivity Tests que
 // la configuración de dev permite expresar (las mismas de TestEndToEnd, sin la de prod):
 // dev → Cloud SQL por IP privada, Internet → balanceador de dev en 443 y dev → on-premises
-// simulado. Exige al menos una.
+// simulado. Exige al menos una. Si la instancia de Cloud SQL está detenida por el apagado fuera
+// de horario (ADR 0028), la prueba dev → Cloud SQL falla con un mensaje que lo dice y explica
+// cómo seguir (sqlStoppedError); no la enciende.
 //
 // Compuerta: TEST_SMOKE=true y TEST_E2E_STATE_BUCKET. La identidad (en CI, la cuenta
 // GCP_AUDIT_SERVICE_ACCOUNT) necesita leer los prefijos de estado 3-networks/ y 5-workloads/,

@@ -17,7 +17,9 @@ Contenido:
    [3.5 Agregados por la ronda de correcciones del 21 nov 2026](#35-agregados-por-la-ronda-de-correcciones-del-21-nov-2026),
    puntos 31 a 54; y
    [3.6 Agregados por la revisión del 23 nov 2026](#36-agregados-por-la-revisión-del-23-nov-2026),
-   punto 55.
+   punto 55; y
+   [3.7 Apagado fuera de horario (ADR 0028)](#37-apagado-fuera-de-horario-adr-0028),
+   puntos 70 a 81.
 4. [Marcadores `VERIFICAR-EN-APPLY` del código](#4-marcadores-verificar-en-apply-del-código),
    por etapa y módulo.
 5. [Alcance no cubierto y limitaciones conocidas](#5-alcance-no-cubierto-y-limitaciones-conocidas).
@@ -116,7 +118,7 @@ Si falla: medir por raíz y documentar cuál domina (propuesta).
 Qué: `terraform plan -detailed-exitcode` sale con 0 en todas las raíces después del primer
 apply; `terraform destroy` de `5-workloads/envs/dev`, `4-projects/envs/dev` y
 `3-networks/envs/dev` (en ese orden) no deja recursos.
-Dónde: todas las raíces; marcadores de `modules/gke/main.tf:144`, `modules/backup-dr/main.tf:21`,
+Dónde: todas las raíces; marcadores de `modules/gke/main.tf:145`, `modules/backup-dr/main.tf:21`,
 `modules/network-spoke/main.tf:158`.
 Si falla: cada diferencia perpetua se corrige en el módulo (no con `ignore_changes` a ciegas);
 para el destroy, `deletion_policy = "DELETE"` y `deletion_protection = false` en dev.
@@ -422,7 +424,7 @@ al repositorio de la aplicación con una identidad de `artifact_registry_publish
 **43. `networkViewer` en el host basta a la etapa 5 (ADR 0023).**
 Qué: que `compute.networkViewer` en el host más `networkUser` por subred basten para crear Cloud
 SQL, Memorystore y Filestore con IP privada (PSA) desde el proyecto de servicio.
-Dónde: `stages/4-projects/envs/*/iam.tf:213`.
+Dónde: `stages/4-projects/envs/*/iam.tf:217`.
 Si falla: la alternativa documentada en el código es `networkUser` en el host (todas las
 subredes), que se decide en revisión.
 
@@ -437,7 +439,7 @@ Qué: con `backup_plan_managed = true` (etapa 5 con `enable_backup`), que despu�
 plan un segundo plan no muestre cambios en `settings.backup_configuration`; y que la API acepte
 `log_retention_days` (`sql_log_retention_days`, 7 por defecto) y la recuperación a un punto en el
 tiempo cubra esos días.
-Dónde: `modules/cloud-sql/main.tf:98`, `modules/backup-dr/main.tf:51`.
+Dónde: `modules/cloud-sql/main.tf:103`, `modules/backup-dr/main.tf:51`.
 Si falla: el código indica agregar `ignore_changes` sobre ese bloque.
 
 **46. Enlace de Workload Identity (ADR 0012).**
@@ -582,22 +584,140 @@ aplicadas dan "sin cambios"). Un apply que falla a medias deja en el estado lo q
 
 ---
 
+## 3.7 Apagado fuera de horario (ADR 0028)
+
+Todo lo de esta sección se probó solo con proveedores simulados (`terraform test` del módulo `off-hours-shutdown`, de
+`cloud-sql`, `compute-mig` y `gke` y de las raíces de las etapas 4 y 5).
+
+**70. Trabajos de Cloud SQL de punta a punta.**
+Qué: que `gcloud scheduler jobs run` de `sql-primary-stop` y `sql-primary-start` termine en 2xx
+con el token de la cuenta `<prefix>-<env>-<app>-sched` (el agente de servicio de Cloud Scheduler
+queda listo al habilitar la API, según la documentación de autenticación de destinos HTTP), que
+la operación de Cloud SQL termine en `DONE` y que la instancia quede en `NEVER` y luego en
+`ALWAYS` (`gcloud sql instances describe ... --format="value(settings.activationPolicy,state)"`).
+Dónde: `modules/off-hours-shutdown/main.tf:97`.
+Si falla: sin indicación en el código. Con 403, revisar el rol personalizado (punto 73) y el
+actAs del agente de servicio. El trabajo solo ve la respuesta inicial: una operación que falla
+después no se nota en Cloud Scheduler.
+
+**71. Pools de GKE: apagado y encendido en dos pasos.**
+Qué: que `setAutoscaling` con `enabled=false` y luego `setSize` con `nodeCount=0` dejen el pool
+en 0 nodos; que el encendido devuelva el mínimo y reactive el autoescalado con sus límites; que
+`setSize` de un pool regional cuente `nodeCount` por zona (HYPOTHESIS); que los 10 minutos de
+`gke_step_minutes` alcancen para que termine la operación del primer paso (si no, los reintentos
+cubren unos 7.5 minutos más); y que el plan de la etapa 5 no tenga cambios en los pools ni en el
+clúster, ni con el pool en 0 ni después del encendido.
+Dónde: `modules/off-hours-shutdown/main.tf:101`, `modules/gke/main.tf:279`.
+Si falla: subir `gke_step_minutes` (variable del módulo, hoy fija en la raíz) o ajustar el
+`ignore_changes` del recurso `scheduled`.
+
+**72. MIG con el programa de escalado como única señal.**
+Qué: que la API acepte una política sin `cpuUtilization` y no le agregue la señal de CPU por
+defecto (HYPOTHESIS); que el MIG baje a 0 VM fuera del horario y suba a `mig_min_replicas` al
+encender; que el cambio entre señales (encender o apagar `off_hours_shutdown`) reemplace el
+autoescalador (se borra y se crea) sin dejar el MIG en un tamaño inesperado; y que el segundo
+plan no muestre cambios en el autoescalador.
+Dónde: `modules/compute-mig/main.tf:208`.
+Si falla: si la API agrega la señal de CPU, el grupo no baja a 0 (la página de escalar a cero
+lo exige sin señales); la alternativa es la rechazada en el ADR (trabajos de Cloud Scheduler
+con el autoescalador en `OFF` y `resize`).
+
+**73. Rol personalizado `<prefix>OffHoursScheduler`.**
+Qué: que la cuenta de la etapa 4, como creadora del proyecto de servicio, pueda crear el rol
+(HYPOTHESIS: lo permite el rol de dueño que recibe al crearlo); que `cloudsql.instances.get`,
+`cloudsql.instances.update` y `container.clusters.update` se admitan en roles personalizados
+(HYPOTHESIS) y basten para `instances.patch`, `setAutoscaling` y `setSize`.
+Dónde: `stages/4-projects/envs/*/iam.tf:319`.
+Si falla: sin indicación en el código. Si un permiso no se admite en roles personalizados, se
+cambia por el rol predefinido más chico que lo tenga y se anota en el ADR.
+
+**74. Apagar y volver a encender `enable_off_hours_shutdown`.**
+Qué: que, después de borrar el rol (variable en `false`), volver a encender la variable lo cree
+otra vez con el mismo ID (HYPOTHESIS: GCP conserva un tiempo el ID de un rol borrado y el
+proveedor lo recupera).
+Dónde: `stages/4-projects/envs/*/iam.tf:319`.
+Si falla: esperar a que GCP libere el ID o recuperar el rol con
+`gcloud iam roles undelete` e importarlo al estado.
+
+**75. `postcondition` de Cloud SQL detenida sin apagado permitido.**
+Qué: que con una instancia detenida a mano (`gcloud sql instances patch <instancia>
+--activation-policy=NEVER`) y `allow_scheduled_stop = false` el plan falle con el mensaje del
+módulo; y que con `allow_scheduled_stop = true` el plan no muestre cambios en
+`activation_policy`.
+Dónde: `modules/cloud-sql/main.tf:217`.
+Si falla: si el plan no falla, la deriva de `activation_policy` en prod deja de detectarse
+(ADR 0028, "Qué deja de detectarse"); revisar que `self.settings[0].activation_policy` lea el
+valor de la API.
+
+**76. Respaldos de Cloud SQL con la ventana movida al horario encendido.**
+Qué: que el respaldo diario de Backup and DR se tome dentro de la ventana que empieza en la
+primera hora en punto desde el encendido; qué pasa los días sin horario encendido (fin de
+semana): HYPOTHESIS sin confirmar (la página oficial que se encontró es de MySQL) que el
+respaldo de una instancia detenida no se toma; y que cambiar la ventana no reemplace el plan de
+respaldo ni su asociación (HYPOTHESIS).
+Dónde: `stages/5-workloads/envs/*/operations.tf:53`.
+Si falla: si los días apagados dejan huecos que el RPO de dev o qa no admite, encender
+también el fin de semana (por ejemplo `1-6`) o aceptar el hueco en el ADR.
+
+**77. Apply de la etapa 5 con Cloud SQL detenida.**
+Qué: que el plan muestre solo la advertencia de `check "cloud_sql_encendida"`; que un apply
+sin cambios en bases ni usuarios pase; y que uno que crea una base o un usuario IAM falle hasta
+el encendido (HYPOTHESIS) con un error que se entienda.
+Dónde: `stages/5-workloads/envs/*/off_hours.tf` (`check "cloud_sql_encendida"`); sin marcador.
+Si falla: lanzar el trabajo de encendido (README de la raíz, "Apagado fuera de horario") y
+repetir el apply.
+
+**78. Prueba de humo de dev con Cloud SQL detenida.**
+Qué: que `gcloud sql instances describe` de una instancia detenida dé
+`settings.activationPolicy = NEVER` y `state = RUNNABLE`, como dice la referencia de la API, y
+que `TestDevSmoke` falle con el mensaje de `sqlStoppedError` y no por otra causa.
+Dónde: `tests/e2e/connectivity_test.go` (`sqlStoppedError`); sin marcador.
+Si falla: ajustar la detección al campo que devuelva la API y su prueba
+`tests/e2e/sql_stopped_test.go`.
+
+**79. Alertas de noche en dev y qa.**
+Qué: si la verificación de disponibilidad, la alerta de 5xx y la de consumo del SLO del
+balanceador se disparan de noche con Cloud SQL detenida y el MIG en 0 (HYPOTHESIS: sí, si el
+backend por defecto es el MIG o la aplicación depende de la base).
+Dónde: `modules/observability` (llamado desde `stages/5-workloads/envs/*/operations.tf`); sin
+marcador.
+Si falla: propuesta (no construida): silenciar esas alertas en dev y qa fuera del horario, o
+apuntar la verificación de disponibilidad a una ruta que no use la base.
+
+**80. Sin deriva de día ni de noche en dev y qa.**
+Qué: que `drift.yml` (06:17 en Monterrey, con todo apagado) y un plan de día den código 0 en
+`5-workloads/envs/dev` y `qa` con `off_hours_shutdown`; que la salida raíz `off_hours_shutdown`
+no cambie; y que el trabajo de recursos no administrados no encuentre nada nuevo por el apagado.
+Dónde: `.github/workflows/drift.yml`; `stages/5-workloads/envs/*/outputs.tf`
+(`off_hours_shutdown`); sin marcador.
+Si falla: agregar a `ignore_changes` el atributo que aparezca y anotarlo en el ADR 0028.
+
+**81. Prueba de integración del módulo `off-hours-shutdown`.**
+Qué: correr `TestOffHoursShutdown` (`tests/integration/off_hours_shutdown_test.go`): seis
+trabajos habilitados con su horario, zona horaria, método, URI, cuerpo y token; que Cloud
+Scheduler no pida una app de App Engine en el proyecto efímero y que gcloud devuelva
+`httpTarget.body` en base64.
+Dónde: `tests/integration/off_hours_shutdown_test.go`, `tests/fixtures/off-hours-shutdown/`.
+Si falla: corregir la prueba o el módulo según lo que devuelva la API.
+
+---
+
 ## 4. Marcadores `VERIFICAR-EN-APPLY` del código
 
-Conteo al 21 nov 2026, desde `gcp-datacenter/`:
+Conteo al 23 nov 2026 (con el apagado fuera de horario, ADR 0028), desde `gcp-datacenter/`:
 
 ```bash
-grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 108
-grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                      # 51 archivos
-grep -rn "VERIFICAR-EN-APPLY" modules --include=*.tf | wc -l                              # 44
+grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 119
+grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                      # 52 archivos
+grep -rn "VERIFICAR-EN-APPLY" modules --include=*.tf | wc -l                              # 49
 grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep -v /envs/ | wc -l              # 19
-grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep /envs/ | wc -l                 # 45 (15 por entorno)
+grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep /envs/ | wc -l                 # 51 (17 por entorno)
 ```
 
 Las raíces de `envs/{dev,qa,prod}` tienen sus marcadores en las mismas líneas (comprobado el
-21 nov 2026 comparando archivo y línea de los tres entornos: 15 líneas, cada una presente en los
-tres), así que se listan una vez con `envs/*` y "(x3)": las 108 líneas son 78 marcadores
-distintos (44 en módulos y 34 en etapas). Fuera de los `.tf`, los README de algunas raíces
+23 nov 2026 comparando archivo y línea de los tres entornos: 17 líneas, cada una presente en los
+tres), así que se listan una vez con `envs/*` y "(x3)": las 119 líneas son 85 marcadores
+distintos (49 en módulos y 36 en etapas). Fuera de los `.tf`, los README de algunas raíces
 tienen marcadores propios (al final de esta sección); `tests/` tiene otros cuatro en sus `.tf`,
 fuera de este conteo. "Si falla" cita el código cuando lo dice; si no, la entrada dice "sin
 indicación".
@@ -654,8 +774,9 @@ indicación".
 |---|---|---|
 | `artifacts.tf:40` (x3) | CMEK del repositorio de Artifact Registry (punto 41) | Ver punto 41 |
 | `artifacts.tf:88` (x3) | Binary Authorization: la imagen del repositorio pasa y otra se rechaza (punto 42) | Ver punto 42 |
-| `iam.tf:213` (x3) | `networkViewer` en el host más `networkUser` por subred bastan a la etapa 5 para PSA (punto 43) | `networkUser` en el host, decidido en revisión |
-| `iam.tf:274` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
+| `iam.tf:217` (x3) | `networkViewer` en el host más `networkUser` por subred bastan a la etapa 5 para PSA (punto 43) | `networkUser` en el host, decidido en revisión |
+| `iam.tf:319` (x3) | Con `enable_off_hours_shutdown`: creación del rol personalizado `<prefix>OffHoursScheduler` y sus tres permisos admitidos y suficientes (puntos 73 y 74) | Ver punto 73 |
+| `iam.tf:337` (x3) | Que `tagUser` sobre el valor baste al agente de GKE y a `<n>@cloudservices` para crear nodos y VM con etiquetas | Puede pedir además `tagUser` sobre la llave o `roles/resourcemanager.tagHoldAdmin` |
 | `service_agents.tf:10` (x3) | Que `generateServiceIdentity` acepte `sqladmin`, `file`, `redis` y `gkebackup` | Quitar el servicio de la lista (su agente existe al habilitar la API) |
 | `service_agents.tf:12` (x3) | Que los agentes de `container`, `compute` y `run` existan justo después de habilitar sus APIs | Agregar esos servicios a la lista |
 | `service_agents.tf:59` (x3) | Que la API de Cloud Storage acepte el número del proyecto de servicio al consultar su agente (punto 27) | Ver punto 27 |
@@ -669,7 +790,8 @@ indicación".
 | `load_balancing.tf:98` (x3) | Que el mismo grupo de instancias y el mismo NEG sin servidor sirvan a la vez al balanceador externo y al interno | Sin indicación |
 | `load_balancing.tf:193` (x3) | El certificado administrado se activa cuando los registros A de `domain_names` apuntan a `lb_ip_address` | Crear los registros en la zona pública (fuera del repositorio) |
 | `load_balancing.tf:241` (x3) | Registros de `internal_lb_dns_authorization_records_by_region` (las dos regiones con `enable_dr`) y certificado interno de DR `ACTIVE` sin balanceador (punto 54) | Ver punto 54 |
-| `operations.tf:54` (x3) | Formato del recurso de Cloud SQL en la asociación de Backup and DR y roles de la cuenta de la bóveda | Sin indicación |
+| `operations.tf:53` (x3) | Con `off_hours_shutdown`: respaldo diario de Cloud SQL dentro de la ventana movida al horario encendido y qué pasa los días apagados (punto 76) | Ver punto 76 |
+| `operations.tf:61` (x3) | Formato del recurso de Cloud SQL en la asociación de Backup and DR y roles de la cuenta de la bóveda | Sin indicación |
 
 ### Módulos
 
@@ -683,21 +805,24 @@ indicación".
 | `cloud-run/main.tf:9` | Salida directa a la VPC con red y subred del host como `projects/<host>/...` | Sin indicación |
 | `cloud-run/main.tf:34` | `invoker_iam_disabled` frente a la política de organización (punto 16) | Ver punto 16 |
 | `cloud-sql/main.tf:10` | `pgaudit.log` con varias clases; la réplica acepta las mismas banderas | Ver punto 14 |
-| `cloud-sql/main.tf:98` | Segundo plan sin cambios en `backup_configuration` con el plan de Backup and DR asociado (punto 45) | `ignore_changes` sobre ese bloque (lo dice el código) |
-| `cloud-sql/main.tf:201` | Agente de Cloud SQL con permiso sobre `kms_key` (lo da la etapa 4) | Sin indicación |
-| `cloud-sql/main.tf:203` | Conexión de PSA de la red existente antes del create | Sin indicación |
-| `cloud-sql/main.tf:330` | Réplica REGIONAL entre regiones con CMEK; retraso de replicación por debajo de 15 min | Si el retraso supera 15 min, el objetivo de RPO no se cumple (README del módulo) |
-| `cloud-sql/main.tf:366` | Roles condicionados por `resource.name` y entrada con token IAM (punto 14) | Ver punto 14 |
+| `cloud-sql/main.tf:103` | Segundo plan sin cambios en `backup_configuration` con el plan de Backup and DR asociado (punto 45) | `ignore_changes` sobre ese bloque (lo dice el código) |
+| `cloud-sql/main.tf:206` | Agente de Cloud SQL con permiso sobre `kms_key` (lo da la etapa 4) | Sin indicación |
+| `cloud-sql/main.tf:208` | Conexión de PSA de la red existente antes del create | Sin indicación |
+| `cloud-sql/main.tf:217` | Con la instancia detenida a mano y `allow_scheduled_stop = false`, el plan falla con el mensaje de la `postcondition`; con `true`, sin cambios en `activation_policy` (punto 75) | Ver punto 75 |
+| `cloud-sql/main.tf:351` | Réplica REGIONAL entre regiones con CMEK; retraso de replicación por debajo de 15 min | Si el retraso supera 15 min, el objetivo de RPO no se cumple (README del módulo) |
+| `cloud-sql/main.tf:387` | Roles condicionados por `resource.name` y entrada con token IAM (punto 14) | Ver punto 14 |
 | `compute-mig/main.tf:72` | Etiquetas seguras de la plantilla en las instancias y reglas `lb_backend` aplicadas | Sin indicación |
 | `compute-mig/main.tf:164` | `max_surge_fixed` igual al número de zonas del MIG regional | Sin indicación |
+| `compute-mig/main.tf:208` | Con `business_hours`: política sin señal de CPU, 0 VM fuera del horario y `min_replicas` dentro (punto 72) | Ver punto 72 |
 | `dns/main.tf:92` | El filtro devuelve las IP de reenvío entrante (y solo esas) al terminar el apply | Sin indicación |
 | `filestore/main.tf:48` | Permiso del agente sobre la llave, PSA desde el proyecto de servicio sobre la red del host, `deletion_protection_enabled` en el tier | Sin indicación |
 | `firewall/main.tf:21` | Formato de `purpose_data` y etiquetas de organización en la política jerárquica | Sin indicación |
 | `firewall/main.tf:26` | Si la API admite `enable_logging` en `goto_next` | Sin indicación |
 | `gke/main.tf:47` | Plano de control con Private Service Connect (punto 8) | Ver punto 8 |
 | `gke/main.tf:59` | Endpoint privado alcanzable desde la Shared VPC y los rangos autorizados | Bastión en el spoke o endpoint por DNS (no construido, README del módulo) |
-| `gke/main.tf:144` | `node_config` del pool por defecto eliminado sin diferencias en el segundo plan | Ya se ignora en `lifecycle` |
-| `gke/main.tf:231` | Nodos con etiquetas seguras del proyecto host | Ver `iam.tf:274` de la etapa 4 |
+| `gke/main.tf:145` | `node_config` del pool por defecto eliminado sin diferencias en el segundo plan | Ya se ignora en `lifecycle` |
+| `gke/main.tf:242` | Nodos con etiquetas seguras del proyecto host | Ver `iam.tf:337` de la etapa 4 |
+| `gke/main.tf:279` | Con `scheduled_scaling`: plan sin cambios en los pools y el clúster después de un apagado y un encendido (punto 71) | Ver punto 71 |
 | `hybrid-connectivity/main.tf:143` | Interfaces y sesiones BGP de los attachments DEDICATED y PARTNER | Sin indicación |
 | `load-balancer/main.tf:187` | Certificado administrado ACTIVE cuando los registros A apuntan a la IP; puede tardar hasta 60 min | Crear los registros A |
 | `load-balancer/main.tf:357` | Certificado interno tras los registros de `dns_authorization_records`; una CA pública no emite para `*.internal` | Usar `certificate_manager_certificates` |
@@ -711,6 +836,8 @@ indicación".
 | `observability/main.tf:55` | Los buzones de `notification_emails` existen y aceptan las alertas | Sin indicación |
 | `observability/main.tf:203` | La alerta de memoria de VM necesita Ops Agent | Sin él la condición queda sin datos |
 | `observability/main.tf:288` | SLI por solicitudes con los filtros del balanceador y `select_slo_burn_rate` con tráfico real | Sin indicación |
+| `off-hours-shutdown/main.tf:97` | Trabajos de Cloud Scheduler en 2xx con el token de la cuenta `-sched` y operación de la API en `DONE` (puntos 70 y 71) | Ver punto 70 |
+| `off-hours-shutdown/main.tf:101` | `setSize` de un pool regional cuenta `nodeCount` por zona; la operación del primer paso termina antes del segundo (punto 71) | Ver punto 71 |
 | `org/main.tf:20` | Ubicaciones permitidas (punto 3) | Ver punto 3 |
 | `org/main.tf:50` | Agentes de servicio de Google siguen recibiendo roles con `iam.allowedPolicyMemberDomains` | Sin indicación |
 | `project-factory/main.tf:27` | Proyecto sin red default y sin error al intentar borrarla | Sin indicación |
@@ -741,8 +868,19 @@ qué, dónde y qué hacer si llega a importar.
 **Cloud IDS y Private Service Connect no se construyen.** La especificación los menciona como
 servicios, no como configuración mínima (contrato §8). Si se piden: módulo nuevo y ADR.
 
-**Apagado de dev fuera de horario no construido.** Mitigación de costo opcional (contrato §8).
-Si se pide: Cloud Scheduler con el cambio de tamaño del MIG y de los pools de GKE (propuesta).
+**Límites del apagado fuera de horario (ADR 0028).** Construido para dev y qa
+(`off_hours_shutdown`); estos huecos quedan a propósito:
+- Sin alerta si un trabajo de Cloud Scheduler falla, y el trabajo solo ve la respuesta inicial
+  de la API, no el final de la operación. Si se necesita: una alerta de Cloud Monitoring sobre
+  los registros de Cloud Scheduler (propuesta).
+- Memorystore, Filestore, la cuota del clúster de GKE, los balanceadores, Cloud Armor, Cloud
+  NAT, la VPN y el almacenamiento y la IP de Cloud SQL se siguen cobrando de noche.
+- Durante el horario, el MIG con el apagado tiene `mig_min_replicas` VM fijas, sin autoescalado
+  por CPU (el programa de escalado es la única señal).
+- No hay flujo para lanzar a mano el trabajo de encendido: las personas tienen solo lectura, así
+  que encender antes de hora necesita una identidad con `cloudscheduler.jobs.run` (por ejemplo,
+  un flujo nuevo con la cuenta de la etapa 5, no construido).
+- Las alertas de dev y qa pueden dispararse de noche (punto 79).
 
 **Servicios de PSA y plano de control de GKE no alcanzables desde on-premises.** Cloud SQL,
 Memorystore y Filestore (rango `psa`, `10.X.176.0/20`) y el endpoint privado de GKE viven detrás

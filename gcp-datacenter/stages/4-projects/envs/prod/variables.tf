@@ -211,6 +211,18 @@ variable "artifact_registry_publishers" {
   }
 }
 
+variable "enable_off_hours_shutdown" {
+  description = "Prepara el apagado fuera de horario de la etapa 5 (solo dev y qa, ADR 0028) en cada proyecto de servicio: habilita cloudscheduler.googleapis.com, crea la cuenta <prefix>-<environment>-<app>-sched con un rol personalizado que solo detiene y enciende Cloud SQL y cambia autoescalado y tamaño de los pools de GKE, y da a la cuenta de la etapa 5 roles/cloudscheduler.admin en el proyecto y actAs solo sobre esa cuenta. Debe estar en true antes de encender off_hours_shutdown en la etapa 5. Se rechaza en prod."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.environment != "prod" || !var.enable_off_hours_shutdown
+    error_message = "enable_off_hours_shutdown no se admite en prod: el apagado fuera de horario es solo para dev y qa (ADR 0028)."
+  }
+}
+
 variable "deletion_policy" {
   description = "deletion_policy de los proyectos de servicio: PREVENT (falla al destruir), ABANDON o DELETE. En prod solo PREVENT (lo exige project-factory); en dev se puede usar DELETE para el destroy de prueba."
   type        = string

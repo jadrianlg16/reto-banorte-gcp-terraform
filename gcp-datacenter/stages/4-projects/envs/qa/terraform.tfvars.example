@@ -16,6 +16,10 @@ workloads_service_account = "bnt-tf-5-workloads@bnt-bootstrap-seed.iam.gservicea
 
 deletion_policy = "PREVENT"
 
+# Apagado fuera de horario (ADR 0028): cuenta y permisos de los trabajos de Cloud Scheduler que
+# crea la etapa 5 con off_hours_shutdown. Aplicar esta etapa antes de encenderlo en la 5.
+enable_off_hours_shutdown = true
+
 # Repositorio Docker por aplicación (multirregión, llave artifacts de la etapa 2) y Binary
 # Authorization: solo se admiten imágenes de ese repositorio, más estos patrones y, si hay
 # atestadores, las imágenes atestadas por todos ellos.

@@ -103,7 +103,7 @@ variable "machine_type" {
 }
 
 variable "min_replicas" {
-  description = "Mínimo de instancias del autoescalador. En prod, al menos 2."
+  description = "Mínimo de instancias del autoescalador. En prod, al menos 2. Con business_hours es el número de VM durante el horario encendido (fuera de él, 0)."
   type        = number
 
   validation {
@@ -134,6 +134,33 @@ variable "cpu_target" {
   validation {
     condition     = var.cpu_target >= 0.1 && var.cpu_target <= 0.9
     error_message = "cpu_target debe estar entre 0.1 y 0.9."
+  }
+}
+
+variable "business_hours" {
+  description = "Apagado fuera de horario (solo dev y qa, ADR 0028): programa de escalado del autoescalador con el cron de encendido (schedule), su duración en segundos (duration_sec) y su zona horaria IANA (time_zone). Durante el programa el MIG tiene min_replicas VM; fuera de él, 0. En este modo no hay señal de CPU: un autoescalador por CPU no puede bajar a 0. null: autoescalado por CPU sin horario."
+  type = object({
+    schedule     = string
+    duration_sec = number
+    time_zone    = string
+  })
+  default = null
+
+  validation {
+    condition     = var.environment != "prod" || var.business_hours == null
+    error_message = "business_hours no se admite en prod: el apagado fuera de horario es solo para dev y qa (ADR 0028)."
+  }
+  validation {
+    condition     = var.business_hours == null || try(length(split(" ", var.business_hours.schedule)) == 5, false)
+    error_message = "business_hours.schedule debe ser un cron de cinco campos (minuto hora día-del-mes mes día-de-la-semana)."
+  }
+  validation {
+    condition     = var.business_hours == null || try(var.business_hours.duration_sec >= 300 && floor(var.business_hours.duration_sec) == var.business_hours.duration_sec, false)
+    error_message = "business_hours.duration_sec debe ser un entero de al menos 300 (la duración mínima de un programa de escalado)."
+  }
+  validation {
+    condition     = var.business_hours == null || try(can(regex("^(UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+)+)$", var.business_hours.time_zone)), false)
+    error_message = "business_hours.time_zone debe ser UTC o un nombre IANA como America/Monterrey."
   }
 }
 

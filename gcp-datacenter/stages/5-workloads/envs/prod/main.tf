@@ -4,6 +4,7 @@
 #   data.tf            Cloud SQL, Memorystore, Filestore y Cloud Storage
 #   load_balancing.tf  Cloud Armor, balanceador HTTPS externo y balanceador interno
 #   operations.tf      observabilidad y respaldo
+#   off_hours.tf       apagado fuera de horario de dev y qa (ADR 0028)
 # Este archivo tiene los valores comunes y las comprobaciones de las salidas de otras etapas.
 
 locals {
@@ -103,6 +104,10 @@ resource "terraform_data" "upstream_checks" {
     precondition {
       condition     = !var.enable_internal_lb || var.enable_mig || var.enable_cloud_run
       error_message = "enable_internal_lb exige enable_mig o enable_cloud_run: el balanceador interno necesita al menos un backend."
+    }
+    precondition {
+      condition     = !local.off_hours_enabled || local.scheduler_service_account != null
+      error_message = "off_hours_shutdown.enabled exige la cuenta de los trabajos del apagado: aplique 4-projects/<env> con enable_off_hours_shutdown = true (salida scheduler_service_accounts[application])."
     }
   }
 }

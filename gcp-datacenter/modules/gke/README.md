@@ -30,6 +30,15 @@ Las reglas de firewall del spoke usan etiquetas seguras: `node_resource_manager_
 (`tagKeys/<id>` → `tagValues/<id>`, vacío por defecto) las pone en los nodos de todos los
 pools, por ejemplo `lb_backend` para que el balanceador llegue a los NEG de GKE.
 
+Apagado fuera de horario (ADR 0028, solo dev y qa; se rechaza en prod): con
+`scheduled_scaling = true` los pools se crean en otro recurso (`scheduled`, nombre
+`<prefix>-<env>-app-nps-<llave>`) con la misma configuración, que ignora `autoscaling`: los
+trabajos de Cloud Scheduler del módulo `off-hours-shutdown` desactivan el autoescalado y llevan
+el pool a 0 de noche, y lo devuelven en la mañana con los límites de `gke_node_pools`. Cambiar
+`scheduled_scaling` reemplaza los pools (crea los nuevos y borra los viejos). El clúster sigue
+cobrando su cuota con los pools en 0. La salida `node_pools` da a la etapa 5 lo que necesitan
+los trabajos.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -53,6 +62,7 @@ No modules.
 | Name | Type |
 | ---- | ---- |
 | [google_container_cluster.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/container_cluster) | resource |
+| [google_container_node_pool.scheduled](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/container_node_pool) | resource |
 | [google_container_node_pool.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/container_node_pool) | resource |
 
 ## Inputs
@@ -82,6 +92,7 @@ No modules.
 | <a name="input_node_resource_manager_tags"></a> [node\_resource\_manager\_tags](#input\_node\_resource\_manager\_tags) | Etiquetas seguras de los nodos de todos los pools (tagKeys/<id> → tagValues/<id>), por ejemplo la de lb\_backend de la etapa 3. Vacío: sin etiquetas seguras. | `map(string)` | `{}` | no |
 | <a name="input_region_codes"></a> [region\_codes](#input\_region\_codes) | Mapa región → código corto que se agrega a los nombres (§4.2 del contrato). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_release_channel"></a> [release\_channel](#input\_release\_channel) | Canal de versiones de GKE: RAPID, REGULAR o STABLE. En prod no se admite RAPID. | `string` | `"REGULAR"` | no |
+| <a name="input_scheduled_scaling"></a> [scheduled\_scaling](#input\_scheduled\_scaling) | Apagado fuera de horario (solo dev y qa, ADR 0028): los pools se crean como <prefix>-<env>-app-nps-<llave> y Terraform ignora su autoscaling, que cambian los trabajos de Cloud Scheduler del módulo off-hours-shutdown. Cambiarlo reemplaza los pools (crea los nuevos y borra los viejos). Se rechaza en prod. | `bool` | `false` | no |
 | <a name="input_teardown"></a> [teardown](#input\_teardown) | Retiro deliberado del clúster: deletion\_protection = false también en prod, para que un apply posterior lo pueda destruir. Solo para una instancia que se va a quitar (el clúster de DR en la vuelta a la región primaria, runbook 04); nunca en el clúster que atiende el tráfico normal. | `bool` | `false` | no |
 
 ## Outputs
@@ -95,7 +106,8 @@ No modules.
 | <a name="output_kms_key"></a> [kms\_key](#output\_kms\_key) | Llave KMS del cifrado de secretos de Kubernetes en la capa de aplicación. |
 | <a name="output_location"></a> [location](#output\_location) | Ubicación del clúster (región si es regional). |
 | <a name="output_master_cidr"></a> [master\_cidr](#output\_master\_cidr) | Rango /28 del plano de control configurado en el clúster (private\_cluster\_config.master\_ipv4\_cidr\_block). |
-| <a name="output_node_pool_names"></a> [node\_pool\_names](#output\_node\_pool\_names) | Mapa llave de gke\_node\_pools → nombre del pool de nodos. |
+| <a name="output_node_pool_names"></a> [node\_pool\_names](#output\_node\_pool\_names) | Mapa llave de gke\_node\_pools → nombre del pool de nodos (con scheduled\_scaling, los pools <prefix>-<env>-app-nps-<llave>). |
+| <a name="output_node_pools"></a> [node\_pools](#output\_node\_pools) | Mapa llave de gke\_node\_pools → nombre del pool, ubicación y nombre del clúster, autoescalado configurado por zona (min\_node\_count y max\_node\_count) y si sus trabajos de apagado lo administran (scheduled). Lo usa el módulo off-hours-shutdown. |
 | <a name="output_subnetwork"></a> [subnetwork](#output\_subnetwork) | Subred del clúster (la configurada en el recurso). |
 | <a name="output_workload_pool"></a> [workload\_pool](#output\_workload\_pool) | Pool de Workload Identity (<proyecto>.svc.id.goog) para enlazar cuentas de Kubernetes con cuentas de servicio. |
 <!-- END_TF_DOCS -->

@@ -83,6 +83,11 @@ resource "google_sql_database_instance" "this" {
     retain_backups_on_delete    = true
     user_labels                 = var.labels
 
+    # Encendida al crear. Terraform no la vuelve a imponer (lifecycle): con
+    # allow_scheduled_stop la detiene y enciende el apagado fuera de horario (ADR 0028); sin él,
+    # la postcondición rechaza el plan si alguien la detuvo.
+    activation_policy = "ALWAYS"
+
     ip_configuration {
       ipv4_enabled       = false
       private_network    = var.network
@@ -201,6 +206,22 @@ resource "google_sql_database_instance" "this" {
   # VERIFICAR-EN-APPLY: el agente de servicio de Cloud SQL del proyecto existe y tiene
   # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga la etapa 4).
   # VERIFICAR-EN-APPLY: la conexión de Private Service Access de la red existe antes del create.
+
+  lifecycle {
+    # La política de activación la cambian los trabajos del apagado fuera de horario de dev y
+    # qa: sin esto, cada plan de la noche (drift.yml, pr.yml) propondría encender la instancia.
+    # Se ignora en todos los entornos (ignore_changes no puede depender de una variable); lo que
+    # se deja de ver en prod lo compensa la postcondición (ADR 0028).
+    ignore_changes = [settings[0].activation_policy]
+
+    # VERIFICAR-EN-APPLY: con la instancia detenida a mano (gcloud sql instances patch
+    # --activation-policy=NEVER) y allow_scheduled_stop = false, el plan falla con este mensaje
+    # (la postcondición se evalúa con el valor leído en el refresh).
+    postcondition {
+      condition     = var.allow_scheduled_stop || self.settings[0].activation_policy == "ALWAYS"
+      error_message = "La instancia de Cloud SQL no está en activation_policy ALWAYS (detenida o encendida solo bajo demanda) y allow_scheduled_stop = false. Enciéndala con gcloud sql instances patch <instancia> --activation-policy=ALWAYS, o active el apagado fuera de horario si es dev o qa (ADR 0028)."
+    }
+  }
 }
 
 # Réplica de lectura entre regiones (DR). Junto con PITR en la primaria sostiene el objetivo de
