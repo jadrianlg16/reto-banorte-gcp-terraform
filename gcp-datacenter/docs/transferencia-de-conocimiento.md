@@ -42,9 +42,10 @@ decisión y por qué.
 
 **Ejercicio:** cada operador clona el repositorio, corre `bash scripts/check.sh` sobre una raíz
 (por ejemplo `stages/2-networks/envs/dev`) y responde tres preguntas con el ADR y la sección que
-corresponden. Ejemplos: ¿por qué Cloud NAT está en cada spoke y no en el hub? ¿Por qué la cuenta
-del pipeline de dev no puede cambiar la red de prod si las dos viven en el mismo proyecto? ¿Qué
-pasa con las llaves de un entorno cuando se destruye?
+corresponden. Ejemplos: ¿por qué Cloud NAT está en cada spoke y no en el hub? Si dev y prod
+viven en el mismo proyecto, ¿qué impide que un flujo de dev aplique en prod y qué riesgo se
+aceptó (la cuenta de red de dev tiene roles de red sin condición)? ¿Qué pasa con las llaves de
+un entorno cuando se destruye?
 
 **Evidencia de cierre:** salida de `check.sh` de cada operador y respuestas con el número de ADR.
 
@@ -55,21 +56,23 @@ sepan responder a un drift.
 
 | Tiempo | Tema | Material |
 |---|---|---|
-| 0:00 – 0:20 | Identidad del pipeline: WIF, una cuenta por raíz y por entorno, la cuenta de lectura `tf-read`, la política de denegación y su etiqueta; por qué las personas solo leen | ADR 0029 §3 y §5, ADR 0023, [`diagramas/05-pipeline.md`](diagramas/05-pipeline.md) |
-| 0:20 – 0:45 | Flujo de un cambio: PR, comprobaciones, plan con huella, aprobación del entorno, apply; qué bloquea un PR; por qué un merge a `main` lanza `apply.yml` | `diagramas/05-pipeline.md`, ADR 0025, `.github/workflows/` |
+| 0:00 – 0:20 | Identidad del pipeline: WIF, una cuenta por raíz y por entorno que solo se entrega a un trabajo de `main` (`attribute.deploy`), la cuenta de lectura `tf-read`, la política de denegación y su etiqueta; las cuentas de ejecución que crea `1-base`; por qué las personas solo leen | ADR 0029 §3 y §5, ADR 0023, [`pipeline.md`](pipeline.md) §5, [`diagramas/05-pipeline.md`](diagramas/05-pipeline.md) |
+| 0:20 – 0:45 | Flujo de un cambio: PR, comprobaciones, plan con huella, aprobación del entorno, apply; qué bloquea un PR; por qué un merge a `main` lanza `apply.yml` (y uno de solo documentación no); cómo se apaga dev o qa con `GCP_DISABLED_ENVS` | `diagramas/05-pipeline.md`, ADR 0025, [`pipeline.md`](pipeline.md) §1.2, `.github/workflows/` |
 | 0:45 – 1:20 | Ejercicio guiado: alta de una aplicación en dev | [Runbook 02](runbooks/02-alta-proyecto-aplicacion.md), sección A |
 | 1:20 – 1:45 | Drift: cómo se detecta (un plan por raíz y un trabajo de recursos no administrados para todo el proyecto), cómo se lee la incidencia, importar o revertir | [Runbook 05](runbooks/05-respuesta-a-drift.md), `drift.yml` |
 | 1:45 – 2:00 | `0-bootstrap`, variables de GitHub (`GCP_TFVARS_JSON` y las salidas de la etapa 0) y cuándo se vuelve a correr la etapa 0 | [Runbook 01](runbooks/01-arranque-etapa-0.md), guía sección D |
 
 **Ejercicios:**
 
-1. Alta de una aplicación nueva en dev hasta `1-base` (runbook 02, pasos A.1 y A.2): registrar
-   el cambio en una incidencia, agregar la aplicación a `applications` y un secreto a
+1. Alta de una aplicación nueva hasta `1-base` (runbook 02, pasos A.1 y A.2): registrar el
+   cambio en una incidencia, agregar la aplicación a `applications` y un secreto de dev a
    `secret_names` en la llave `stages/1-base` de `GCP_TFVARS_JSON` (lo hace quien administra las
    variables del repositorio), lanzar `apply.yml` y leer en el resumen del trabajo `plan` de
-   `1-base` que solo se agregan su repositorio, su IAM y su contenedor de secreto antes de
-   aprobar `common`. Las cargas de una segunda aplicación en el mismo entorno no están
-   soportadas (runbook 02, paso A.4): el ejercicio se queda en `1-base`.
+   `1-base`, antes de aprobar `common`, que solo se agregan, en cada entorno, su repositorio, sus
+   cuentas de ejecución con sus permisos y, en dev, el contenedor del secreto con su lectura
+   para las cuentas `workload` y `run` de todas las aplicaciones de dev.
+   Las cargas de una segunda aplicación en el mismo entorno no están soportadas (runbook 02,
+   paso A.4): el ejercicio se queda en `1-base`.
 2. Abrir un PR que viole una política en una raíz desplegada (por ejemplo, IP pública en la
    instancia de Cloud SQL de dev, o un miembro `user:` en un IAM) y ver que Conftest lo bloquea.
 3. La persona dueña del proyecto cambia a mano una etiqueta de un recurso de dev (las personas
@@ -86,10 +89,10 @@ conmutación a DR y su vuelta con el runbook.
 
 | Tiempo | Tema | Material |
 |---|---|---|
-| 0:00 – 0:25 | Controles de seguridad en el proyecto: CMEK con llaves por entorno y su rotación, política de denegación, reglas de Conftest; con organización, políticas de organización y VPC-SC en dry-run; los controles manuales del CIS | `docs/cumplimiento-cis.md`, [runbook 03](runbooks/03-rotacion-de-llaves.md), runbook 01 ("Controles manuales del CIS") |
+| 0:00 – 0:25 | Controles de seguridad en el proyecto: CMEK con llaves por entorno (solo las que se usan) y su rotación, política de denegación, reglas de Conftest; con organización, políticas de organización y VPC-SC en dry-run, que aplica la persona de `0-bootstrap`; los controles manuales del CIS | `docs/cumplimiento-cis.md`, [runbook 03](runbooks/03-rotacion-de-llaves.md), runbook 01 ("Controles manuales del CIS") |
 | 0:25 – 0:45 | SCC y el CIS: qué evalúa SCC, qué no, desviaciones aceptadas. SCC activado en el proyecto, no en una organización (HYPOTHESIS que funcione sin ella) | `docs/cumplimiento-cis.md` §5 y §6 |
 | 0:45 – 1:30 | Simulacro de DR: promover la réplica, `dr_active`, verificación y vuelta con `dr_teardown` | [Runbook 04](runbooks/04-conmutacion-a-dr.md) |
-| 1:30 – 1:50 | Costos: dónde se va el dinero y las palancas (modo mínimo, apagado fuera de horario de dev y qa, destroy de dev y qa); Infracost en cada PR | `docs/estimacion-de-costos.md` (calculada con el diseño anterior), ADR 0028, guía sección I |
+| 1:30 – 1:50 | Costos: dónde se va el dinero y las palancas (modo mínimo, apagado fuera de horario de dev y qa, destroy de dev y qa y `GCP_DISABLED_ENVS` para que no se recreen); Infracost en cada PR | `docs/estimacion-de-costos.md`, ADR 0028, guía sección I |
 | 1:50 – 2:00 | Pendientes del primer despliegue y backlog; cierre | `docs/pendientes-apply.md`, `docs/backlog.md` |
 
 **Ejercicio:** conmutación a DR en el proyecto de prueba siguiendo el runbook 04, con un operador

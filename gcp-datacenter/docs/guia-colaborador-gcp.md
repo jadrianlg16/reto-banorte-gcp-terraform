@@ -16,20 +16,19 @@ Cada falla es un hallazgo que se anota y se corrige, no un error tuyo.
 
 **Antes de empezar:**
 
-- **Cuesta dinero.** Según [`estimacion-de-costos.md`](estimacion-de-costos.md) (precios de lista
-  del 23 nov 2026, calculados sobre el diseño anterior), el despliegue mínimo cuesta **20.44 a
-  21.91 USD por día** con los tres entornos, o **7.93 a 8.66 USD por día** solo con dev
-  (escenario B). Con un solo proyecto puede cambiar: la cifra nueva sale de Infracost en los PR o
-  de la factura real. Lo que más pesa en
-  una prueba corta es lo fijo: Cloud SQL, los túneles de VPN y el balanceador con Cloud Armor.
-  `0-bootstrap` crea un presupuesto con alertas (`budget_amount`). Apaga todo al terminar
-  (sección I).
+- **Cuesta dinero.** El costo por día del despliegue mínimo, con los tres entornos o solo con
+  dev, está en [`estimacion-de-costos.md`](estimacion-de-costos.md) con sus precios de lista y
+  su fecha; míralo ahí antes de empezar, no lo copies aquí. La cifra real sale de Infracost en los
+  PR o de la factura. Lo que más pesa en una prueba corta es lo fijo: Cloud SQL, los túneles de
+  VPN y el balanceador con Cloud Armor. `0-bootstrap` crea un presupuesto con alertas
+  (`budget_amount`). Apaga todo al terminar (sección I).
 - **El repositorio es privado y debe seguir así.** Nunca subas `terraform.tfvars`, estados
   (`*.tfstate`), llaves JSON, el JSON de `GCP_TFVARS_JSON` ni contraseñas. El `.gitignore` ya los
   excluye; no lo cambies. Revisa `git status` antes de cada commit.
 - **Nada de recursos a mano** fuera de lo que piden esta guía y el runbook 01 (el proyecto, la red
   `default`, las APIs mínimas, `0-bootstrap`, SCC y la imagen de prueba). Todo lo demás lo crea el
-  pipeline; el trabajo de recursos no administrados de `drift.yml` encuentra lo que sobre.
+  pipeline, incluida la VM DNS de prueba de `onprem-sim` (opcional, sección F); el trabajo de
+  recursos no administrados de `drift.yml` encuentra lo que sobre.
 - **Cada cambio en GCP o en GitHub** (apply, destroy, IAM, variables, lanzar flujos) se decide
   viendo antes su costo y su efecto.
 
@@ -63,16 +62,16 @@ Documentos que vas a usar (rutas relativas a `gcp-datacenter/`):
 | Qué cambia | Dónde |
 |---|---|
 | El proyecto se crea dentro de la organización | runbook 01, paso 1 (`--organization`) |
-| `org_id` y, si hay política de Access Context Manager, `access_policy_id` | `0-bootstrap` y la llave `stages/1-base` de `GCP_TFVARS_JSON` |
-| `1-base` aplica las políticas de organización al proyecto y el perímetro de VPC-SC en dry-run | `stages/1-base/org.tf` |
-| `directory_customer_id` para la política de dominios | llave `stages/1-base` |
-| Grupos de Cloud Identity para las personas (`groups`: `readers`, `security_admins`, `auditors`) | llave `stages/1-base` |
+| `org_id`, `directory_customer_id` (política de dominios) y, si hay política de Access Context Manager, `access_policy_id`; opcionales `additional_allowed_locations` y `vpc_sc_restricted_services` | `stages/0-bootstrap/terraform.tfvars` (no van en `GCP_TFVARS_JSON`) |
+| `0-bootstrap` aplica las políticas de organización al proyecto (al final del primer apply, después de las cuentas, sus roles y el bucket) y el perímetro de VPC-SC en dry-run | `stages/0-bootstrap/org.tf`, lo aplicas tú (pendientes 125 y 126) |
+| Grupos de Cloud Identity para las personas (`groups`: `readers`, `security_admins`, `auditors`) | llave `stages/1-base` de `GCP_TFVARS_JSON` |
 | Controles del CIS de Cloud Identity (grupo 2) | runbook 01, "Controles manuales del CIS" |
 
-Con organización, quien aplica `0-bootstrap` necesita además poder dar
-`roles/orgpolicy.policyAdmin` en la organización y, con `access_policy_id`,
-`roles/accesscontextmanager.policyAdmin` (`stages/0-bootstrap/README.md`). Sin organización,
-nada de esto existe: lo cubren las reglas de Conftest y los pasos manuales del runbook 01.
+Con organización, quien aplica `0-bootstrap` necesita además `roles/orgpolicy.policyAdmin` en la
+organización y, con `access_policy_id`, `roles/accesscontextmanager.policyAdmin` en la
+organización (o `policyEditor` sobre la política) (`stages/0-bootstrap/README.md`). Ninguna
+cuenta del pipeline recibe roles de organización. Sin organización, nada de esto existe: lo
+cubren las reglas de Conftest y los pasos manuales del runbook 01.
 
 ## B. Herramientas y acceso al repositorio
 
@@ -110,6 +109,9 @@ al bucket que se crea, sacar las salidas y activar SCC en el proyecto.
 
 - **Decide antes del primer apply** la ubicación del bucket de estado (`US` por defecto): no se
   cambia después.
+- **`onprem_dns_vm`** (por defecto `false`): déjalo así en la rebanada. Si después quieres la VM
+  DNS de prueba de `onprem-sim` (sección F), se pone en `true` y se vuelve a aplicar
+  `0-bootstrap`: le da a la cuenta del hub el rol para crear VM.
 - **`enable_protection_tags` y `enable_deny_policy` en `true`.** El segundo exige que tengas
   `roles/iam.denyAdmin` en el proyecto (runbook 01, paso 1). Si un apply demuestra que las
   etiquetas no funcionan en el proyecto, pon `enable_protection_tags = false` y anótalo en
@@ -127,9 +129,14 @@ al bucket que se crea, sacar las salidas y activar SCC en el proyecto.
 ### D.1 Entornos
 
 En Settings → Environments, crea `common`, `dev`, `qa` y `prod`. Los trabajos `apply` de
-`apply.yml` corren en ellos y cada cuenta que aplica solo acepta tokens de su entorno (ADR 0029
-§3): `common` para `1-base` y el hub; `dev`, `qa` y `prod` para su spoke y sus cargas. La cuenta
-de lectura (`tf-read`) acepta cualquier trabajo del repositorio: los `plan` corren sin entorno.
+`apply.yml` corren en ellos y cada cuenta que aplica solo acepta tokens de un trabajo de `main`,
+de un flujo del repositorio y de su entorno (`attribute.deploy`, ADR 0029 §3;
+[`pipeline.md`](pipeline.md) §5): `common` para `1-base` y el hub; `dev`, `qa` y `prod` para su
+spoke y sus cargas. La cuenta de lectura (`tf-read`) acepta cualquier trabajo del repositorio:
+los `plan` corren sin entorno.
+
+- **"Deployment branches: `main`"** en los cuatro: es la segunda barrera, por si el mapeo de WIF
+  no se comporta como se espera (pendientes 121, 123 y 124).
 
 - **Revisores.** Pon "Required reviewers" en `common` y `prod`. En un repositorio **privado**, que
   esa regla exista depende del plan de GitHub ([`pipeline.md`](pipeline.md) §4); sin ella,
@@ -158,10 +165,12 @@ gh variable set GCP_TFVARS_JSON < <ruta-fuera-del-repo>/tfvars-ci.json      # D.
 ### D.3 `GCP_TFVARS_JSON` para la rebanada vertical
 
 Para cada raíz, el pipeline copia su `terraform.tfvars.example` y encima escribe `common` más la
-llave de la raíz (`scripts/root-tfvars.py`). **`common.project_id` es obligatorio**: sin él, el
-plan de una raíz que lo declara falla (el script sale con 2). Lo que no traiga el JSON queda con
-el valor del ejemplo, que es un marcador. Esqueleto (cambia cada `<...>`; guárdalo fuera del
-repositorio):
+llave de la raíz (`scripts/root-tfvars.py`). El script sale con 2, sin escribir nada y sin que
+corra el plan, si falta `common.project_id` o si una variable que la raíz declara queda con un
+marcador de los ejemplos (`example.com`, `example-…`, `REEMPLAZAR`, `<...>` o un ID de solo
+ceros); el mensaje nombra la variable, nunca el valor. La lista de esas variables por raíz está
+en [`pipeline.md`](pipeline.md) §2. Esqueleto para la rebanada (cambia cada `<...>`; guárdalo
+fuera del repositorio):
 
 ```json
 {
@@ -177,9 +186,18 @@ repositorio):
     },
     "groups": {}
   },
-  "stages/2-networks": { "enable_vpn_dr": false },
+  "stages/2-networks": {
+    "enable_vpn_dr": false,
+    "onprem_dns_domain": "<dominio de on-premises simulado, con punto final>",
+    "labels": { "app": "network", "owner": "<equipo>", "cost_center": "<centro-de-costo>" }
+  },
+  "stages/2-networks/envs/dev": {
+    "onprem_dns_domain": "<el mismo dominio del hub>",
+    "labels": { "app": "network", "owner": "<equipo>", "cost_center": "<centro-de-costo>" }
+  },
   "stages/3-workloads/envs/dev": {
     "enable_cloud_run": false,
+    "cloud_run_image": null,
     "enable_backup": false,
     "off_hours_shutdown": { "enabled": false },
     "domain_names": ["<dominio-de-prueba>"],
@@ -195,14 +213,21 @@ repositorio):
 - `groups` vacío mientras no haya grupos: nadie más recibe lectura por Terraform, y `user:` está
   prohibido. Con organización, los correos de grupos de Cloud Identity; sin ella, que sirva un
   grupo de Google Groups es HYPOTHESIS.
-- `enable_cloud_run = false` en la primera ejecución: todavía no hay imagen (sección E).
+- `operations_alert_email` (opcional, en `stages/1-base`): el canal que recibe las alertas de los
+  entornos además de `notification_emails` (pendiente 138).
+- `enable_cloud_run = false` en la primera ejecución: todavía no hay imagen (sección E). La
+  revisión de marcadores no mira los interruptores: `cloud_run_image` tiene que ir igual, en
+  `null` mientras Cloud Run esté apagado (con `null`, el script sale con 0: comprobado el
+  24 nov 2026 sobre una copia del repositorio) o con la imagen real (E.3).
 - `enable_backup = false` en dev, para que el destroy de la sección I no lo frene la bóveda de
   respaldos.
 - `off_hours_shutdown` apagado durante las pruebas: con Cloud SQL detenida de noche, la prueba de
   humo de dev falla a propósito. Probar el apagado son los puntos 70 a 81 de los pendientes.
 - `domain_names`: el certificado administrado del balanceador solo se emite si el dominio apunta a
   su IP.
-- No pongas `labels` en `common`: cada raíz valida las suyas.
+- **No pongas `labels` ni `onprem_dns_domain` en `common`**: cada raíz valida sus etiquetas (en
+  `3-workloads`, `labels.app` tiene que ser igual a `application`), y mientras no haya llave
+  `stages/2-networks/envs/prod`, el plan de prod se detiene en `root-tfvars.py` (E.1).
 - `terraform validate` no lee este JSON: compáralo con los `variables.tf` de cada raíz por si una
   variable cambió de nombre.
 
@@ -213,7 +238,9 @@ repositorio):
 - **Protección de `main`** (la configura el dueño, si el plan de GitHub lo permite): PR
   obligatorio y estas comprobaciones de `pr.yml` como obligatorias: `estático (terraform 1.9.8)`,
   `estático (terraform 1.16.5)`, `conftest (pruebas y planes de ejemplo)`,
-  `scripts (autopruebas)`, `terraform-docs al día` y `plan-gate`.
+  `scripts (autopruebas)`, `terraform-docs al día`, `go (vet y pruebas sin GCP)` (nueva: si la
+  regla ya existía, hay que agregarla) y `plan-gate`. El resto de la regla, en
+  [`pipeline.md`](pipeline.md) §4.
 
 ## E. Rebanada vertical primero
 
@@ -226,32 +253,41 @@ el menor costo.
 
 - **El código tiene que estar en `main`**: `apply.yml` solo aplica desde `main`. El dueño integra
   el PR. Con `GCP_ENABLED` sin poner, el `apply.yml` que dispara el merge no toca GCP.
-- **Cómo detenerse después de dev.** `apply.yml` sigue solo hacia qa y prod cuando la prueba de
-  humo de dev pasa, y no tiene una entrada para detenerse antes. Dos opciones:
-  1. Revisores obligatorios también en el entorno `qa` y **rechazar** el despliegue de
-     `qa / 2-networks` cuando lo pida. Depende del plan de GitHub (D.1).
-  2. **Cancelar la ejecución** en cuanto termine `dev / prueba de humo`, mientras corre el trabajo
-     `plan` de `qa / 2-networks` (solo lee, sin candado). Nunca canceles un trabajo `apply`: deja
-     la raíz a medias.
-
-  Agregar esa entrada a `apply.yml` es un cambio de código pendiente (backlog).
-- **Cada merge a `main` que toque `gcp-datacenter/` o `.github/workflows/` dispara `apply.yml`**,
-  aunque solo cambie documentación (por ejemplo, `pendientes-apply.md`). Con `GCP_ENABLED` en
-  `"true"`, esa ejecución recorre toda la cadena, qa y prod incluidos. Integra los PR de registro
-  con `GCP_ENABLED` en `"false"`, o prepárate para detenerla como arriba.
+- **Cómo detenerse después de dev.** `apply.yml` sigue hacia qa y prod cuando la prueba de humo
+  de dev pasa. Para la rebanada:
+  1. **qa:** `gh variable set GCP_DISABLED_ENVS --body "qa"`. Las raíces de qa no se planean ni
+     se aplican, y `drift.yml` tampoco las planea ([`pipeline.md`](pipeline.md) §1.2).
+  2. **prod no se puede apagar con esa variable** (con `prod`, el trabajo `GCP habilitado` falla y
+     no se aplica nada). Con qa apagado, `prod / 2-networks` empieza después de la prueba de humo
+     de dev, y su `plan` se detiene en `root-tfvars.py` (código 2) mientras `GCP_TFVARS_JSON` no
+     tenga la llave `stages/2-networks/envs/prod` con valores reales (`labels` y
+     `onprem_dns_domain` llevan marcador en el ejemplo; D.3). La ejecución termina **en rojo**
+     en `prod / 2-networks`, sin aplicar nada de prod: es lo esperado en la rebanada. Lo mismo
+     le pasa cada día al plan de las raíces de prod en `drift.yml`.
+  3. Otras salidas: si `prod` tiene revisores, **rechazar** su aprobación (no llega a pedirse
+     mientras su plan falle); o `GCP_ENABLED` distinto de `"true"`, que no aplica nada.
+- **Un merge que solo cambia documentación ya no dispara `apply.yml`**: los `paths` del flujo
+  excluyen `gcp-datacenter/docs/**` y los `.md` de `gcp-datacenter/`, así que un PR de registro
+  (por ejemplo, de `pendientes-apply.md`) no recorre la cadena. Comprobarlo con el primer merge
+  de ese tipo es el pendiente 144; hasta entonces, revisa en Actions que no se lanzó ninguna
+  ejecución de `apply`. Un merge que toca código sí la dispara, qa y prod incluidos (salvo lo
+  que apague `GCP_DISABLED_ENVS`).
 
 ### E.2 Primera ejecución: Cloud SQL sin Cloud Run
 
 ```bash
+gh variable set GCP_DISABLED_ENVS --body "qa"
 gh variable set GCP_ENABLED --body "true"
 gh workflow run apply.yml --ref main
 gh run watch
 ```
 
 Orden: `1-base` → `2-networks (hub)` → `dev / 2-networks` → `dev / 3-workloads` →
-`dev / prueba de humo`; ahí te detienes (E.1). Cada raíz tiene un trabajo `plan` (cuenta de
-lectura) y, si hay cambios, uno `apply` (cuenta de la raíz) que solo aplica si la huella del plan
-coincide con la revisada. Mide el tiempo de cada raíz.
+`dev / prueba de humo`; después, el `plan` de `prod / 2-networks` falla en `root-tfvars.py` y
+ahí termina (E.1). Cada raíz tiene un trabajo `plan` (cuenta de lectura) y, si hay cambios, uno
+`apply` (cuenta de la raíz) que solo aplica si la huella del plan coincide con la revisada. Mide
+el tiempo de cada raíz. La primera ejecución con `GCP_DISABLED_ENVS` es también el pendiente 143
+(que GitHub evalúe bien las condiciones con trabajos omitidos).
 
 La prueba de humo (`tests/e2e/smoke_test.go`) crea Connectivity Tests con la cuenta de lectura:
 dev → Cloud SQL por IP privada (siempre; debe ser alcanzable), Internet → balanceador de dev en
@@ -286,40 +322,67 @@ La sube una identidad de `artifact_registry_publishers` de `1-base` (nunca `user
 como dueña del proyecto, tu cuenta ya puede escribir (HYPOTHESIS: que `owner` alcance); anótalo
 como paso manual. Después, en la llave `stages/3-workloads/envs/dev` de `GCP_TFVARS_JSON`:
 `"enable_cloud_run": true` y `"cloud_run_image": "<REPO>/hello:1.0.0"` (una versión, nunca
-`latest`). Lanza `apply.yml` otra vez y detente después de dev.
+`latest`). Lanza `apply.yml` otra vez; con `GCP_DISABLED_ENVS=qa` termina otra vez en
+`prod / 2-networks`. La cuenta `<prefix>-dev-app-run` que usa el servicio ya la creó `1-base`
+en la primera ejecución (pendiente 131).
 
 ### E.4 Qué mirar al terminar la rebanada
 
 - La ejecución en verde hasta `dev / prueba de humo`, con su tiempo.
-- `gh workflow run drift.yml`: ninguna incidencia nueva (segundo plan sin cambios) y el trabajo de
-  recursos no administrados en verde. La lista de permitidos nunca se probó contra un proyecto
+- `gh workflow run drift.yml`: ninguna incidencia nueva (segundo plan sin cambios) en `1-base`,
+  el hub y dev, y el trabajo de recursos no administrados en verde. Las raíces de prod fallan en
+  `root-tfvars.py`, como en E.1; las de qa no se planean. La lista de permitidos nunca se probó contra un proyecto
   real (pendiente 49): si lista algo que creó Google o la imagen de E.3 (HYPOTHESIS: que Cloud
   Asset la indexe), se agrega una regla con su motivo por PR ([runbook 05](runbooks/05-respuesta-a-drift.md)).
 - En la consola: las VPC hub, `dev` y `onprem-sim` con sus peerings, los túneles de VPN arriba,
   Cloud SQL con IP privada, el servicio de Cloud Run detrás del balanceador.
 - Registra cada punto comprobado (sección G). Los primeros: 1 (estado por prefijo), 13
-  (migración), 48 (huella), 50 (prueba de humo) y 55 (primera ejecución).
+  (migración), 48 (huella), 50 (prueba de humo), 55 (primera ejecución), 123 y 124 (WIF por
+  `attribute.deploy`: los `apply` obtienen su cuenta y los `plan`, solo `tf-read`), 131 (cuentas
+  de ejecución de `1-base`) y 143 (`GCP_DISABLED_ENVS`).
 
 ## F. El resto del despliegue
 
 Con la rebanada en verde ([plan de rediseño](plan-rediseno-un-proyecto.md), R5):
 
-1. **qa y prod en modo mínimo.** En sus llaves de `stages/3-workloads/envs/<env>`, todo `enable_*`
-   en `false` salvo lo que se quiera mostrar, y en prod `enable_dr = false` también en
+1. **qa y prod en modo mínimo.** Agrega a `GCP_TFVARS_JSON` las llaves de qa y prod con sus
+   variables con marcador ([`pipeline.md`](pipeline.md) §2): `labels` y `onprem_dns_domain` en
+   `stages/2-networks/envs/<env>`; en `stages/3-workloads/envs/<env>`, `domain_names`,
+   `notification_emails`, `cloud_run_image` y `mig_image` y, en prod,
+   `gke_authenticator_security_group` e `internal_domain_names`. Lo que esté apagado va igual,
+   sin el valor del ejemplo: `null` en las imágenes y el grupo de GKE, `[]` en
+   `internal_domain_names` sin balanceador interno. Todo
+   `enable_*` en `false` salvo lo que se quiera mostrar, y en prod `enable_dr = false` también en
    `stages/2-networks/envs/prod`. Cloud SQL se crea siempre. Publica antes la imagen en los
    repositorios de qa y prod si vas a encender Cloud Run.
 2. **Antes de desplegar prod, decide cómo vas a apagarlo:** prod no tiene flujo de destroy y su
    Cloud SQL exige `deletion_protection = true` (sección I).
-3. Lanza `apply.yml` sin detenerte. Mide el tiempo total del despliegue.
+3. Quita qa de `GCP_DISABLED_ENVS` (`gh variable delete GCP_DISABLED_ENVS`) y lanza `apply.yml`
+   sin detenerte. Mide el tiempo total del despliegue.
 4. **Opcional, si hay presupuesto:**
    - Cómputo en prod, para el criterio "una VM de prod alcanza on-premises y resuelve su DNS"
-     (pendientes 6, 7, 36 y 37). En modo simulado falta un servidor DNS en `onprem-sim` que el
-     código no crea (README, criterios de aceptación): si lo creas a mano, anótalo como paso
-     manual y espera que el trabajo de recursos no administrados lo liste.
+     (pendientes 6, 7, 36 y 37). En modo simulado, el servidor DNS de `onprem-sim` es la VM DNS
+     de prueba, que ahora es código (`stages/2-networks/onprem_dns.tf`): e2-micro con Debian 12,
+     sin IP pública, en la primera IP de `onprem_dns_servers`. Orden: `onprem_dns_vm = true` en
+     `stages/0-bootstrap/terraform.tfvars` y apply a mano de `0-bootstrap` (rol de VM del hub);
+     después `"onprem_dns_vm": true` en la llave `stages/2-networks` y `apply.yml`, que aplica
+     `1-base` (crea la cuenta `<prefix>-common-net-dns`) antes que el hub (crea la VM). Exige
+     `simulate_onprem = true`. Comprobarla son los pendientes 128 a 130 (`dig
+     dns.<onprem_dns_domain>` desde una VM de un spoke).
+   - GKE (`enable_gke`) pide dos pasadas: el `apply` de `3-workloads` crea el primer clúster (y
+     con él el pool de Workload Identity del proyecto) con un aviso de que falta el enlace;
+     después `"gke_workload_identity_bindings": true` en la llave `stages/1-base` y `apply.yml`
+     otra vez (pendiente 135). El namespace de la aplicación es `<app>-<env>`.
    - DR (`enable_vpn_dr = true` en el hub y `enable_dr = true` en las dos raíces de prod) con el
-     simulacro del [runbook 04](runbooks/04-conmutacion-a-dr.md).
+     simulacro del [runbook 04](runbooks/04-conmutacion-a-dr.md). prod tiene que estar en
+     `dr_environments` de `1-base` (lo está por defecto): solo esos entornos tienen las llaves de
+     la región de DR.
 
    Esto acerca el costo al del diseño completo: hazlo en un bloque corto.
+5. **On-premises real** (`simulate_onprem = false` en el hub): hoy no se puede por el pipeline.
+   El plan del hub corre con `tf-read`, que no puede leer el secreto de la VPN real, y falla
+   (`stages/2-networks/vpn.tf`; limitación conocida, pendiente 151). Quédate con el modo
+   simulado.
 
 ## G. Qué comprobar y cómo registrarlo
 
@@ -329,8 +392,7 @@ Con la rebanada en verde ([plan de rediseño](plan-rediseno-un-proyecto.md), R5)
 | Segundo `plan` sin cambios | `drift.yml` después del apply: ninguna incidencia nueva |
 | `destroy` de dev sin huérfanos | Sección I: `destroy.yml` con dev en verde, incluida la búsqueda de huérfanos en el proyecto |
 | El pipeline bloquea un PR que viola una política | PR de prueba que cambie algo desplegado, por ejemplo una IP pública en la instancia de Cloud SQL de dev o un miembro `user:` en un IAM: `pr.yml` debe fallar en Conftest (pendiente 51). No lo integres |
-| Una VM de prod alcanza on-premises y resuelve su DNS | Prueba de humo de dev (ruta hacia `onprem-sim`) y, con cómputo en prod, una Connectivity Test y una consulta DNS desde una VM de prod (sección F) |
-| Sin hallazgos críticos ni altos en SCC | [`cumplimiento-cis.md`](cumplimiento-cis.md) §6 |
+| Una VM de prod alcanza on-premises y resuelve su DNS | Prueba de humo de dev (ruta hacia `onprem-sim`) y, con cómputo en prod y la VM DNS de `onprem-sim`, una Connectivity Test y `dig dns.<onprem_dns_domain>` desde una VM de prod (sección F; pendientes 129 y 130) || Sin hallazgos críticos ni altos en SCC | [`cumplimiento-cis.md`](cumplimiento-cis.md) §6 |
 | Simulacro de DR dentro del RTO | Runbook 04 |
 | Cero recursos creados a mano | Trabajo de recursos no administrados de `drift.yml` en verde |
 
@@ -346,8 +408,9 @@ Además:
 
 - Guarda capturas y los enlaces a las ejecuciones de GitHub Actions, fuera del repositorio si
   muestran correos, IDs o la cuenta de facturación.
-- Los registros van en tu rama `verif/<AAAA-MM-DD>` y entran por PR. Nada directo a `main`: el
-  merge dispara `apply.yml` (sección E.1).
+- Los registros van en tu rama `verif/<AAAA-MM-DD>` y entran por PR. Nada directo a `main`. Un
+  merge de solo documentación no debe disparar `apply.yml` (sección E.1, pendiente 144); uno que
+  toque código sí.
 - Las pruebas de integración (Terratest) son opcionales y cuestan:
   [`tests/README.md`](../tests/README.md).
 
@@ -366,7 +429,9 @@ Además:
 ## I. Apagar todo al terminar
 
 1. **Destroy de dev y qa con `destroy.yml`** (criterio "`destroy` de dev sin huérfanos"), con
-   `GCP_ENABLED` todavía en `"true"` (el flujo lo exige):
+   `GCP_ENABLED` todavía en `"true"` (el flujo lo exige). Antes, para que ningún push los vuelva
+   a crear a mitad del camino, `gh variable set GCP_DISABLED_ENVS --body "dev,qa"`:
+   `destroy.yml` no mira esa variable y `apply.yml` ya no toca sus raíces.
 
    ```bash
    gh workflow run destroy.yml --ref main -f entorno=dev -f confirmacion=dev
@@ -374,21 +439,24 @@ Además:
    ```
 
    Destruye `3-workloads/envs/dev` y termina buscando huérfanos en el proyecto con Cloud Asset
-   Inventory. Guarda el resumen como evidencia. Después, el spoke, con
+   Inventory. Guarda el resumen como evidencia; si lista restos de GKE como aviso
+   (`AVISO-GKE`), revísalos a mano (pendiente 140). Después, el spoke, con
    `-f incluir_red=true`: la conexión de Private Service Access puede tardar días en poder
    borrarse después de borrar Cloud SQL (HYPOTHESIS, ADR 0029 §8); si falla por eso, vuelve a
    lanzarlo días después (las raíces ya vacías se saltan). Lo mismo para qa. Si se detiene, el
    resumen dice en qué raíz y por qué (puntos 11 y 85 a 89 de los pendientes).
-2. **`gh variable set GCP_ENABLED --body "false"`** en cuanto termine: con `"true"`, el siguiente
-   push a `main` vuelve a crear lo destruido. Para recrear un entorno pronto, cambia
-   `sql_instance_name` (por ejemplo `sql2`): el nombre de una instancia borrada no se reutiliza de
-   inmediato (HYPOTHESIS, descripción de la variable).
+2. **`gh variable set GCP_ENABLED --body "false"`** en cuanto termine, si no quieres que se
+   aplique nada más (lo común y prod incluidos). Si prod y lo común siguen y solo dev y qa quedan
+   fuera, basta `GCP_DISABLED_ENVS=dev,qa` del paso 1: sin ella, el siguiente push a `main`
+   vuelve a crear lo destruido. Para recrear un entorno, quítalo de `GCP_DISABLED_ENVS`; si es
+   pronto, cambia `sql_instance_name` (por ejemplo `sql2`): el nombre de una instancia borrada no
+   se reutiliza de inmediato (HYPOTHESIS, descripción de la variable).
 3. **Lo que queda** no tiene flujo de destroy, a propósito:
 
    | Qué | Dónde | Cuesta |
    |---|---|---|
    | prod (si se desplegó): cargas, Cloud SQL con protección contra borrado, spoke | `3-workloads/envs/prod`, `2-networks/envs/prod` | Sí, Cloud SQL y NAT |
-   | Hub: VPN (y `onprem-sim` con la suya), Cloud DNS | `2-networks` | Sí, los túneles de VPN |
+   | Hub: VPN (y `onprem-sim` con la suya y, si se creó, la VM DNS de prueba), Cloud DNS | `2-networks` | Sí, los túneles de VPN |
    | Llaves, secretos, repositorios, bucket de logs, alertas | `1-base` | Poco; las llaves KMS no se pueden borrar |
    | Bucket de estado, cuentas, WIF, presupuesto | `0-bootstrap` | Muy poco |
 
@@ -459,7 +527,10 @@ Reglas:
 - Cada vez que comprobemos un punto de pendientes-apply.md, agrega debajo
   "Verificado el AAAA-MM-DD con `<comando>`: <resultado>" o
   "Falló el AAAA-MM-DD con `<comando>`: <error>".
-- Haz primero la rebanada vertical (sección E de la guía) y detente después de dev.
+- Haz primero la rebanada vertical (sección E de la guía) y detente después de dev: qa apagado
+  con la variable GCP_DISABLED_ENVS; prod no se puede apagar así y su plan se detiene en
+  scripts/root-tfvars.py mientras GCP_TFVARS_JSON no tenga sus valores reales (la ejecución
+  termina en rojo en prod / 2-networks a propósito).
 - Lleva la cuenta del costo: dime cuánto tiempo llevamos con recursos encendidos y recuérdame
   apagar (sección I de la guía).
 ```
