@@ -159,7 +159,7 @@ variable "state_versions_to_keep" {
 }
 
 variable "github_repository" {
-  description = "Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation. Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github_repository_id y github_repository_owner_id."
+  description = "Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation, escrito exactamente como la afirmación repository del token (mismas mayúsculas y minúsculas). Qué repositorio entra lo deciden github_repository_id y github_repository_owner_id; este nombre decide qué flujos reutilizables pueden tomar una cuenta que escribe (job_workflow_ref tiene que empezar con <dueño>/<repositorio>/.github/workflows/). Si el repositorio se renombra, las cuentas que escriben dejan de aceptar tokens hasta volver a aplicar 0-bootstrap con el nombre nuevo."
   type        = string
   nullable    = false
 

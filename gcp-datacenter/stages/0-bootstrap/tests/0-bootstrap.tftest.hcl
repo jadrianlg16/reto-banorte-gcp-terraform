@@ -314,13 +314,37 @@ run "plan_con_valores_de_ejemplo" {
   }
   assert {
     condition = alltrue([
-      module.stage_iam.bindings["wif|1-base|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/common",
-      module.stage_iam.bindings["wif|2-networks|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/common",
-      module.stage_iam.bindings["wif|2-networks/dev|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/dev",
-      module.stage_iam.bindings["wif|3-workloads/prod|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.environment/prod",
+      module.stage_iam.bindings["wif|1-base|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.deploy/common",
+      module.stage_iam.bindings["wif|2-networks|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.deploy/common",
+      module.stage_iam.bindings["wif|2-networks/dev|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.deploy/dev",
+      module.stage_iam.bindings["wif|3-workloads/prod|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.deploy/prod",
       module.stage_iam.bindings["wif|read|roles/iam.workloadIdentityUser"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/attribute.repository_id/100000001",
     ])
-    error_message = "1-base y el hub solo con el entorno common, cada cuenta de entorno con el suyo y tf-read con todo el repositorio."
+    error_message = "1-base y el hub solo con attribute.deploy common, cada cuenta de entorno con el suyo y tf-read con todo el repositorio."
+  }
+  assert {
+    condition = alltrue([
+      for k, b in module.stage_iam.bindings :
+      strcontains(b.member, "/attribute.deploy/") if b.role == "roles/iam.workloadIdentityUser" && k != "wif|read|roles/iam.workloadIdentityUser"
+    ])
+    error_message = "Toda cuenta que escribe se liga a attribute.deploy (main, flujo del repositorio y entorno), nunca a attribute.environment."
+  }
+  assert {
+    condition = google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.deploy"] == join(" ", [
+      "('environment' in assertion",
+      "&& assertion.ref == 'refs/heads/main'",
+      "&& 'job_workflow_ref' in assertion",
+      "&& assertion.job_workflow_ref.startsWith('example-org/example-repo/.github/workflows/'))",
+      "? assertion.environment : 'none'",
+    ])
+    error_message = "attribute.deploy exige main, un flujo de .github/workflows/ de este repositorio y un entorno; si no, 'none'."
+  }
+  assert {
+    condition = alltrue([
+      google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.environment"] == "'environment' in assertion ? assertion.environment : 'none'",
+      length(google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.deploy"]) <= 2048,
+    ])
+    error_message = "Las afirmaciones opcionales se leen solo si están, y cada expresión cabe en 2048 caracteres."
   }
 
   # --- Roles personalizados ---

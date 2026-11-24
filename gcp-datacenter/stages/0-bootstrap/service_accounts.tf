@@ -261,12 +261,14 @@ locals {
 
   # --- Principales de WIF (ADR 0029 §3) -----------------------------------------------------------
   # El proveedor solo acepta tokens del repositorio autorizado (attribute_condition por IDs
-  # numéricos, wif.tf). Dentro de él: las cuentas de 1-base y del hub solo con el entorno de
-  # GitHub common, las de entorno solo con su entorno y tf-read con cualquier trabajo.
+  # numéricos, wif.tf). Dentro de él: las cuentas de 1-base y del hub solo con attribute.deploy
+  # common, las de entorno solo con su entorno (un trabajo de main, de un flujo de este
+  # repositorio y con ese entorno de GitHub; local.wif_deploy en wif.tf) y tf-read con cualquier
+  # trabajo.
   wif_pool_name = google_iam_workload_identity_pool.github.name
   wif_environment_principal = {
     for env in distinct([for r in values(local.stage_roots) : r.github_environment]) :
-    env => "principalSet://iam.googleapis.com/${local.wif_pool_name}/attribute.environment/${env}"
+    env => "principalSet://iam.googleapis.com/${local.wif_pool_name}/attribute.deploy/${env}"
   }
   wif_repository_principal = "principalSet://iam.googleapis.com/${local.wif_pool_name}/attribute.repository_id/${var.github_repository_id}"
 

@@ -114,18 +114,28 @@ condicionados. `enable_deny_policy = false` quita la política (quien aplica nec
 El proveedor acepta solo tokens con
 `assertion.repository_id == "<github_repository_id>" && assertion.repository_owner_id == "<github_repository_owner_id>"`
 (`attribute_condition`) y mapea `google.subject`, `attribute.repository_id`,
-`attribute.repository_owner_id`, `attribute.repository`, `attribute.ref` y
-`attribute.environment`. La confianza se basa en los IDs numéricos porque los nombres se pueden
-volver a registrar; los IDs no se reutilizan (`gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'`).
+`attribute.repository_owner_id`, `attribute.repository`, `attribute.ref`,
+`attribute.environment` y `attribute.deploy`. La confianza se basa en los IDs numéricos porque los
+nombres se pueden volver a registrar; los IDs no se reutilizan
+(`gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'`).
 
-Dentro del repositorio:
+`attribute.deploy` vale el entorno de GitHub del trabajo (`common`, `dev`, `qa` o `prod`) solo si
+el token trae `ref == refs/heads/main`, un `job_workflow_ref` que empieza con
+`<github_repository>/.github/workflows/` y la afirmación `environment`; si no, vale `none`. Las
+afirmaciones que pueden faltar se leen solo después de comprobar que están, para que el mapeo no
+falle en los trabajos sin entorno. Dentro del repositorio:
 
-- `tf-base` y `tf-net`: `principalSet://…/attribute.environment/common`;
-- `tf-net-<env>` y `tf-wl-<env>`: `principalSet://…/attribute.environment/<env>`;
+- `tf-base` y `tf-net`: `principalSet://…/attribute.deploy/common`;
+- `tf-net-<env>` y `tf-wl-<env>`: `principalSet://…/attribute.deploy/<env>`;
 - `tf-read`: `principalSet://…/attribute.repository_id/<github_repository_id>`.
 
-Un trabajo sin entorno de GitHub solo obtiene `tf-read`. Los pools de WIF se borran de forma
-suave durante 30 días: si se destruyen, el mismo ID no se puede reusar hasta que venzan.
+Un trabajo sin entorno de GitHub, de otra rama o de un flujo reutilizable de otro repositorio
+solo obtiene `tf-read`. Todos los trabajos que escriben son el trabajo `apply` de
+`_terraform-root.yml`, que `apply.yml` y `destroy.yml` llaman desde `main`.
+`github_repository` tiene que coincidir exactamente con la afirmación `repository` (mayúsculas
+incluidas); si el repositorio se renombra, las cuentas que escriben dejan de aceptar tokens hasta
+volver a aplicar esta etapa. Los pools de WIF se borran de forma suave durante 30 días: si se
+destruyen, el mismo ID no se puede reusar hasta que venzan.
 
 ## Cómo se ejecuta
 
@@ -172,7 +182,8 @@ que no se apagan), los agentes de servicio, OS Login, `DEPRIVILEGE`, el presupue
 el bucket y su llave, las ocho llaves de `stage_service_accounts` y los nombres de las cuentas,
 que no haya roles básicos ni `serviceAccountAdmin` y que `storage.admin`, `projectIamAdmin` y
 `cloudkms.admin` siempre lleven condición, las condiciones exactas por entorno, la tabla de
-estado, el `principalSet` de cada cuenta, los cuatro roles personalizados, la etiqueta y sus
+estado, el `principalSet` de cada cuenta y la expresión exacta de `attribute.deploy`, los cuatro
+roles personalizados, la etiqueta y sus
 enlaces y las tres reglas de la denegación; que ninguna cuenta del pipeline tenga un rol de
 proyecto que ligue o quite etiquetas (`ningun_rol_del_pipeline_liga_etiquetas`: `tagUser`,
 `tagAdmin`, roles con `*TagBinding` o `tagValueBindings`, y `cloudkms.admin` y `storage.admin`
@@ -236,7 +247,7 @@ organización y política de acceso; y que se rechazan entradas inválidas.
 | <a name="input_billing_account"></a> [billing\_account](#input\_billing\_account) | Cuenta de facturación ligada al proyecto (formato XXXXXX-XXXXXX-XXXXXX). Solo se usa para el presupuesto del proyecto; la persona que aplica necesita roles/billing.costsManager en ella. | `string` | n/a | yes |
 | <a name="input_budget_amount"></a> [budget\_amount](#input\_budget\_amount) | Monto mensual del presupuesto del proyecto, en la moneda de la cuenta de facturación (unidades enteras). | `number` | n/a | yes |
 | <a name="input_dr_region"></a> [dr\_region](#input\_dr\_region) | Región de DR (ADR 0002). Ver primary\_region. | `string` | n/a | yes |
-| <a name="input_github_repository"></a> [github\_repository](#input\_github\_repository) | Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation. Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github\_repository\_id y github\_repository\_owner\_id. | `string` | n/a | yes |
+| <a name="input_github_repository"></a> [github\_repository](#input\_github\_repository) | Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation, escrito exactamente como la afirmación repository del token (mismas mayúsculas y minúsculas). Qué repositorio entra lo deciden github\_repository\_id y github\_repository\_owner\_id; este nombre decide qué flujos reutilizables pueden tomar una cuenta que escribe (job\_workflow\_ref tiene que empezar con <dueño>/<repositorio>/.github/workflows/). Si el repositorio se renombra, las cuentas que escriben dejan de aceptar tokens hasta volver a aplicar 0-bootstrap con el nombre nuevo. | `string` | n/a | yes |
 | <a name="input_github_repository_id"></a> [github\_repository\_id](#input\_github\_repository\_id) | ID numérico del repositorio autorizado (afirmación repository\_id del token OIDC de GitHub; gh api repos/<dueño>/<repositorio> --jq .id). Es la base de la confianza de WIF: no se reutiliza si el repositorio se borra o se renombra. | `string` | n/a | yes |
 | <a name="input_github_repository_owner_id"></a> [github\_repository\_owner\_id](#input\_github\_repository\_owner\_id) | ID numérico del dueño (organización o usuario) del repositorio autorizado (afirmación repository\_owner\_id; gh api repos/<dueño>/<repositorio> --jq .owner.id). | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes (§4.3). Deben traer app, owner y cost\_center; la raíz agrega env = bootstrap y managed\_by = terraform. | `map(string)` | n/a | yes |
