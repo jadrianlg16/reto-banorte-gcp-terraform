@@ -1,5 +1,5 @@
-# Pruebas de la raíz del hub sin GCP: proveedores simulados y estado remoto de 1-org con la
-# forma exacta de su tabla de salidas (contrato §7.1).
+# Pruebas de la raíz del hub sin GCP: proveedores simulados. La raíz no lee estado remoto: el
+# proyecto entra por project_id (ADR 0029 §1) y ninguna salida de 1-base le hace falta.
 
 mock_provider "google" {
   mock_data "google_secret_manager_secret_version" {
@@ -19,38 +19,21 @@ mock_provider "random" {
   }
 }
 
-override_data {
-  target = data.terraform_remote_state.org
+# ID y self_link de la VPC hub, que el proveedor simulado no conoce en el plan: la salida de la
+# interfaz (hub_network_self_link) y el ID que usa el DNS.
+override_resource {
+  target          = module.hub.google_compute_network.this
+  override_during = plan
   values = {
-    outputs = {
-      folder_ids = {
-        common = "folders/000000000001"
-        dev    = "folders/000000000002"
-        qa     = "folders/000000000003"
-        prod   = "folders/000000000004"
-      }
-      common_project_ids = {
-        net_hub  = "bnt-common-net-hub"
-        logging  = "bnt-common-logging"
-        security = "bnt-common-security"
-        backup   = "bnt-common-backup"
-      }
-      common_project_numbers = {
-        net_hub  = "000000000011"
-        logging  = "000000000012"
-        security = "000000000013"
-        backup   = "000000000014"
-      }
-      log_bucket = "bnt-common-logging-audit"
-    }
+    id        = "projects/example-landing-zone/global/networks/bnt-common-net-hub"
+    self_link = "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub"
   }
 }
 
 # Los mismos valores que terraform.tfvars.example.
 variables {
-  org_id       = "000000000000"
-  prefix       = "bnt"
-  state_bucket = "bnt-bootstrap-tfstate-example"
+  project_id = "example-landing-zone"
+  prefix     = "bnt"
 
   primary_region = "us-central1"
   dr_region      = "us-east4"
@@ -89,8 +72,18 @@ run "hub_con_onprem_simulado" {
   command = plan
 
   assert {
-    condition     = output.hub_project_id == "bnt-common-net-hub" && output.hub_network_name == "bnt-common-net-hub"
-    error_message = "La VPC hub debe llamarse bnt-common-net-hub y vivir en el proyecto net-hub de 1-org."
+    condition = (
+      output.hub_network_name == "bnt-common-net-hub" &&
+      output.hub_network_self_link == "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub" &&
+      jsonencode(module.dns.zones["onprem"].networks) == jsonencode(["projects/example-landing-zone/global/networks/bnt-common-net-hub"])
+    )
+    error_message = "La VPC hub debe llamarse bnt-common-net-hub, vivir en project_id y publicar su self_link (interfaz del ADR 0029)."
+  }
+
+  # Interfaz del ADR 0029: spoke_supernets tal cual entra (los spokes comparan su /16).
+  assert {
+    condition     = jsonencode(output.spoke_supernets) == jsonencode({ dev = "10.10.0.0/16", prod = "10.30.0.0/16", qa = "10.20.0.0/16" })
+    error_message = "spoke_supernets debe publicar el /16 de cada entorno."
   }
 
   assert {
@@ -138,34 +131,32 @@ run "hub_con_onprem_simulado" {
     error_message = "Falta la zona de reenvío on-premises o la política de servidor DNS."
   }
 
+  # ADR 0029 §6: la política jerárquica se reemplaza por una política de red en la VPC hub,
+  # sin reglas propias (el hub no tiene cargas y lo que la organización delegaba terminaba en
+  # la denegación implícita de la VPC) y con la denegación por defecto del módulo.
   assert {
     condition = (
-      output.firewall_policy_rules["delegate-health-checks"].action == "goto_next" &&
-      toset(output.firewall_policy_rules["delegate-health-checks"].src_ip_ranges) == toset(["35.191.0.0/16", "130.211.0.0/22"]) &&
-      output.firewall_policy_rules["delegate-iap"].action == "goto_next" &&
-      toset(output.firewall_policy_rules["delegate-iap"].src_ip_ranges) == toset(["35.235.240.0/20"])
+      module.firewall_hub.policy_name == "bnt-common-net-fw-hub" &&
+      module.firewall_hub.network_id == "projects/example-landing-zone/global/networks/bnt-common-net-hub" &&
+      length(output.firewall_policy_rules) == 0
     )
-    error_message = "La política jerárquica debe delegar (goto_next) las verificaciones de salud y el IAP a la política del spoke."
-  }
-
-  assert {
-    condition     = length([for r in values(output.firewall_policy_rules) : r if r.action == "allow"]) == 0
-    error_message = "La política jerárquica no debe tener reglas allow: serían finales y anularían las etiquetas seguras del spoke (contrato §7.3)."
+    error_message = "La VPC hub debe tener su política de red bnt-common-net-fw-hub, asociada a ella y sin reglas allow."
   }
 
   assert {
     condition = (
-      output.firewall_policy_rules["delegate-internal"].action == "goto_next" &&
-      toset(output.firewall_policy_rules["delegate-internal"].src_ip_ranges) == toset(["10.0.0.0/16", "10.10.0.0/16", "10.20.0.0/16", "10.30.0.0/16"]) &&
-      output.firewall_policy_rules["delegate-onprem"].action == "goto_next" &&
-      toset(output.firewall_policy_rules["delegate-onprem"].src_ip_ranges) == toset(["192.168.0.0/16"])
+      jsonencode(keys(module.firewall_hub.default_deny_rules)) == jsonencode(["ingress"]) &&
+      module.firewall_hub.default_deny_rules["ingress"].action == "deny" &&
+      module.firewall_hub.default_deny_rules["ingress"].priority == 65000 &&
+      module.firewall_hub.default_deny_rules["ingress"].enable_logging == true &&
+      jsonencode(module.firewall_hub.default_deny_rules["ingress"].src_ip_ranges) == jsonencode(["0.0.0.0/0"])
     )
-    error_message = "El tráfico interno y de on-premises debe delegarse (goto_next) a la política de red del spoke."
+    error_message = "La política del hub debe denegar toda la entrada por defecto, con registro (lo que antes negaba la organización)."
   }
 
   assert {
-    condition     = toset(keys(google_project_service.hub)) == toset(["compute.googleapis.com", "dns.googleapis.com"])
-    error_message = "La raíz debe habilitar Compute y DNS en net-hub."
+    condition     = length(module.firewall_hub.secure_tag_key_ids) == 0
+    error_message = "El hub no necesita etiquetas seguras."
   }
 
   # Sesiones BGP leídas de los recursos google_compute_router_peer (salida bgp_peers).
@@ -218,22 +209,16 @@ run "hub_con_onprem_simulado" {
     error_message = "La punta simulada de DR necesita su router en us-east4 (sin subred), las IP invertidas y la prioridad de DR."
   }
 
-  # Reenvío DNS en modo simulado: delegación solo hacia onprem-sim y política de red propia.
+  # Reenvío DNS en modo simulado: política de red propia de onprem-sim, asociada a esa VPC del
+  # mismo proyecto, con la denegación por defecto y solo DNS desde 35.199.192.0/19 e IAP.
   assert {
     condition = (
-      output.firewall_policy_rules["delegate-dns-onprem-sim"].action == "goto_next" &&
-      jsonencode(output.firewall_policy_rules["delegate-dns-onprem-sim"].src_ip_ranges) == jsonencode(["35.199.192.0/19"]) &&
-      jsonencode(output.firewall_policy_rules["delegate-dns-onprem-sim"].target_resources) == jsonencode(["https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-onprem-sim"]) &&
-      jsonencode(output.firewall_policy_rules["delegate-dns-onprem-sim"].layer4_configs) == jsonencode([{ ip_protocol = "tcp", ports = ["53"] }, { ip_protocol = "udp", ports = ["53"] }])
+      module.firewall_onprem_sim[0].policy_name == "bnt-common-net-fw-onprem-sim" &&
+      module.firewall_onprem_sim[0].network_id == "projects/example-landing-zone/global/networks/bnt-common-net-onprem-sim" &&
+      module.firewall_onprem_sim[0].default_deny_rules["ingress"].action == "deny" &&
+      output.onprem_sim_network_name == "bnt-common-net-onprem-sim"
     )
-    error_message = "Con simulate_onprem = true, la organización debe delegar 35.199.192.0/19 (TCP/UDP 53) solo hacia la VPC onprem-sim."
-  }
-
-  assert {
-    condition = alltrue([
-      for k, r in output.firewall_policy_rules : length(r.target_resources) == 0 if k != "delegate-dns-onprem-sim"
-    ])
-    error_message = "Las demás delegaciones aplican a todas las VPC (sin target_resources)."
+    error_message = "onprem-sim debe tener su propia política de red asociada a su VPC, con la denegación por defecto."
   }
 
   assert {
@@ -292,7 +277,7 @@ run "hub_real_rotacion_por_tunel" {
     simulate_onprem           = false
     onprem_asn                = 4199999999
     onprem_vpn_gateway_ips    = ["203.0.113.10", "203.0.113.11"]
-    onprem_vpn_secret_id      = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_id      = "projects/example-landing-zone/secrets/bnt-common-vpn-psk"
     onprem_vpn_secret_version = "3"
     onprem_vpn_secret_version_overrides = {
       primary-if1 = "4"
@@ -343,7 +328,7 @@ run "rechaza_version_latest" {
   variables {
     simulate_onprem           = false
     onprem_vpn_gateway_ips    = ["203.0.113.10"]
-    onprem_vpn_secret_id      = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_id      = "projects/example-landing-zone/secrets/bnt-common-vpn-psk"
     onprem_vpn_secret_version = "latest"
   }
 
@@ -356,7 +341,7 @@ run "rechaza_onprem_real_sin_version" {
   variables {
     simulate_onprem        = false
     onprem_vpn_gateway_ips = ["203.0.113.10"]
-    onprem_vpn_secret_id   = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_id   = "projects/example-landing-zone/secrets/bnt-common-vpn-psk"
   }
 
   expect_failures = [var.onprem_vpn_secret_version]
@@ -398,7 +383,7 @@ run "hub_con_onprem_real" {
   variables {
     simulate_onprem           = false
     onprem_vpn_gateway_ips    = ["203.0.113.10", "203.0.113.11"]
-    onprem_vpn_secret_id      = "projects/bnt-common-security/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_id      = "projects/example-landing-zone/secrets/bnt-common-vpn-psk"
     onprem_vpn_secret_version = "3"
     onprem_dns_servers        = ["192.168.10.10", "192.168.10.11"]
   }
@@ -409,13 +394,18 @@ run "hub_con_onprem_real" {
   }
 
   assert {
+    condition     = length(module.firewall_onprem_sim) == 0 && output.onprem_sim_firewall_policy_id == null && module.firewall_hub.policy_name == "bnt-common-net-fw-hub"
+    error_message = "Sin onprem-sim no hay política de onprem-sim, pero la VPC hub conserva la suya."
+  }
+
+  assert {
     condition     = length(random_password.vpn_shared_secret) == 0 && length(data.google_secret_manager_secret_version.vpn_shared_secret) == 1
     error_message = "Con on-premises real el secreto se lee de Secret Manager."
   }
 
   assert {
     condition = (
-      data.google_secret_manager_secret_version.vpn_shared_secret["3"].project == "bnt-common-security" &&
+      data.google_secret_manager_secret_version.vpn_shared_secret["3"].project == "example-landing-zone" &&
       data.google_secret_manager_secret_version.vpn_shared_secret["3"].secret == "bnt-common-vpn-psk" &&
       data.google_secret_manager_secret_version.vpn_shared_secret["3"].version == "3"
     )
@@ -545,4 +535,14 @@ run "rechaza_dns_onprem_fuera_de_onprem" {
   }
 
   expect_failures = [var.onprem_dns_servers]
+}
+
+run "rechaza_project_id_invalido" {
+  command = plan
+
+  variables {
+    project_id = "Proyecto_Mal"
+  }
+
+  expect_failures = [var.project_id]
 }

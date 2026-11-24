@@ -1,14 +1,16 @@
-# Política de firewall de red del spoke, asociada a su VPC (contrato §7.4). Recibe lo que la
-# política jerárquica de la organización delega con goto_next: verificaciones de salud, IAP,
-# tráfico interno y de on-premises (la organización no tiene reglas allow, contrato §7.3).
-# Estas reglas son las que de verdad permiten las verificaciones de salud (solo hacia
-# lb_backend) y el SSH por IAP (solo hacia iap_ssh). Con enable_filestore_nfs_lock_callbacks
-# también entran las llamadas de Filestore (rango psa) a los clientes NFS. Lo demás lo
-# deniega la regla por defecto del módulo (prioridad 65000, con registro).
+# Política de firewall de red del spoke, asociada a su VPC (contrato §7.4, ADR 0029 §6). Sin
+# política jerárquica, esta política es la única que decide la entrada al spoke, con la misma
+# intención que antes: lo que la organización delegaba (verificaciones de salud, IAP, tráfico
+# interno y de on-premises) lo permiten estas reglas solo hacia donde hace falta, es decir, las
+# verificaciones de salud solo hacia lb_backend y el SSH por IAP solo hacia iap_ssh. Con
+# enable_filestore_nfs_lock_callbacks también entran las llamadas de Filestore (rango psa) a
+# los clientes NFS. Lo demás, incluido lo que la organización negaba por defecto, lo deniega
+# la regla por defecto del módulo (prioridad 65000, con registro).
 #
-# Etiquetas seguras: lb_backend e iap_ssh, cada una con su propia llave y un solo valor, para
-# que una VM pueda llevar las dos. La etapa 4 otorga roles/resourcemanager.tagUser sobre los
-# valores a quien crea las instancias.
+# Etiquetas seguras: lb_backend e iap_ssh, cada una con su propia llave (padre: el proyecto;
+# ligada a esta VPC) y un solo valor, para que una VM pueda llevar las dos. Quien crea las
+# instancias necesita roles/resourcemanager.tagUser sobre los valores (salida secure_tags); esta
+# raíz no lo otorga.
 
 locals {
   google_lb_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
@@ -89,10 +91,9 @@ module "firewall" {
 
   prefix      = var.prefix
   environment = var.environment
-  policy_type = "network"
   # Se arma con valores que se conocen en el plan; la referencia a module.spoke ordena la
   # creación después de la VPC.
-  parent = "projects/${module.project.project_id}/global/networks/${module.spoke.network_name}"
+  parent = "projects/${var.project_id}/global/networks/${module.spoke.network_name}"
 
   secure_tags = {
     lb_backend = { description = "Backends de los balanceadores (externo e interno)." }

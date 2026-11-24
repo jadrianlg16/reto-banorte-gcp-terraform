@@ -1,11 +1,11 @@
 # Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
 
-billing_account = "000000-000000-000000"
-prefix          = "bnt"
-project_suffix  = ""
-environment     = "dev"
-# Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<project_suffix>]).
-state_bucket    = "bnt-bootstrap-ops-tfstate"
+# Valor real: la salida project_id de 0-bootstrap (el proyecto único, ADR 0029; el mismo del hub).
+project_id  = "example-landing-zone"
+prefix      = "bnt"
+environment = "dev"
+# Valor real: la salida state_bucket de 0-bootstrap.
+state_bucket = "bnt-bootstrap-ops-tfstate"
 
 primary_region = "us-central1"
 dr_region      = "us-east4"

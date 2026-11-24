@@ -1,49 +1,18 @@
-# Pruebas del spoke sin GCP: proveedores simulados y estado remoto de 1-org y del hub con la
-# forma exacta de sus tablas de salidas (contrato §7.1 y §7.3; spoke_supernets es una salida
-# adicional del hub). Este archivo es idéntico en envs/dev, envs/qa y envs/prod, como el
-# código: las variables comunes son las de dev y los runs spoke_qa y spoke_prod planean con
-# los valores de terraform.tfvars.example de esos entornos.
+# Pruebas del spoke sin GCP: proveedores simulados y estado remoto del hub con la forma exacta
+# de su interfaz (ADR 0029, tabla de interfaces: hub_network_self_link y spoke_supernets). Este
+# archivo es idéntico en envs/dev, envs/qa y envs/prod, como el código: las variables comunes
+# son las de dev y los runs spoke_qa y spoke_prod planean con los valores de
+# terraform.tfvars.example de esos entornos.
 
 mock_provider "google" {}
 
 mock_provider "google-beta" {}
 
 override_data {
-  target = data.terraform_remote_state.org
-  values = {
-    outputs = {
-      folder_ids = {
-        common = "folders/000000000001"
-        dev    = "folders/000000000002"
-        qa     = "folders/000000000003"
-        prod   = "folders/000000000004"
-      }
-      common_project_ids = {
-        net_hub  = "bnt-common-net-hub"
-        logging  = "bnt-common-logging"
-        security = "bnt-common-security"
-        backup   = "bnt-common-backup"
-      }
-      common_project_numbers = {
-        net_hub  = "000000000011"
-        logging  = "000000000012"
-        security = "000000000013"
-        backup   = "000000000014"
-      }
-      log_bucket           = "bnt-common-logging-audit"
-      security_alert_email = "gcp-security-admins@example.com"
-    }
-  }
-}
-
-override_data {
   target = data.terraform_remote_state.hub
   values = {
     outputs = {
-      hub_project_id        = "bnt-common-net-hub"
-      hub_network_name      = "bnt-common-net-hub"
-      hub_network_self_link = "https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-hub"
-      firewall_policy_id    = "locations/global/firewallPolicies/000000000000"
+      hub_network_self_link = "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub"
       spoke_supernets = {
         dev  = "10.10.0.0/16"
         qa   = "10.20.0.0/16"
@@ -72,18 +41,17 @@ override_resource {
   target          = module.spoke.google_compute_network.this
   override_during = plan
   values = {
-    id        = "projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke"
-    self_link = "https://www.googleapis.com/compute/v1/projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke"
+    id        = "projects/example-landing-zone/global/networks/bnt-env-net-spoke"
+    self_link = "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-env-net-spoke"
   }
 }
 
 # Valores de terraform.tfvars.example de dev (X = 10).
 variables {
-  billing_account = "000000-000000-000000"
-  prefix          = "bnt"
-  project_suffix  = ""
-  environment     = "dev"
-  state_bucket    = "bnt-bootstrap-tfstate-example"
+  project_id   = "example-landing-zone"
+  prefix       = "bnt"
+  environment  = "dev"
+  state_bucket = "bnt-bootstrap-tfstate-example"
 
   primary_region = "us-central1"
   dr_region      = "us-east4"
@@ -122,8 +90,29 @@ run "spoke_dev_sin_dr" {
   command = plan
 
   assert {
-    condition     = output.host_project_id == "bnt-dev-net-spoke" && output.network_name == "bnt-dev-net-spoke"
-    error_message = "El proyecto y la VPC deben llamarse <prefix>-<env>-net-spoke."
+    condition     = output.network_name == "bnt-dev-net-spoke" && output.network_self_link == "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-env-net-spoke"
+    error_message = "La VPC debe llamarse <prefix>-<env>-net-spoke y publicar su self_link."
+  }
+
+  # ADR 0029 §6: sin Shared VPC ni proyecto propio del spoke; todo en project_id.
+  assert {
+    condition = (
+      module.firewall.network_id == "projects/example-landing-zone/global/networks/bnt-dev-net-spoke" &&
+      module.firewall.policy_name == "bnt-dev-net-fw" &&
+      module.spoke.peerings["hub_to_spoke"].network == "projects/example-landing-zone/global/networks/bnt-common-net-hub"
+    )
+    error_message = "La política de firewall del spoke debe vivir en project_id, asociada a la VPC spoke, y el peering debe ir al hub del mismo proyecto."
+  }
+
+  # Denegación por defecto (la que antes daba la política jerárquica de la organización).
+  assert {
+    condition = (
+      module.firewall.default_deny_rules["ingress"].action == "deny" &&
+      module.firewall.default_deny_rules["ingress"].priority == 65000 &&
+      module.firewall.default_deny_rules["ingress"].enable_logging == true &&
+      jsonencode(module.firewall.default_deny_rules["ingress"].src_ip_ranges) == jsonencode(["0.0.0.0/0"])
+    )
+    error_message = "La política del spoke debe denegar toda la entrada por defecto, con registro."
   }
 
   assert {
@@ -193,27 +182,8 @@ run "spoke_dev_sin_dr" {
     error_message = "Faltan la zona privada, la de peering hacia el hub o la de googleapis.com."
   }
 
-  assert {
-    condition     = module.project.shared_vpc_host_project == null && contains(module.project.enabled_apis, "servicenetworking.googleapis.com")
-    error_message = "El proyecto debe ser host (no servicio) de Shared VPC y tener Service Networking."
-  }
-
-  # Las Connectivity Tests de la prueba de humo de dev se crean en el proyecto host.
-  assert {
-    condition     = contains(module.project.enabled_apis, "networkmanagement.googleapis.com")
-    error_message = "El proyecto host debe tener la API de Network Management (Connectivity Tests de la prueba de humo)."
-  }
-
-  # CIS: Cloud Asset (2.14), métricas y alertas de auditoría hacia security_admins (2.5 a
-  # 2.12) y flow logs al 50 % en dev (3.10, desviación del ADR 0027).
-  assert {
-    condition     = contains(module.project.enabled_apis, "cloudasset.googleapis.com") && length(module.audit_alerts.metric_names) == 9
-    error_message = "El proyecto net-spoke debe tener Cloud Asset y las métricas de auditoría."
-  }
-  assert {
-    condition     = module.audit_alerts.metric_names["network"] == "bnt-dev-ops-audit-network" && module.audit_alerts.notification_email == "gcp-security-admins@example.com"
-    error_message = "Las alertas del spoke deben ir al grupo security_admins que publica 1-org."
-  }
+  # CIS 3.10: flow logs al 50 % en dev (desviación del ADR 0027). Las métricas y alertas de
+  # auditoría (CIS 2.5 a 2.12) viven una sola vez en 1-base (ADR 0029 §4).
   assert {
     condition     = length(module.spoke.flow_log_sampling) == 2 && alltrue([for v in values(module.spoke.flow_log_sampling) : v == 0.5])
     error_message = "En dev los flow logs van al 50 % (terraform.tfvars.example, ADR 0027)."
@@ -250,9 +220,9 @@ run "spoke_dev_sin_dr" {
   # Zonas leídas de los recursos de Cloud DNS.
   assert {
     condition = (
-      toset(module.dns.zones["env"].networks) == toset(["projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke", "https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-hub"]) &&
-      module.dns.zones["onprem"].peer_network == "https://www.googleapis.com/compute/v1/projects/bnt-common-net-hub/global/networks/bnt-common-net-hub" &&
-      jsonencode(module.dns.zones["onprem"].networks) == jsonencode(["projects/bnt-env-net-spoke/global/networks/bnt-env-net-spoke"]) &&
+      toset(module.dns.zones["env"].networks) == toset(["projects/example-landing-zone/global/networks/bnt-env-net-spoke", "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub"]) &&
+      module.dns.zones["onprem"].peer_network == "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub" &&
+      jsonencode(module.dns.zones["onprem"].networks) == jsonencode(["projects/example-landing-zone/global/networks/bnt-env-net-spoke"]) &&
       module.dns.zones["googleapis"].peer_network == null
     )
     error_message = "La zona del entorno debe estar adjunta al spoke y al hub, y la de on-premises debe hacer peering con la VPC hub."
@@ -286,9 +256,25 @@ run "spoke_dev_sin_dr" {
       module.spoke.peerings["spoke_to_hub"].export_custom_routes == false &&
       module.spoke.peerings["hub_to_spoke"].export_custom_routes == true &&
       module.spoke.peerings["hub_to_spoke"].import_custom_routes == false &&
-      module.spoke.peerings["hub_to_spoke"].network == "projects/bnt-common-net-hub/global/networks/bnt-common-net-hub"
+      module.spoke.peerings["hub_to_spoke"].network == "projects/example-landing-zone/global/networks/bnt-common-net-hub"
     )
     error_message = "El peering debe importar en el spoke y exportar en el hub, nunca al revés."
+  }
+
+  # ADR 0029 §4: en el proyecto compartido, todo lo que el spoke nombra lleva <prefix>-<env>-
+  # (VPC, subredes, routers, NAT, PSA, peerings, política de firewall y zonas DNS).
+  assert {
+    condition = alltrue([
+      for n in concat(
+        [output.network_name, output.psa_range_name, module.firewall.policy_name],
+        [for s in values(output.subnets) : s.name],
+        values(output.routers),
+        values(output.nat_names),
+        [for p in values(module.spoke.peerings) : p.name],
+        values(output.dns_zone_names),
+      ) : startswith(n, "bnt-dev-")
+    ])
+    error_message = "Todo nombre que crea el spoke debe empezar con <prefix>-<env>- (ADR 0029 §4)."
   }
 }
 
@@ -371,7 +357,7 @@ run "spoke_qa" {
   }
 
   assert {
-    condition     = output.host_project_id == "bnt-qa-net-spoke" && output.private_dns_domain == "qa.empresa.internal." && length(output.nat_names) == 1
+    condition     = output.network_name == "bnt-qa-net-spoke" && module.firewall.policy_name == "bnt-qa-net-fw" && output.private_dns_domain == "qa.empresa.internal." && length(output.nat_names) == 1
     error_message = "qa debe crear bnt-qa-net-spoke, la zona qa.empresa.internal. y NAT solo en la región primaria."
   }
 }
@@ -401,7 +387,7 @@ run "spoke_prod" {
   }
 
   assert {
-    condition     = output.host_project_id == "bnt-prod-net-spoke" && output.private_dns_domain == "prod.empresa.internal." && length(output.subnets) == 6 && length(output.nat_names) == 2
+    condition     = output.network_name == "bnt-prod-net-spoke" && module.firewall.policy_name == "bnt-prod-net-fw" && output.private_dns_domain == "prod.empresa.internal." && length(output.subnets) == 6 && length(output.nat_names) == 2
     error_message = "prod debe crear bnt-prod-net-spoke, la zona prod.empresa.internal. y las subredes y NAT de las dos regiones."
   }
 }
@@ -516,4 +502,35 @@ run "rechaza_supernet_distinto_del_hub" {
   }
 
   expect_failures = [var.spoke_supernet]
+}
+
+# spoke_supernets es parte de la interfaz del hub (ADR 0029): si el hub no anuncia el /16 de
+# este entorno, on-premises no tendría ruta hacia el spoke y el plan se detiene.
+run "rechaza_entorno_que_el_hub_no_anuncia" {
+  command = plan
+
+  override_data {
+    target = data.terraform_remote_state.hub
+    values = {
+      outputs = {
+        hub_network_self_link = "https://www.googleapis.com/compute/v1/projects/example-landing-zone/global/networks/bnt-common-net-hub"
+        spoke_supernets = {
+          qa   = "10.20.0.0/16"
+          prod = "10.30.0.0/16"
+        }
+      }
+    }
+  }
+
+  expect_failures = [var.spoke_supernet]
+}
+
+run "rechaza_project_id_invalido" {
+  command = plan
+
+  variables {
+    project_id = "Proyecto_Mal"
+  }
+
+  expect_failures = [var.project_id]
 }

@@ -1,41 +1,36 @@
-# Salidas de la interfaz entre etapas (contrato §7.3).
-
-output "hub_project_id" {
-  description = "ID del proyecto net-hub."
-  value       = local.hub_project_id
-}
-
-output "hub_network_name" {
-  description = "Nombre de la VPC hub."
-  value       = module.hub.network_name
-}
+# Salidas de la interfaz entre etapas (ADR 0029, tabla de interfaces: hub_network_self_link y
+# spoke_supernets). Sin hub_project_id: todo vive en project_id (ADR 0029 §6).
 
 output "hub_network_self_link" {
   description = "self_link de la VPC hub, para el peering y las zonas de peering DNS de los spokes."
   value       = module.hub.network_self_link
 }
 
-output "firewall_policy_id" {
-  description = "ID de la política de firewall jerárquica de la organización (locations/global/firewallPolicies/<id>)."
-  value       = module.firewall_org.policy_id
-}
-
-# Salidas adicionales (no forman parte del contrato).
-
 output "spoke_supernets" {
   description = "Mapa entorno → /16 del spoke que el hub anuncia a on-premises. Cada spoke comprueba que su spoke_supernet coincida."
   value       = var.spoke_supernets
 }
 
+# Salidas adicionales (no forman parte de la interfaz).
+
+output "hub_network_name" {
+  description = "Nombre de la VPC hub."
+  value       = module.hub.network_name
+}
+
+output "firewall_policy_id" {
+  description = "ID de la política de firewall de red de la VPC hub (projects/<proyecto>/global/firewallPolicies/<nombre>). Reemplaza a la política jerárquica de la organización (ADR 0029 §6)."
+  value       = module.firewall_hub.policy_id
+}
+
 output "firewall_policy_rules" {
-  description = "Reglas de la política jerárquica creadas por la raíz, leídas de los recursos (nombre → prioridad, acción, orígenes, VPC destino y protocolos/puertos). Además, el módulo crea la denegación por defecto de la entrada (prioridad 65000)."
+  description = "Reglas propias de la política de red de la VPC hub, leídas de los recursos (nombre → prioridad, acción, orígenes y protocolos/puertos). Vacío a propósito: el hub no tiene cargas y solo queda la denegación por defecto de la entrada que crea el módulo (prioridad 65000, con registro)."
   value = {
-    for k, r in module.firewall_org.rules : k => {
-      priority         = r.priority
-      action           = r.action
-      src_ip_ranges    = r.src_ip_ranges
-      target_resources = r.target_resources
-      layer4_configs   = r.layer4_configs
+    for k, r in module.firewall_hub.rules : k => {
+      priority       = r.priority
+      action         = r.action
+      src_ip_ranges  = r.src_ip_ranges
+      layer4_configs = r.layer4_configs
     }
   }
 }

@@ -2,13 +2,13 @@
 # coinciden al truncarlos al prefijo más corto. try(..., true): un CIDR inválido lo reporta
 # la validación de formato de su propia variable, no la de traslape.
 
-variable "org_id" {
-  description = "ID numérico de la organización de GCP (la política de firewall jerárquica se crea y se asocia aquí)."
+variable "project_id" {
+  description = "ID del proyecto único de la landing zone (ADR 0029 §1; salida project_id de 0-bootstrap). Aquí viven el hub, onprem-sim y los spokes. Lo crea una persona: esta raíz no lo crea ni lo borra."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9]{6,20}$", var.org_id))
-    error_message = "org_id debe ser el ID numérico de la organización."
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id debe ser un ID de proyecto válido de GCP (6 a 30 caracteres, minúsculas, dígitos y guiones)."
   }
 }
 
@@ -148,7 +148,7 @@ variable "spoke_supernets" {
 }
 
 variable "onprem_cidrs" {
-  description = "Rangos de on-premises, real o simulado (plan: 192.168.0.0/16). Las políticas de firewall delegan este tráfico en los spokes y ningún rango de GCP puede traslaparse con ellos."
+  description = "Rangos de on-premises, real o simulado (plan: 192.168.0.0/16). Ningún rango de GCP puede traslaparse con ellos."
   type        = list(string)
 
   validation {
@@ -391,15 +391,5 @@ variable "labels" {
   validation {
     condition     = alltrue([for v in values(var.labels) : can(regex("^[a-z0-9_-]{0,63}$", v))])
     error_message = "Los valores de etiquetas van en minúsculas, dígitos, guion o guion bajo."
-  }
-}
-
-variable "state_bucket" {
-  description = "Bucket de estado de Terraform (salida state_bucket de 0-bootstrap) del que se leen las etapas anteriores."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$", var.state_bucket))
-    error_message = "state_bucket debe ser un nombre de bucket válido."
   }
 }

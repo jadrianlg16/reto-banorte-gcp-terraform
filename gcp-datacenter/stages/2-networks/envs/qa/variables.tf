@@ -2,13 +2,13 @@
 # coinciden al truncarlos al prefijo más corto. try(..., true): un CIDR inválido lo reporta
 # la validación de formato de su propia variable, no la de traslape.
 
-variable "billing_account" {
-  description = "Cuenta de facturación del proyecto net-spoke (formato XXXXXX-XXXXXX-XXXXXX)."
+variable "project_id" {
+  description = "ID del proyecto único de la landing zone (ADR 0029 §1; salida project_id de 0-bootstrap), el mismo del hub. Aquí se crean la VPC spoke y todo lo de esta raíz. Lo crea una persona: esta raíz no lo crea ni lo borra."
   type        = string
 
   validation {
-    condition     = can(regex("^[A-F0-9]{6}-[A-F0-9]{6}-[A-F0-9]{6}$", var.billing_account))
-    error_message = "billing_account debe tener la forma XXXXXX-XXXXXX-XXXXXX (hexadecimal en mayúsculas)."
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id debe ser un ID de proyecto válido de GCP (6 a 30 caracteres, minúsculas, dígitos y guiones)."
   }
 }
 
@@ -19,17 +19,6 @@ variable "prefix" {
   validation {
     condition     = can(regex("^[a-z][a-z0-9]{1,5}$", var.prefix))
     error_message = "prefix debe tener de 2 a 6 caracteres: minúsculas y dígitos, empezando con letra."
-  }
-}
-
-variable "project_suffix" {
-  description = "Sufijo opcional para que el ID del proyecto net-spoke sea único a nivel mundial. Vacío: sin sufijo."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = can(regex("^[a-z0-9]{0,8}$", var.project_suffix))
-    error_message = "project_suffix: hasta 8 caracteres en minúsculas o dígitos, sin guiones."
   }
 }
 
@@ -107,8 +96,8 @@ variable "spoke_supernet" {
     error_message = "spoke_supernet no debe traslaparse con onprem_cidrs."
   }
   validation {
-    condition     = local.hub_spoke_supernet == null || local.hub_spoke_supernet == var.spoke_supernet
-    error_message = "spoke_supernet debe coincidir con spoke_supernets[environment] del hub (el rango que el hub anuncia a on-premises)."
+    condition     = local.hub_spoke_supernet != null && local.hub_spoke_supernet == var.spoke_supernet
+    error_message = "spoke_supernet debe coincidir con spoke_supernets[environment] del hub (el rango que el hub anuncia a on-premises); si el hub no tiene este entorno, primero se agrega allí."
   }
 }
 
@@ -231,24 +220,13 @@ variable "filestore_nfs_lock_ports" {
 }
 
 variable "google_apis_vip" {
-  description = "VIP de Private Google Access al que resuelven las zonas privadas googleapis.com., gcr.io., pkg.dev. y run.app.: restricted (199.36.153.4/30, solo servicios compatibles con VPC Service Controls) o private (199.36.153.8/30, todos). Por defecto restricted en los tres entornos: prod tiene perímetro y dev/qa usan el mismo VIP para que una dependencia de una API sin soporte de VPC-SC falle antes de llegar a prod."
+  description = "VIP de Private Google Access al que resuelven las zonas privadas googleapis.com., gcr.io., pkg.dev. y run.app.: restricted (199.36.153.4/30, solo servicios compatibles con VPC Service Controls) o private (199.36.153.8/30, todos). Por defecto restricted en los tres entornos (ADR 0026): con organización, el perímetro opcional de VPC-SC rodea todo el proyecto (ADR 0029 §1), y usar el mismo VIP en todos hace que una dependencia de una API sin soporte de VPC-SC falle antes de llegar a prod."
   type        = string
   default     = "restricted"
 
   validation {
     condition     = contains(["restricted", "private"], var.google_apis_vip)
     error_message = "google_apis_vip debe ser restricted o private."
-  }
-}
-
-variable "project_deletion_policy" {
-  description = "deletion_policy del proyecto net-spoke: PREVENT (por defecto), ABANDON o DELETE. El módulo project-factory solo admite PREVENT en prod; DELETE sirve para desmontar dev en la prueba de extremo a extremo."
-  type        = string
-  default     = "PREVENT"
-
-  validation {
-    condition     = contains(["PREVENT", "ABANDON", "DELETE"], var.project_deletion_policy)
-    error_message = "project_deletion_policy debe ser PREVENT, ABANDON o DELETE."
   }
 }
 

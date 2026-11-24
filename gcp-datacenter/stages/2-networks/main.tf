@@ -1,10 +1,14 @@
-# Raíz del hub (contrato §7.3, ADR 0014): VPC hub en el proyecto net-hub, conectividad
-# híbrida, política de firewall jerárquica de la organización y DNS. Los spokes viven en
-# envs/<env> y se unen al hub por peering (ADR 0003).
+# Raíz del hub (ADR 0029 §2 y §6, ADR 0014): VPC hub, conectividad híbrida, políticas de
+# firewall de red de las VPC comunes (hub y onprem-sim) y DNS, todo en el proyecto único de la
+# landing zone (project_id). Los spokes viven en envs/<env> y se unen al hub por peering
+# (ADR 0003).
 #
 # Archivos: main.tf (red), vpn.tf (HA VPN, on-premises simulado e Interconnect),
-# firewall.tf (política jerárquica) y dns.tf (reenvío, política de servidor y registro DNS de
-# onprem-sim).
+# firewall.tf (políticas de red del hub y de onprem-sim) y dns.tf (reenvío, política de
+# servidor y registro DNS de onprem-sim).
+#
+# Las APIs del proyecto (compute, dns y, con on-premises real, secretmanager) las habilita
+# 0-bootstrap una sola vez (ADR 0029 §2); esta raíz no declara ninguna.
 
 locals {
   # El hub vive en el entorno common (contrato §4.2).
@@ -28,24 +32,12 @@ locals {
   ))
 }
 
-# APIs del proyecto net-hub que usa esta raíz. El proyecto lo crea 1-org; habilitarlas aquí
-# hace que la raíz no dependa de cómo las dejó esa etapa. disable_on_destroy = false: quitar
-# esta raíz no apaga APIs que otra etapa pueda usar.
-resource "google_project_service" "hub" {
-  for_each = toset(["compute.googleapis.com", "dns.googleapis.com"])
-
-  project                    = local.hub_project_id
-  service                    = each.value
-  disable_on_destroy         = false
-  disable_dependent_services = false
-}
-
 # VPC hub: sin ruta por defecto a internet (solo la del VIP restringido), subred primaria y
 # de DR, y un Cloud Router por región con el ASN del hub.
 module "hub" {
   source = "../../modules/network-hub"
 
-  project_id         = local.hub_project_id
+  project_id         = var.project_id
   prefix             = var.prefix
   environment        = local.environment
   network_suffix     = "hub"
@@ -64,6 +56,4 @@ module "hub" {
       description = "Subred del hub en la región de DR."
     }
   }
-
-  depends_on = [google_project_service.hub]
 }

@@ -25,8 +25,8 @@ locals {
 
   # Dominios de Google que se resuelven al VIP además de googleapis.com (llave de zona → dominio).
   # VERIFICAR-EN-APPLY: que un nodo de GKE descargue imágenes de pkg.dev y que una llamada a
-  # un servicio *.run.app desde el spoke llegue por el VIP elegido (en prod, dentro del
-  # perímetro de VPC-SC).
+  # un servicio *.run.app desde el spoke llegue por el VIP elegido (con organización, dentro
+  # del perímetro opcional de VPC-SC, ADR 0029 §1).
   google_vip_domains = {
     gcr = "gcr.io."
     pkg = "pkg.dev."
@@ -49,7 +49,7 @@ locals {
 module "dns" {
   source = "../../../../modules/dns"
 
-  project_id  = module.project.project_id
+  project_id  = var.project_id
   prefix      = var.prefix
   environment = var.environment
   networks    = [module.spoke.network_id]
@@ -60,9 +60,10 @@ module "dns" {
       type        = "private"
       domain      = local.private_dns_domain
       description = "Zona privada del entorno ${var.environment}."
-      # VERIFICAR-EN-APPLY: que la cuenta de la etapa pueda adjuntar la zona a la VPC hub
-      # (dns.networks.bindPrivateDNSZone en net-hub) y que on-premises la resuelva por el
-      # reenvío entrante del hub.
+      # VERIFICAR-EN-APPLY: que la cuenta del spoke (<prefix>-tf-net-<env>) pueda adjuntar la
+      # zona a la VPC hub del mismo proyecto (dns.networks.bindPrivateDNSZone, con el rol de
+      # proyecto que le da 0-bootstrap) y que on-premises la resuelva por el reenvío entrante
+      # del hub.
       networks = [module.spoke.network_id, local.hub_network_self_link]
     }
     onprem = {

@@ -82,8 +82,8 @@ resource "random_password" "vpn_shared_secret" {
 
 # Secreto del modo real: lo carga el equipo de red en Secret Manager fuera de Terraform. Se
 # lee una vez por versión distinta en uso (versiones numéricas fijas: una rotación entra con
-# un PR que cambia la versión, nunca sola). La cuenta de servicio de la etapa necesita
-# roles/secretmanager.secretAccessor sobre el secreto.
+# un PR que cambia la versión, nunca sola). La cuenta de servicio del hub (<prefix>-tf-net)
+# necesita roles/secretmanager.secretAccessor sobre el secreto.
 data "google_secret_manager_secret_version" "vpn_shared_secret" {
   for_each = var.simulate_onprem ? toset([]) : toset(concat([var.onprem_vpn_secret_version], values(local.vpn_secret_versions)))
 
@@ -96,7 +96,7 @@ data "google_secret_manager_secret_version" "vpn_shared_secret" {
 module "vpn_hub" {
   source = "../../modules/hybrid-connectivity"
 
-  project_id              = local.hub_project_id
+  project_id              = var.project_id
   prefix                  = var.prefix
   environment             = local.environment
   connection_name         = "onprem"
@@ -130,7 +130,7 @@ module "vpn_hub_dr" {
   source = "../../modules/hybrid-connectivity"
   count  = var.enable_vpn_dr ? 1 : 0
 
-  project_id              = local.hub_project_id
+  project_id              = var.project_id
   prefix                  = var.prefix
   environment             = local.environment
   connection_name         = "onprem-dr"
@@ -155,14 +155,14 @@ module "vpn_hub_dr" {
 # ---------------------------------------------------------------------------------------
 # On-premises simulado (ADR 0006)
 
-# VPC onprem-sim en el proyecto net-hub con una subred (192.168.0.0/24) y un Cloud Router
+# VPC onprem-sim en el proyecto único con una subred (192.168.0.0/24) y un Cloud Router
 # con el ASN de on-premises en la región primaria y, con enable_vpn_dr, otro en la de DR
 # (sin subred: solo termina la VPN de DR). Reutiliza network-hub con otro sufijo de nombre.
 module "onprem_sim" {
   source = "../../modules/network-hub"
   count  = var.simulate_onprem ? 1 : 0
 
-  project_id           = local.hub_project_id
+  project_id           = var.project_id
   prefix               = var.prefix
   environment          = local.environment
   network_suffix       = "onprem-sim"
@@ -177,8 +177,6 @@ module "onprem_sim" {
       description = "Subred de la VPC que simula on-premises (ADR 0006)."
     }
   }
-
-  depends_on = [google_project_service.hub]
 }
 
 # Punta simulada de la VPN primaria: invierte las IP de cada /30 y anuncia solo su subred.
@@ -186,7 +184,7 @@ module "vpn_onprem_sim" {
   source = "../../modules/hybrid-connectivity"
   count  = var.simulate_onprem ? 1 : 0
 
-  project_id         = local.hub_project_id
+  project_id         = var.project_id
   prefix             = var.prefix
   environment        = local.environment
   connection_name    = "onprem-sim"
@@ -212,7 +210,7 @@ module "vpn_onprem_sim_dr" {
   source = "../../modules/hybrid-connectivity"
   count  = var.simulate_onprem && var.enable_vpn_dr ? 1 : 0
 
-  project_id         = local.hub_project_id
+  project_id         = var.project_id
   prefix             = var.prefix
   environment        = local.environment
   connection_name    = "onprem-sim"
