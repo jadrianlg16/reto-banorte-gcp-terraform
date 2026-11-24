@@ -130,7 +130,8 @@ proyecto, `roles/iam.denyAdmin` (la política de denegación; `owner` no lo incl
 `roles/billing.costsManager` en la cuenta de facturación (presupuesto). Con `org_id`, además
 permiso para dar `roles/orgpolicy.policyAdmin` en la organización; con `access_policy_id`,
 `roles/accesscontextmanager.policyAdmin`. El proyecto es el proyecto de cuota (`providers.tf`):
-antes del primer plan deben estar habilitadas `cloudresourcemanager`, `serviceusage` y `storage`.
+si el primer plan falla por una API apagada, se habilitan `cloudresourcemanager`, `serviceusage`
+y `storage` con `gcloud services enable` y se repite (HYPOTHESIS: que basten esas tres).
 
 Primera ejecución (el bucket todavía no existe):
 
@@ -172,4 +173,92 @@ enlaces y las dos reglas de la denegación; las variantes sin etiquetas, sin den
 organización y política de acceso; y que se rechazan entradas inválidas.
 
 <!-- BEGIN_TF_DOCS -->
+## Requirements
+
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
+| <a name="requirement_google"></a> [google](#requirement\_google) | ~> 6.0 |
+| <a name="requirement_google-beta"></a> [google-beta](#requirement\_google-beta) | ~> 6.0 |
+
+## Providers
+
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
+| <a name="provider_google-beta"></a> [google-beta](#provider\_google-beta) | ~> 6.0 |
+
+## Modules
+
+| Name | Source | Version |
+| ---- | ------ | ------- |
+| <a name="module_stage_iam"></a> [stage\_iam](#module\_stage\_iam) | ../../modules/iam | n/a |
+| <a name="module_state_kms"></a> [state\_kms](#module\_state\_kms) | ../../modules/kms | n/a |
+
+## Resources
+
+| Name | Type |
+| ---- | ---- |
+| [google-beta_google_project_service_identity.this](https://registry.terraform.io/providers/hashicorp/google-beta/latest/docs/resources/google_project_service_identity) | resource |
+| [google_access_context_manager_access_policy_iam_member.base](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_access_policy_iam_member) | resource |
+| [google_billing_budget.project](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/billing_budget) | resource |
+| [google_compute_project_metadata_item.os_login](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_project_metadata_item) | resource |
+| [google_iam_deny_policy.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_deny_policy) | resource |
+| [google_iam_workload_identity_pool.github](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_workload_identity_pool) | resource |
+| [google_iam_workload_identity_pool_provider.github](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_workload_identity_pool_provider) | resource |
+| [google_kms_crypto_key_iam_member.state_storage_agent](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
+| [google_project_default_service_accounts.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_default_service_accounts) | resource |
+| [google_project_iam_custom_role.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_custom_role) | resource |
+| [google_project_service.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_service) | resource |
+| [google_service_account.read](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
+| [google_service_account.stage](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
+| [google_storage_bucket.state](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/storage_bucket) | resource |
+| [google_tags_location_tag_binding.state_bucket](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_location_tag_binding) | resource |
+| [google_tags_location_tag_binding.state_keyring](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_location_tag_binding) | resource |
+| [google_tags_tag_binding.pipeline_accounts](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_tag_binding) | resource |
+| [google_tags_tag_key.protection](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_tag_key) | resource |
+| [google_tags_tag_value.stage0](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_tag_value) | resource |
+| [google_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/project) | data source |
+| [google_storage_project_service_account.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/storage_project_service_account) | data source |
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_billing_account"></a> [billing\_account](#input\_billing\_account) | Cuenta de facturación ligada al proyecto (formato XXXXXX-XXXXXX-XXXXXX). Solo se usa para el presupuesto del proyecto; la persona que aplica necesita roles/billing.costsManager en ella. | `string` | n/a | yes |
+| <a name="input_budget_amount"></a> [budget\_amount](#input\_budget\_amount) | Monto mensual del presupuesto del proyecto, en la moneda de la cuenta de facturación (unidades enteras). | `number` | n/a | yes |
+| <a name="input_dr_region"></a> [dr\_region](#input\_dr\_region) | Región de DR (ADR 0002). Ver primary\_region. | `string` | n/a | yes |
+| <a name="input_github_repository"></a> [github\_repository](#input\_github\_repository) | Repositorio de GitHub (<dueño>/<repositorio>) autorizado por Workload Identity Federation. Solo es informativo (descripción del proveedor, atributo attribute.repository): la confianza se basa en github\_repository\_id y github\_repository\_owner\_id. | `string` | n/a | yes |
+| <a name="input_github_repository_id"></a> [github\_repository\_id](#input\_github\_repository\_id) | ID numérico del repositorio autorizado (afirmación repository\_id del token OIDC de GitHub; gh api repos/<dueño>/<repositorio> --jq .id). Es la base de la confianza de WIF: no se reutiliza si el repositorio se borra o se renombra. | `string` | n/a | yes |
+| <a name="input_github_repository_owner_id"></a> [github\_repository\_owner\_id](#input\_github\_repository\_owner\_id) | ID numérico del dueño (organización o usuario) del repositorio autorizado (afirmación repository\_owner\_id; gh api repos/<dueño>/<repositorio> --jq .owner.id). | `string` | n/a | yes |
+| <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes (§4.3). Deben traer app, owner y cost\_center; la raíz agrega env = bootstrap y managed\_by = terraform. | `map(string)` | n/a | yes |
+| <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en todos los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
+| <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). Con dr\_region y us forma las ubicaciones de los llaveros de entorno que la condición de IAM de las cuentas de cargas reconoce. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto único (ADR 0029 §1). Lo crea una persona con la consola o gcloud y lo liga a una cuenta de facturación de pago; ninguna raíz lo crea ni lo borra. | `string` | n/a | yes |
+| <a name="input_access_policy_id"></a> [access\_policy\_id](#input\_access\_policy\_id) | ID numérico de la política de Access Context Manager de la organización, si existe. Con él, la cuenta de 1-base recibe roles/accesscontextmanager.policyEditor sobre esa política para el perímetro opcional de VPC-SC. null (por defecto): sin perímetro. Exige org\_id. | `string` | `null` | no |
+| <a name="input_additional_apis"></a> [additional\_apis](#input\_additional\_apis) | APIs extra que se habilitan en el proyecto además de las fijas (por ejemplo bigquery.googleapis.com). Se habilitan una sola vez y no se apagan al destruir. | `set(string)` | `[]` | no |
+| <a name="input_budget_alert_thresholds"></a> [budget\_alert\_thresholds](#input\_budget\_alert\_thresholds) | Umbrales de alerta del presupuesto sobre el gasto real, como fracción del monto (0.5 = 50 %). Además se alerta al 100 % del gasto pronosticado. | `list(number)` | <pre>[<br/>  0.5,<br/>  0.75,<br/>  0.9,<br/>  1<br/>]</pre> | no |
+| <a name="input_enable_deny_policy"></a> [enable\_deny\_policy](#input\_enable\_deny\_policy) | Si es true (por defecto), crea la política de denegación del proyecto contra las nueve cuentas del pipeline (ADR 0029 §5). Sin etiquetas solo lleva la regla sin condición (WIF, roles personalizados, llaves de cuentas y borrar el proyecto). Quien aplica necesita roles/iam.denyAdmin. | `bool` | `true` | no |
+| <a name="input_enable_protection_tags"></a> [enable\_protection\_tags](#input\_enable\_protection\_tags) | Si es true (por defecto), crea la etiqueta <prefix>-proteccion = etapa-0 y la liga al bucket y al llavero del estado y a las nueve cuentas del pipeline (ADR 0029 §5). false solo si un apply demuestra que las etiquetas no funcionan en el proyecto; la protección queda entonces en los roles condicionados. | `bool` | `true` | no |
+| <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con ubicación (§4.2). Debe incluir la ubicación de KMS del estado (lower(state\_bucket\_location): us, eu o asia). | `map(string)` | <pre>{<br/>  "asia": "asia",<br/>  "eu": "eu",<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
+| <a name="input_name_suffix"></a> [name\_suffix](#input\_name\_suffix) | Sufijo opcional del nombre del bucket de estado para que sea único a nivel mundial (los nombres de bucket son globales). Vacío: sin sufijo. | `string` | `""` | no |
+| <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). null (por defecto): proyecto sin organización; no se da roles/orgpolicy.policyAdmin a la cuenta de 1-base. | `string` | `null` | no |
+| <a name="input_state_bucket_dual_regions"></a> [state\_bucket\_dual\_regions](#input\_state\_bucket\_dual\_regions) | Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo ["us-central1", "us-east4"]), dentro de state\_bucket\_location; lleva replicación turbo. Vacío (por defecto): bucket multirregional. | `list(string)` | `[]` | no |
+| <a name="input_state_bucket_location"></a> [state\_bucket\_location](#input\_state\_bucket\_location) | Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state\_bucket\_dual\_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary\_region. La ubicación de un bucket no se cambia después de crearlo. | `string` | `"US"` | no |
+| <a name="input_state_versions_to_keep"></a> [state\_versions\_to\_keep](#input\_state\_versions\_to\_keep) | Versiones no actuales de cada archivo de estado que se conservan en el bucket; las más viejas se borran. Permiten recuperar un estado dañado. | `number` | `20` | no |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_custom_role_ids"></a> [custom\_role\_ids](#output\_custom\_role\_ids) | Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret\_container\_admin, kms\_secret\_iam\_granter, service\_account\_manager, repository\_iam\_granter y off\_hours\_scheduler. |
+| <a name="output_project_id"></a> [project\_id](#output\_project\_id) | ID del proyecto único. |
+| <a name="output_project_number"></a> [project\_number](#output\_project\_number) | Número del proyecto único. |
+| <a name="output_read_service_account"></a> [read\_service\_account](#output\_read\_service\_account) | Correo de la cuenta de solo lectura <prefix>-tf-read (plan, drift, prueba de humo y huérfanos; variable GCP\_AUDIT\_SERVICE\_ACCOUNT). |
+| <a name="output_stage_service_accounts"></a> [stage\_service\_accounts](#output\_stage\_service\_accounts) | Mapa raíz (1-base, 2-networks, 2-networks/<env>, 3-workloads/<env>) → correo de la cuenta del pipeline que la aplica. |
+| <a name="output_state_bucket"></a> [state\_bucket](#output\_state\_bucket) | Nombre del bucket de estado; las raíces lo reciben como state\_bucket y en -backend-config. |
+| <a name="output_state_iam_conditions"></a> [state\_iam\_conditions](#output\_state\_iam\_conditions) | Mapa raíz → { writes, reads }: prefijos del bucket de estado que escribe y que lee la cuenta de cada raíz (ADR 0029 §3). tf-read lee todo el bucket. |
+| <a name="output_state_kms_key_id"></a> [state\_kms\_key\_id](#output\_state\_kms\_key\_id) | ID completo de la llave KMS que cifra el bucket de estado. |
+| <a name="output_workload_identity_pool"></a> [workload\_identity\_pool](#output\_workload\_identity\_pool) | Nombre completo del pool de WIF. |
+| <a name="output_workload_identity_provider"></a> [workload\_identity\_provider](#output\_workload\_identity\_provider) | Nombre completo del proveedor de WIF (projects/<número>/locations/global/workloadIdentityPools/<pool>/providers/<proveedor>), para google-github-actions/auth. |
 <!-- END_TF_DOCS -->

@@ -58,4 +58,55 @@ Nombre (§4.2 del contrato, adaptado): los perímetros no admiten guiones, así 
 corto por defecto es `<prefix>_<environment>_sec_perimeter`.
 
 <!-- BEGIN_TF_DOCS -->
+## Requirements
+
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
+| <a name="requirement_google"></a> [google](#requirement\_google) | ~> 6.0 |
+
+## Providers
+
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
+
+## Modules
+
+No modules.
+
+## Resources
+
+| Name | Type |
+| ---- | ---- |
+| [google_access_context_manager_service_perimeter.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter) | resource |
+| [google_access_context_manager_service_perimeter_dry_run_ingress_policy.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_dry_run_ingress_policy) | resource |
+| [google_access_context_manager_service_perimeter_dry_run_resource.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_dry_run_resource) | resource |
+| [google_access_context_manager_service_perimeter_ingress_policy.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_ingress_policy) | resource |
+| [google_access_context_manager_service_perimeter_resource.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_service_perimeter_resource) | resource |
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_access_policy_id"></a> [access\_policy\_id](#input\_access\_policy\_id) | ID numérico de la política de Access Context Manager de la organización, que ya existe (el módulo no la crea: es una por organización y la administra una persona). | `string` | n/a | yes |
+| <a name="input_environment"></a> [environment](#input\_environment) | Entorno del nombre del perímetro. common (el de 1-base) cuando rodea todo el proyecto único (ADR 0029 §1); dev, qa o prod si algún día se separa uno por entorno. | `string` | n/a | yes |
+| <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (por ejemplo, bnt). | `string` | n/a | yes |
+| <a name="input_restricted_services"></a> [restricted\_services](#input\_restricted\_services) | Servicios restringidos por el perímetro (por ejemplo storage.googleapis.com). Debe incluir storage.googleapis.com. | `list(string)` | n/a | yes |
+| <a name="input_egress_policies"></a> [egress\_policies](#input\_egress\_policies) | Reglas de salida opcionales. Cada una: identities (miembros serviceAccount:/group:/<br/>principal...; vacío con identity\_type), identity\_type (ANY\_IDENTITY, ANY\_USER\_ACCOUNT,<br/>ANY\_SERVICE\_ACCOUNT o null), resources (projects/<número> o "*"), external\_resources y<br/>operations (mapa servicio → lista de métodos; lista vacía = todos los métodos). | <pre>list(object({<br/>    identities         = optional(list(string), [])<br/>    identity_type      = optional(string)<br/>    resources          = optional(list(string), [])<br/>    external_resources = optional(list(string), [])<br/>    operations         = map(list(string))<br/>  }))</pre> | `[]` | no |
+| <a name="input_enforced"></a> [enforced](#input\_enforced) | true: configuración forzada (status). false: modo dry-run (spec con use\_explicit\_dry\_run\_spec), que solo registra violaciones. Por defecto dry-run (ADR 0009). | `bool` | `false` | no |
+| <a name="input_ingress_identities"></a> [ingress\_identities](#input\_ingress\_identities) | Cuentas de servicio del pipeline (serviceAccount:...) que pueden entrar al perímetro desde cualquier origen, a todos sus servicios y proyectos. | `list(string)` | `[]` | no |
+| <a name="input_perimeter_name"></a> [perimeter\_name](#input\_perimeter\_name) | Nombre corto del perímetro (solo letras, dígitos y guion bajo). Si es null: <prefix>\_<environment>\_sec\_perimeter. | `string` | `null` | no |
+| <a name="input_resources"></a> [resources](#input\_resources) | Proyectos que este módulo mete al perímetro, como projects/<número>. Otras raíces pueden agregar más con sus propios recursos (ver README). | `list(string)` | `[]` | no |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_access_policy_id"></a> [access\_policy\_id](#output\_access\_policy\_id) | ID numérico de la política de Access Context Manager (creada o recibida). |
+| <a name="output_enforced"></a> [enforced](#output\_enforced) | true si el perímetro está forzado; false si está en dry-run. Otra raíz que agregue altas lo usa para elegir el recurso. |
+| <a name="output_perimeter_name"></a> [perimeter\_name](#output\_perimeter\_name) | Nombre completo del perímetro (accessPolicies/<política>/servicePerimeters/<nombre>), el que piden los recursos de alta de proyectos. |
+| <a name="output_perimeter_short_name"></a> [perimeter\_short\_name](#output\_perimeter\_short\_name) | Nombre corto del perímetro. |
+| <a name="output_spec_ingress_policies"></a> [spec\_ingress\_policies](#output\_spec\_ingress\_policies) | Reglas de entrada dry-run (spec) que administra este módulo (recursos ...\_dry\_run\_ingress\_policy): lista de { title, ingress\_from, ingress\_to }; vacía si está forzado. No incluye las que agreguen otras raíces. Para revisión y pruebas. |
+| <a name="output_status_ingress_policies"></a> [status\_ingress\_policies](#output\_status\_ingress\_policies) | Reglas de entrada forzadas (status) que administra este módulo (recursos ...\_ingress\_policy): lista de { title, ingress\_from, ingress\_to }; vacía en dry-run. No incluye las que agreguen otras raíces. Para revisión y pruebas. |
 <!-- END_TF_DOCS -->

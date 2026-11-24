@@ -63,9 +63,7 @@ No modules.
 
 | Name | Type |
 | ---- | ---- |
-| [google_billing_account_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/billing_account_iam_member) | resource |
 | [google_compute_subnetwork_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_subnetwork_iam_member) | resource |
-| [google_folder_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/folder_iam_member) | resource |
 | [google_kms_crypto_key_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
 | [google_kms_key_ring_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_key_ring_iam_member) | resource |
 | [google_organization_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/organization_iam_member) | resource |
@@ -78,7 +76,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_bindings"></a> [bindings](#input\_bindings) | Asignaciones aditivas de un rol a un miembro sobre un recurso. Campos:<br/>- scope: organization, folder, project, billing\_account, service\_account, storage\_bucket,<br/>  kms\_key\_ring, kms\_crypto\_key, secret o subnetwork.<br/>- resource: identificador del recurso según scope (ver README).<br/>- role: rol predefinido (roles/...) o personalizado (organizations/N/roles/... o projects/P/roles/...).<br/>- member: group:, serviceAccount:, principal:// o principalSet://. Nunca user:.<br/>- key (opcional): llave estable del for\_each. Obligatoria cuando resource, role o member no<br/>  se conocen en el plan (por ejemplo, el correo de una cuenta de servicio creada en el mismo<br/>  plan); si es null se usa "scope\|resource\|role\|member".<br/>- condition (opcional): condición de IAM { title, expression, description }. | <pre>list(object({<br/>    scope    = string<br/>    resource = string<br/>    role     = string<br/>    member   = string<br/>    key      = optional(string)<br/>    condition = optional(object({<br/>      title       = string<br/>      expression  = string<br/>      description = optional(string)<br/>    }))<br/>  }))</pre> | `[]` | no |
+| <a name="input_bindings"></a> [bindings](#input\_bindings) | Asignaciones aditivas de un rol a un miembro sobre un recurso. Campos:<br/>- scope: organization, project, service\_account, storage\_bucket, kms\_key\_ring,<br/>  kms\_crypto\_key, secret o subnetwork.<br/>- resource: identificador del recurso según scope (ver README).<br/>- role: rol predefinido (roles/...) o personalizado (organizations/N/roles/... o projects/P/roles/...).<br/>- member: group:, serviceAccount:, principal:// o principalSet://. Nunca user:.<br/>- key (opcional): llave estable del for\_each. Obligatoria cuando resource, role o member no<br/>  se conocen en el plan (por ejemplo, el correo de una cuenta de servicio creada en el mismo<br/>  plan); si es null se usa "scope\|resource\|role\|member".<br/>- condition (opcional): condición de IAM { title, expression, description }. | <pre>list(object({<br/>    scope    = string<br/>    resource = string<br/>    role     = string<br/>    member   = string<br/>    key      = optional(string)<br/>    condition = optional(object({<br/>      title       = string<br/>      expression  = string<br/>      description = optional(string)<br/>    }))<br/>  }))</pre> | `[]` | no |
 
 ## Outputs
 

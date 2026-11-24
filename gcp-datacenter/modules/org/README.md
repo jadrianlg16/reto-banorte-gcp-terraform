@@ -32,4 +32,42 @@ Notas de uso:
 - El sink de auditoría ya no está aquí: es un sink de proyecto del módulo `log-export`.
 
 <!-- BEGIN_TF_DOCS -->
+## Requirements
+
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
+| <a name="requirement_google"></a> [google](#requirement\_google) | ~> 6.0 |
+
+## Providers
+
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
+
+## Modules
+
+No modules.
+
+## Resources
+
+| Name | Type |
+| ---- | ---- |
+| [google_org_policy_policy.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/org_policy_policy) | resource |
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_allowed_regions"></a> [allowed\_regions](#input\_allowed\_regions) | Regiones permitidas por gcp.resourceLocations (por ejemplo, ["us-central1", "us-east4"]). Cada una se traduce al grupo de valores in:<región>-locations, que incluye sus zonas. | `list(string)` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto único donde se aplican las políticas (padre projects/<id>, ADR 0029 §1). | `string` | n/a | yes |
+| <a name="input_additional_allowed_locations"></a> [additional\_allowed\_locations](#input\_additional\_allowed\_locations) | Valores extra para gcp.resourceLocations, tal cual: ubicaciones (por ejemplo, us para la multirregión de KMS o buckets) o grupos in:<grupo>-locations. Por defecto, ninguno. | `list(string)` | `[]` | no |
+| <a name="input_directory_customer_id"></a> [directory\_customer\_id](#input\_directory\_customer\_id) | ID de cliente de Cloud Identity / Google Workspace (Cxxxxxxxx) cuyo dominio es el único admitido en las políticas de IAM (iam.allowedPolicyMemberDomains). null (por defecto): esa política no se crea. | `string` | `null` | no |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_policy_names"></a> [policy\_names](#output\_policy\_names) | Mapa restricción → nombre completo de la política (projects/<id>/policies/<restricción>): siete políticas, u ocho con directory\_customer\_id. |
+| <a name="output_policy_parent"></a> [policy\_parent](#output\_policy\_parent) | Recurso donde se aplicaron las políticas (projects/<id>). |
 <!-- END_TF_DOCS -->
