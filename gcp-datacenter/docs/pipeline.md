@@ -1,23 +1,38 @@
 # Pipeline de GitHub Actions
 
 Cómo están armados los flujos de `.github/workflows/` (en la raíz del repositorio) y qué tiene
-que configurar el equipo en GitHub para activarlos. Contrato: §6 (estado e identidad), §9.2 y
-§9.3. Todos los flujos corren con `working-directory: gcp-datacenter`.
+que configurar el equipo en GitHub para activarlos, con toda la landing zone en un solo proyecto
+de GCP ([ADR 0029](adr/0029-un-solo-proyecto.md) §2, §3 y §8). Contrato: §6 (estado e
+identidad), §9.2 y §9.3, salvo donde el ADR 0029 diga otra cosa. Todos los flujos corren con
+`working-directory: gcp-datacenter`. El pipeline del diseño de varios proyectos vive en la rama
+`archivo/multiproyecto`.
 
-Nada de esto se ha ejecutado en GitHub ni contra GCP: los flujos pasan `actionlint` 1.7.12 y
-los scripts que usan tienen pruebas sin GCP (`scripts/selftest.sh`). Lo que solo una ejecución
-real puede probar está marcado **VERIFICAR**.
+Nada de esto se ha ejecutado en GitHub ni contra GCP: los flujos pasan `actionlint` 1.7.12
+(`actionlint .github/workflows/*.yml` desde la raíz, 24 nov 2026: código 0, sin mensajes) y los
+scripts que usan tienen pruebas sin GCP (`scripts/selftest.sh`). Lo que solo una ejecución real
+puede probar está marcado **VERIFICAR**.
 
 ## 1. Los flujos
 
 | Flujo | Disparo | Sin GCP (siempre) | Con `GCP_ENABLED = true` |
 |---|---|---|---|
-| `pr.yml` | Pull request | `scripts/check.sh` con Terraform 1.9.8 (fmt, validate, tflint, checkov; sin `terraform test`) y con 1.16.5 (todo, incluido `terraform test`); `scripts/policy-check.sh`; `scripts/selftest.sh`; `scripts/docs.sh --check`; `plan-gate` | Plan por raíz afectada (`scripts/affected-roots.sh`), Conftest sobre el plan, comentario en el PR con resumen y costo (Infracost); `plan-gate` resume los planes |
-| `apply.yml` | Push a `main` con cambios en `gcp-datacenter/**` o `.github/workflows/**`, o manual | Solo el trabajo `GCP habilitado`, que avisa que no se aplica nada | Por raíz, de 1 a 5: plan sin entorno y apply aprobado en su entorno (abajo); prueba de humo de dev antes de qa |
-| `drift.yml` | Diario (12:17 UTC) y manual | Nada | `plan -detailed-exitcode -lock=false` por raíz con incidencia `drift`; recursos no administrados por entorno (Cloud Asset Inventory) |
-| `terratest.yml` | Nocturno (06:41 UTC), manual y etiquetas `modules/<módulo>/vX.Y.Z` | `go vet ./...` y `go test -run XXX ./...` (solo compila) en `tests/`; si no hay `tests/go.mod`, avisa y termina en verde | Pruebas reales de Terratest sin `tests/e2e` (con una etiqueta, solo las del módulo); falla si se omiten más pruebas que `TERRATEST_MAX_SKIPS` |
-| `destroy.yml` | Solo manual (`workflow_dispatch`) desde `main`, entradas `entorno` (`dev` o `qa`) y `confirmacion` | El trabajo `pedido de destrucción` falla: sin GCP no se destruye nada | Destruye `5-workloads` → `4-projects` → `3-networks` del entorno con el mismo plan, huella y aprobación que `apply.yml`, y busca huérfanos en su carpeta con Cloud Asset Inventory (§1.5) |
-| `_terraform-root.yml` | Solo `workflow_call` | — | Trabajos `plan` y `apply` de una raíz; lo llama `apply.yml` y, con `destroy: true`, `destroy.yml` |
+| `pr.yml` | Pull request | `scripts/check.sh` con Terraform 1.9.8 (fmt, validate, tflint, checkov; sin `terraform test`) y con 1.16.5 (todo, incluido `terraform test`); `scripts/policy-check.sh`; `scripts/selftest.sh`; `scripts/docs.sh --check`; `plan-gate` | Plan por raíz afectada (`scripts/affected-roots.sh`) con la cuenta de lectura `tf-read` y `-lock=false`, Conftest sobre el plan, comentario en el PR con resumen y costo (Infracost); `plan-gate` resume los planes |
+| `apply.yml` | Push a `main` con cambios en `gcp-datacenter/**` o `.github/workflows/**`, o manual | Solo el trabajo `GCP habilitado`, que avisa que no se aplica nada | Por raíz, de `1-base` a las cargas de prod: plan con `tf-read` sin entorno y apply aprobado en su entorno con la cuenta de la raíz (abajo); prueba de humo de dev antes de qa |
+| `drift.yml` | Diario (12:17 UTC) y manual | Nada | `plan -detailed-exitcode -lock=false` por raíz con `tf-read` e incidencia `drift`; recursos no administrados del proyecto (Cloud Asset Inventory) |
+| `terratest.yml` | Nocturno (06:41 UTC), manual y etiquetas `modules/<módulo>/vX.Y.Z` | `go vet ./...` y `go test -run XXX ./...` (solo compila) en `tests/`; si no hay `tests/go.mod`, avisa y termina en verde | Pruebas reales de Terratest sin `tests/e2e`, por defecto en un solo proyecto de pruebas (con una etiqueta, solo las del módulo); falla si se omiten más pruebas que `TERRATEST_MAX_SKIPS` |
+| `destroy.yml` | Solo manual (`workflow_dispatch`) desde `main`, entradas `entorno` (`dev` o `qa`), `confirmacion` e `incluir_red` | El trabajo `pedido de destrucción` falla: sin GCP no se destruye nada | Destruye `3-workloads/envs/<env>` y, solo con `incluir_red = true`, el spoke `2-networks/envs/<env>`, con el mismo plan, huella y aprobación que `apply.yml`; busca huérfanos del entorno en el proyecto con Cloud Asset Inventory (§1.5) |
+| `_terraform-root.yml` | Solo `workflow_call` | — | Trabajos `plan` (con `tf-read`) y `apply` (con la cuenta de la raíz) de una raíz; lo llama `apply.yml` y, con `destroy: true`, `destroy.yml` |
+
+Cuentas del pipeline (las crea `0-bootstrap`, ADR 0029 §3; detalle en el README de
+`stages/0-bootstrap`):
+
+| Cuenta | Llave de `GCP_STAGE_SERVICE_ACCOUNTS` | Raíz que aplica | Entorno de GitHub que la obtiene |
+|---|---|---|---|
+| `<prefix>-tf-base` | `1-base` | `stages/1-base` | `common` |
+| `<prefix>-tf-net` | `2-networks` | `stages/2-networks` (hub) | `common` |
+| `<prefix>-tf-net-<env>` | `2-networks/<env>` | `stages/2-networks/envs/<env>` | `<env>` |
+| `<prefix>-tf-wl-<env>` | `3-workloads/<env>` | `stages/3-workloads/envs/<env>` | `<env>` |
+| `<prefix>-tf-read` | — (variable `GCP_AUDIT_SERVICE_ACCOUNT`) | ninguna: solo lee | cualquier trabajo del repositorio |
 
 ### 1.1 `pr.yml`
 
@@ -35,6 +50,18 @@ real puede probar está marcado **VERIFICAR**.
 él, un trabajo de plan fallido no bloquea nada porque su nombre no se puede marcar como
 obligatorio, y un trabajo omitido cuenta como aprobado.
 
+**Raíces afectadas.** `scripts/affected-roots.sh` toma como raíz cada directorio de `stages/`
+con `versions.tf`, salvo `0-bootstrap`, y da para cada una su llave de cuenta y su entorno de
+GitHub (`stages/<etapa>` → `<etapa>` y `common`; `stages/<etapa>/envs/<env>` → `<etapa>/<env>`
+y `<env>`). Un archivo de una raíz afecta solo a esa raíz; un cambio en `modules/` o
+`policies/` afecta a todas; un cambio en `stages/0-bootstrap/` no planea ninguna, porque las
+demás leen su estado, que no cambia hasta que una persona la aplica.
+
+**Plan de cada raíz.** `plan <raíz>` se autentica por WIF con `GCP_AUDIT_SERVICE_ACCOUNT`
+(`tf-read`): las cuentas que escriben solo aceptan tokens de su entorno de GitHub y este trabajo
+no tiene entorno (§5). Arma las variables con `scripts/root-tfvars.py` (§2) y corre
+`terraform plan -lock=false`, porque `tf-read` no puede escribir el candado del estado.
+
 **PR desde un fork.** HIPÓTESIS (documentación de GitHub, no probado): un `pull_request` desde
 un fork corre con un token de solo lectura, sin token OIDC (no hay Workload Identity) y sin las
 variables del repositorio, así que `GCP_ENABLED` llegaría vacío y, sin una regla propia,
@@ -47,55 +74,85 @@ repositorio y abre el PR desde ahí.
 
 ### 1.2 `apply.yml`
 
-Orden de los trabajos (cada uno espera a que el anterior termine con éxito):
+Orden de los trabajos (cada uno espera a que el anterior termine con éxito; ADR 0029 §2):
 
 ```
-gate
-org (1-org) → security (2-security) → networks-hub (3-networks)      entorno common
-  → dev-networks → dev-projects → dev-workloads                      entorno dev
-  → dev-smoke (prueba de humo de dev)
-  → qa-networks  → qa-projects  → qa-workloads                       entorno qa
-  → prod-networks → prod-projects → prod-workloads                   entorno prod
+gate (GCP habilitado)
+base (1-base) → networks-hub (2-networks, hub)                       entorno common
+  → dev-networks (2-networks/envs/dev) → dev-workloads (3-workloads/envs/dev)   entorno dev
+  → dev-smoke (prueba de humo de dev)                                 sin entorno, tf-read
+  → qa-networks → qa-workloads                                        entorno qa
+  → prod-networks → prod-workloads                                    entorno prod
 ```
 
-Cada raíz llama a `_terraform-root.yml`, que tiene dos trabajos:
+| Trabajo | Nombre en GitHub | Raíz | Llave de la cuenta | Entorno |
+|---|---|---|---|---|
+| `base` | `1-base` | `stages/1-base` | `1-base` | `common` |
+| `networks-hub` | `2-networks (hub)` | `stages/2-networks` | `2-networks` | `common` |
+| `dev-networks` | `dev / 2-networks` | `stages/2-networks/envs/dev` | `2-networks/dev` | `dev` |
+| `dev-workloads` | `dev / 3-workloads` | `stages/3-workloads/envs/dev` | `3-workloads/dev` | `dev` |
+| `dev-smoke` | `dev / prueba de humo` | — (lee estados) | `GCP_AUDIT_SERVICE_ACCOUNT` | — |
+| `qa-networks`, `qa-workloads` | `qa / 2-networks`, `qa / 3-workloads` | `stages/{2-networks,3-workloads}/envs/qa` | `2-networks/qa`, `3-workloads/qa` | `qa` |
+| `prod-networks`, `prod-workloads` | `prod / 2-networks`, `prod / 3-workloads` | `stages/{2-networks,3-workloads}/envs/prod` | `2-networks/prod`, `3-workloads/prod` | `prod` |
 
-**`plan <raíz>`** (sin entorno de GitHub):
+Cada raíz llama a `_terraform-root.yml` con `root`, `stage` (la llave de la cuenta) y
+`environment`, y ese flujo tiene dos trabajos:
 
-0. `scripts/check-main-tip.sh "$GITHUB_SHA"` (checkout con `fetch-depth: 0`): el commit de la
-   ejecución tiene que estar en `main` y ningún commit posterior de `main` puede cambiar
-   `gcp-datacenter/` ni `.github/workflows/`. Si no, falla sin planear. Ver "Ejecuciones
-   viejas" abajo. Además guarda la huella (SHA-256) de `GCP_TFVARS_JSON`,
-   `GCP_STAGE_SERVICE_ACCOUNTS` y `GCP_STATE_BUCKET` para compararla en el apply (§2).
-1. Autenticación por Workload Identity Federation con la cuenta de la etapa
-   (`GCP_STAGE_SERVICE_ACCOUNTS[<etapa>]`). Los spokes usan la de `3-networks`.
-2. `terraform.tfvars.example` → `terraform.tfvars`, y encima `zz-ci.auto.tfvars.json` con
-   `GCP_TFVARS_JSON` (`common` + la llave de la raíz); igual que `pr.yml`.
+**`plan <raíz>`** (sin entorno de GitHub, con la cuenta de lectura):
+
+0. Falla si falta `GCP_AUDIT_SERVICE_ACCOUNT`. Luego `scripts/check-main-tip.sh "$GITHUB_SHA"`
+   (checkout con `fetch-depth: 0`): el commit de la ejecución tiene que estar en `main` y
+   ningún commit posterior de `main` puede cambiar `gcp-datacenter/` ni `.github/workflows/`.
+   Si no, falla sin planear. Ver "Ejecuciones viejas" abajo. Además guarda la huella (SHA-256)
+   de `GCP_TFVARS_JSON`, `GCP_STAGE_SERVICE_ACCOUNTS` y `GCP_STATE_BUCKET` para compararla en el
+   apply (§2).
+1. Autenticación por Workload Identity Federation con `GCP_AUDIT_SERVICE_ACCOUNT` (`tf-read`).
+2. `scripts/root-tfvars.py <raíz>`: `terraform.tfvars.example` → `terraform.tfvars`, y encima
+   `zz-ci.auto.tfvars.json` con `common` + la llave de la raíz de `GCP_TFVARS_JSON`; igual que
+   `pr.yml` y `drift.yml`. Sale con 2 si la raíz declara `project_id` y no llega (§2).
 3. `terraform init -backend-config="bucket=$GCP_STATE_BUCKET"`.
-4. `terraform plan -detailed-exitcode -out=tfplan` y `terraform show -json`.
+4. `terraform plan -lock=false -detailed-exitcode -out=tfplan` y `terraform show -json`.
+   `-lock=false` porque `tf-read` solo tiene `storage.objectViewer` sobre el bucket y no puede
+   escribir el candado; el plan no escribe estado.
 5. Huella del plan: `scripts/plan-fingerprint.py` (SHA-256 de dirección, acciones, `after`,
    `after_unknown` y `after_sensitive` de cada cambio, y acciones de las salidas; no incluye el
-   estado anterior ni la fecha).
+   estado anterior ni la fecha). Además publica la variable `prefix` del plan (salida `prefix`,
+   que usa `destroy.yml`).
 6. `conftest test plan.json --policy policies`. Una denegación detiene la raíz y todo lo que
    viene después, antes de pedir aprobación.
 7. Resumen del trabajo: resultado del plan y de Conftest, la línea `Plan:`, la huella y la lista
    de recursos con cambios (acción y dirección). Se ve en la página de la ejecución mientras el
    apply espera la aprobación; los valores están en el registro del trabajo.
 
-**`apply <raíz>`** (en el entorno de la raíz; solo si el plan tiene cambios):
+**VERIFICAR** (`VERIFICAR-EN-APPLY` en `_terraform-root.yml`): que `tf-read` pueda leer
+(refrescar) cada recurso de cada raíz, también secretos, llaves e IAM. Que `roles/viewer`
+alcance es HYPOTHESIS del ADR 0029 §3. Un permiso que falte hace fallar el plan; no lo debilita.
+
+**`apply <raíz>`** (en el entorno de la raíz, con la cuenta de la raíz; solo si el plan tiene
+cambios):
 
 1. El entorno aplica sus reglas antes de que el trabajo empiece (revisores en `common` y
-   `prod`). Sin cambios, el trabajo se omite: no hay pedido de aprobación.
+   `prod`, ramas permitidas en los cuatro; §2 y §4). Sin cambios, el trabajo se omite: no hay
+   pedido de aprobación.
 2. Huella de las tres variables igual a la del trabajo `plan`; si no, falla antes de `init`
    con un mensaje que nombra el entorno (§2).
-3. Mismos pasos 1 a 4 sobre el mismo commit, y huella del plan nuevo. Si no es igual a la
-   revisada (algo cambió entre el plan y la aprobación), falla sin aplicar nada: hay que volver
-   a correr el flujo y revisar el plan nuevo.
-4. Conftest sobre ese plan.
-5. Otra vez `scripts/check-main-tip.sh "$GITHUB_SHA"`, justo antes del apply: `main` pudo
+3. Autenticación por WIF con `fromJSON(GCP_STAGE_SERVICE_ACCOUNTS)[<llave>]`: la cuenta de la
+   raíz, que solo acepta tokens de ese entorno de GitHub (ADR 0029 §3; HYPOTHESIS hasta la
+   primera ejecución, §5).
+4. `scripts/root-tfvars.py` e `init`, como en el plan, sobre el mismo commit. Vuelve a planear
+   **con** el candado (`-lock-timeout=5m`) y calcula la huella del plan nuevo. Si el plan ya no
+   tiene cambios o su huella no es la revisada (algo cambió entre el plan y la aprobación),
+   falla sin aplicar nada: hay que volver a correr el flujo y revisar el plan nuevo.
+5. Conftest sobre ese plan.
+6. Otra vez `scripts/check-main-tip.sh "$GITHUB_SHA"`, justo antes del apply: `main` pudo
    cambiar el despliegue mientras se esperaba la aprobación.
-6. `terraform apply tfplan`: el archivo que revisó Conftest en este mismo trabajo, cuyo
-   contenido es el que se aprobó.
+7. `terraform apply -lock-timeout=5m tfplan`: el archivo que revisó Conftest en este mismo
+   trabajo, cuyo contenido es el que se aprobó.
+
+**VERIFICAR** (`VERIFICAR-EN-APPLY` en `_terraform-root.yml`): que el plan con `tf-read` y el
+del apply con la cuenta de la raíz den la misma huella. Una fuente de datos que dependa de la
+identidad (por ejemplo `google_client_openid_userinfo`) la cambiaría en cada ejecución: el
+apply se detendría sin aplicar, nunca aplicaría algo no revisado.
 
 **Ejecuciones viejas.** `github.sha` queda fijo en una ejecución: un "Re-run jobs" de una
 ejecución anterior, o una aprobación que llega después de otro merge, planearía y aplicaría el
@@ -117,7 +174,7 @@ código de ese commit encima de lo que ya aplicó una ejecución más nueva. Reg
 Son las mismas rutas con las que se dispara `apply.yml` (`paths` del `push`; `selftest.sh`
 comprueba que coinciden). Por eso un commit que deja vieja a una ejecución siempre encola otra:
 la `concurrency` `apply-gcp-datacenter` la deja esperando hasta que la vieja termine (o falle
-por esta regla) y entonces planea y aplica desde `1-org` con el código nuevo.
+por esta regla) y entonces planea y aplica desde `1-base` con el código nuevo.
 
 **Estado a medias.** Si la ejecución vieja falla por esta regla después de aplicar algunas
 raíces (por ejemplo `common` y `dev` con el commit A, y la de `qa` se detiene porque se fusionó
@@ -146,44 +203,45 @@ lectura del repositorio; cifrarlo exigiría administrar una llave. La huella es 
 valores, y deja la misma garantía: se aplica exactamente lo revisado. Dos planes reales del mismo
 ejemplo, sin GCP, dan la misma huella aunque su JSON difiere en la fecha y en el orden de
 `relevant_attributes` (`scripts/testdata/fingerprint/`, `scripts/selftest.sh`). **VERIFICAR**
-con GCP que un segundo plan sin cambios reales en el medio da la misma huella en cada raíz (un
-valor que el proveedor recalcule en cada plan haría fallar el apply, nunca aplicar algo no
-revisado).
+con GCP que un segundo plan sin cambios reales en el medio da la misma huella en cada raíz
+(pendiente 48).
 
 **`dev / prueba de humo`** (`dev-smoke`, después de `dev-workloads`; qa depende de él): corre
-`TestDevSmoke` (`tests/e2e/smoke_test.go`) con la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`. No aplica
-nada: lee las salidas de `3-networks` (hub), `3-networks/envs/dev` y `5-workloads/envs/dev` desde
-el bucket de estado y corre las Connectivity Tests de dev (dev → Cloud SQL por IP privada,
-Internet → balanceador de dev en 443, dev → on-premises simulado). Falla si no hay ninguna prueba
-expresable, si alguna no da lo esperado (se exige REACHABLE o UNREACHABLE; UNDETERMINED,
-AMBIGUOUS o un paso `abort` fallan siempre), si no se puede leer una salida o describir la
-instancia de Cloud SQL (una salida en null por un recurso deshabilitado solo omite su prueba),
-o si la prueba se omite (máximo de omitidas 0 en
-`scripts/go-test-report.sh`). Solo se salta en una ejecución manual con la entrada
-`omitir_prueba_de_humo = true`, que queda como advertencia y en el resumen con el nombre de quien
-la pidió.
+`TestDevSmoke` (`tests/e2e/smoke_test.go`) con la cuenta `GCP_AUDIT_SERVICE_ACCOUNT` (`tf-read`,
+que tiene `roles/networkmanagement.admin` para las Connectivity Tests, ADR 0029 §3). No aplica
+nada: lee las salidas de `2-networks` (hub), `2-networks/envs/dev` y `3-workloads/envs/dev`
+desde el bucket de estado y corre las Connectivity Tests de dev en el proyecto (dev → Cloud SQL
+por IP privada, Internet → balanceador de dev en 443, dev → on-premises simulado). Falla si no
+hay ninguna prueba expresable, si alguna no da lo esperado (se exige REACHABLE o UNREACHABLE;
+UNDETERMINED, AMBIGUOUS o un paso `abort` fallan siempre), si no se puede leer una salida o
+describir la instancia de Cloud SQL (una salida en null por un recurso deshabilitado solo omite
+su prueba), o si la prueba se omite (máximo de omitidas 0 en `scripts/go-test-report.sh`). Solo
+se salta en una ejecución manual con la entrada `omitir_prueba_de_humo = true`, que queda como
+advertencia y en el resumen con el nombre de quien la pidió. **VERIFICAR** los permisos de
+`tf-read` para la prueba (pendiente 50).
 
 **Prueba de humo fuera de horario (ADR 0028).** Con `off_hours_shutdown` en dev, un merge que
 llega con Cloud SQL detenida hace fallar la prueba dev → Cloud SQL con un mensaje que lo dice
 (`sqlStoppedError` de `tests/e2e/connectivity_test.go`: `settings.activationPolicy = NEVER`; el
-`state` sigue en `RUNNABLE`). La prueba no la enciende: la cuenta de auditoría es de solo lectura
-y encenderla de noche la dejaría prendida hasta el siguiente apagado. qa espera, porque depende
-de este trabajo. Para seguir:
+`state` sigue en `RUNNABLE`). La prueba no la enciende: la cuenta de lectura no puede, y
+encenderla de noche la dejaría prendida hasta el siguiente apagado. qa espera, porque depende de
+este trabajo. Para seguir:
 
 1. Volver a correr el trabajo fallido ("Re-run failed jobs") después de la hora de encendido.
    `check-main-tip.sh` no lo impide mientras `main` no cambie `gcp-datacenter/` ni
    `.github/workflows/`; si cambió, la ejecución nueva de ese merge lleva el cambio.
 2. O encenderla antes: `gcloud scheduler jobs run <id>`, con el `id` de
-   `job_ids["sql-primary-start"]` de la salida `off_hours_shutdown` de `5-workloads/envs/dev`,
-   por una identidad con `cloudscheduler.jobs.run` en el proyecto de servicio. Después, volver
-   a correr el trabajo. La instancia queda encendida hasta el siguiente apagado programado.
+   `job_ids["sql-primary-start"]` de la salida `off_hours_shutdown` de `3-workloads/envs/dev`,
+   por una identidad con `cloudscheduler.jobs.run` en el proyecto. Después, volver a correr el
+   trabajo. La instancia queda encendida hasta el siguiente apagado programado.
 3. O, si qa no puede esperar, lanzar `apply.yml` a mano con `omitir_prueba_de_humo = true`
    (queda registrado).
 
 Reglas:
 
-- `0-bootstrap` no está en el pipeline: la aplica una persona administradora, una vez y a mano
-  (runbook de la etapa 0). No tiene cuenta de servicio de pipeline.
+- `0-bootstrap` no está en el pipeline: la aplica una persona, una vez y a mano
+  ([runbook 01](runbooks/01-arranque-etapa-0.md)). Crea las nueve cuentas del pipeline, pero
+  ninguna la aplica a ella.
 - Los spokes se aplican de uno en uno porque los entornos van en serie (dev → qa → prod): GCP
   no admite dos operaciones de peering a la vez sobre la VPC hub.
 - `concurrency: apply-gcp-datacenter` sin cancelación: nunca corren dos `apply.yml` a la vez. Si
@@ -194,13 +252,16 @@ Reglas:
 - Los trabajos de Terraform exigen `github.ref == refs/heads/main`: una ejecución manual desde
   otra rama no aplica nada. Esto no cierra la limitación de §5 (una rama puede cambiar el
   propio flujo).
-- Cada raíz con cambios en `common` o `prod` pide su propia aprobación (hasta tres por entorno),
-  y la persona que aprueba ve antes el resumen del plan de esa raíz.
+- Cada raíz con cambios en `common` o `prod` pide su propia aprobación (hasta dos por entorno:
+  `1-base` y el hub en `common`, el spoke y las cargas en `prod`), y la persona que aprueba ve
+  antes el resumen del plan de esa raíz.
 
 ### 1.3 `drift.yml`
 
-**Drift.** Para cada raíz con `versions.tf` en `stages/` (la misma definición que
-`scripts/affected-roots.sh`), salvo `0-bootstrap`: plan con `-detailed-exitcode -lock=false`.
+**Drift.** Para cada raíz de `scripts/affected-roots.sh --all` (los directorios de `stages/` con
+`versions.tf`, salvo `0-bootstrap`): autenticación con `tf-read`, `scripts/root-tfvars.py` y
+plan con `-detailed-exitcode -lock=false`. Sin candado, el plan no bloquea ni espera a un apply
+en curso.
 
 - Código 0: nada.
 - Código 2: abre una incidencia `Drift: <raíz>` con la etiqueta `drift` (la crea si no existe)
@@ -220,52 +281,62 @@ de Cloud SQL detenida donde el apagado no está permitido (prod, o dev y qa sin
 de esa raíz termina en error (código 1), no en incidencia. Un trabajo de Cloud Scheduler
 pausado a mano sí da código 2.
 
-**Recursos no administrados** (`recursos no administrados (<carpeta>)`, uno por cada carpeta
-de `1-org`: common, dev, qa y prod; common tiene los proyectos del hub de red, seguridad,
-registros y respaldo): objetivo "cero recursos manuales, verificado con Cloud Asset Inventory".
+**Recursos no administrados** (`recursos no administrados (proyecto)`, un solo trabajo):
+objetivo "cero recursos manuales, verificado con Cloud Asset Inventory". Toda la landing zone
+está en un proyecto, así que se lista ese proyecto y se compara con los estados de todas las
+raíces.
 
 1. Con `GCP_AUDIT_SERVICE_ACCOUNT`, descarga todos los estados del bucket
-   (`gs://$GCP_STATE_BUCKET/**/default.tfstate`) a la carpeta temporal del runner; llevan
-   valores sensibles y no se suben como artefacto.
-2. Toma la carpeta del entorno de la salida `folder_ids` de `1-org` y la lista con
-   `gcloud asset search-all-resources --scope=<carpeta> --format=json`.
-3. `scripts/unmanaged-resources.py` compara cada recurso con los estados: administrado (nombre
-   igual al `id` o `self_link` de algún recurso de algún estado, con formas construidas para
-   proyectos por número, cuentas de servicio por ID único y APIs habilitadas), hijo de uno
-   administrado (versiones de llaves, revisiones de Cloud Run, versiones de secretos, que se
-   cargan a mano por diseño, ADR 0015), VM o disco de un MIG administrado, o permitido por una
-   regla de `scripts/unmanaged-allowlist.txt` (recursos que crean Google o GKE; de las APIs
-   habilitadas, solo una lista cerrada de dependencias que ninguna raíz declara). Lo que queda
-   se lista en el resumen y el trabajo falla.
-4. Cobertura: el script recibe la carpeta (`--folder`) y toma como proyectos del entorno los
-   `google_project` de los estados cuyo `folder_id` es esa carpeta. Es error (código 2, el
-   trabajo falla) un listado vacío o mal formado (`[]`, `{}`, `{"results": []}`, elementos sin
-   `name`), que ningún proyecto de los estados esté en esa carpeta, o que falte en el listado
-   cualquiera de los proyectos del entorno (listado de otra carpeta, truncado o hecho sin
-   permisos sobre un proyecto); el error nombra los que faltan. Así "0 no administrados" solo
-   sale de un listado que trae todos los proyectos del entorno. HIPÓTESIS: que `folder_id` del
-   estado guarde el número de la carpeta (se acepta también `folders/<N>`).
+   (`gs://$GCP_STATE_BUCKET/**/default.tfstate`) al directorio temporal del runner; llevan
+   valores sensibles y no se suben como artefacto. Del estado de `0-bootstrap` toma las salidas
+   `project_id` y `project_number`; si no están, falla.
+2. Lista el proyecto con
+   `gcloud asset search-all-resources --scope=projects/<ID> --format=json`.
+3. `scripts/unmanaged-resources.py` compara cada recurso con los estados. Está administrado si
+   es el proyecto mismo (lo crea una persona, ADR 0029 §1); si su nombre es igual al `id` o
+   `self_link` de algún recurso de algún estado (con formas construidas para cuentas de
+   servicio por ID único, APIs habilitadas y métricas de log, y cada `projects/<id>` llevado a
+   `projects/<número>`); si es hijo de uno administrado (versiones de llaves, revisiones de
+   Cloud Run, versiones de secretos, que se cargan a mano por diseño, ADR 0015); si es VM o
+   disco de un MIG administrado; o si lo permite una regla de `scripts/unmanaged-allowlist.txt`
+   (recursos que crean Google o GKE; de las APIs habilitadas, solo una lista cerrada de
+   dependencias que ninguna raíz declara). Lo que queda se lista en el resumen y el trabajo
+   falla.
+4. Cobertura: es error (código 2, el trabajo falla) un listado vacío o mal formado (`[]`, `{}`,
+   `{"results": []}`, elementos sin `name`), un listado que no trae el proyecto mismo (otro
+   alcance, o hecho sin permisos) o uno que trae recursos de otro proyecto. Así "0 no
+   administrados" solo sale de un listado del proyecto pedido.
 
 Un recurso creado a mano no aparece en ningún plan, así que el drift no lo ve: por eso es un
 trabajo aparte. Probado sin GCP con `scripts/testdata/unmanaged/` (`scripts/selftest.sh`).
-**VERIFICAR** con una carpeta real: el formato de `name` que devuelve Cloud Asset para cada tipo
-y que la lista de permitidos cubra lo que crean GKE, los MIG y los servicios administrados (la
-primera corrida probablemente marque recursos legítimos; se agregan reglas con su motivo, nunca
-un tipo completo sin razón).
+**VERIFICAR** con el proyecto real (pendiente 49; `VERIFICAR-EN-APPLY` en `drift.yml` y en
+`scripts/unmanaged-resources.py`): que Cloud Asset liste el proyecto mismo con
+`--scope=projects/<ID>` (si no, el script sale con 2 en cada corrida), el formato de `name` que
+devuelve para cada tipo y que la lista de permitidos cubra lo que crean GKE, los MIG y los
+servicios administrados (la primera corrida probablemente marque recursos legítimos; se agregan
+reglas con su motivo, nunca un tipo completo sin razón).
 
 ### 1.4 `terratest.yml`
 
-`compile` corre siempre. `integration` corre solo con `GCP_ENABLED = true` y si existe
-`tests/go.mod`:
+`compile` (`compilar (go vet y go test -run XXX)`) corre siempre. `integration`
+(`pruebas reales en GCP`) corre solo con `GCP_ENABLED = true` y si existe `tests/go.mod`:
 
+- **Dónde corren.** Por defecto, todas en el proyecto único de pruebas `TERRATEST_PROJECT_ID`,
+  con nombres únicos por corrida; cada prueba destruye lo que creó. Conviene un proyecto aparte
+  del de la landing zone. Con `TEST_EPHEMERAL_PROJECTS = true`, cada prueba crea y destruye su
+  propio proyecto efímero, que necesita `TERRATEST_BILLING_ACCOUNT` y `TERRATEST_FOLDER_ID` o
+  `TERRATEST_ORG_ID`. Que las cuotas de un solo proyecto alcancen para las pruebas en paralelo
+  es `VERIFICAR-EN-APPLY` (`tests/helpers/project.go`).
 - Nocturno y manual: todos los paquetes salvo `tests/e2e` (la prueba de extremo a extremo aplica
-  0 → 5 y se lanza a mano).
+  0 → 3 y se lanza a mano).
 - Etiqueta `modules/<módulo>/vX.Y.Z`: solo las pruebas de ese módulo, las que aplican
-  `tests/fixtures/<módulo>` o una variante (`scripts/module-tests.sh`; `firewall` corre
-  `TestFirewallNetwork` y `TestFirewallHierarchical`). Una etiqueta con otra forma hace fallar el
-  trabajo. Las etiquetas no fijan versiones: las raíces consumen los módulos por ruta relativa.
+  `tests/fixtures/<módulo>` o una variante (`scripts/module-tests.sh`; para `firewall`,
+  `TestFirewallNetwork`). Una etiqueta con otra forma hace fallar el trabajo. Las etiquetas no
+  fijan versiones: las raíces consumen los módulos por ruta relativa.
 - Las pruebas reciben como variables de entorno las `TERRATEST_*` y las `TEST_*` de §2 con el
-  mismo nombre, y `GOOGLE_CLOUD_PROJECT = TERRATEST_PROJECT_ID`.
+  mismo nombre, y `GOOGLE_CLOUD_PROJECT = TERRATEST_PROJECT_ID`. Faltar
+  `TERRATEST_SERVICE_ACCOUNT` o `TERRATEST_PROJECT_ID` (y, con proyectos efímeros, sus datos)
+  hace fallar el trabajo antes de correr.
 - `go test -json` pasa por `scripts/go-test-report.sh`: el resumen del trabajo lista cuántas
   pasaron, fallaron y se omitieron, y cada omitida con su motivo. El trabajo falla si alguna
   falló o si hay más omitidas que `TERRATEST_MAX_SKIPS` (0 si no se define). Sin las compuertas
@@ -274,18 +345,22 @@ un tipo completo sin razón).
 
 ### 1.5 `destroy.yml`
 
-Desmonta dev o qa; es como se demuestra el criterio "`destroy` de dev sin huérfanos"
-(pendiente 11). No hay otra forma: las etapas 1 a 5 solo las aplican sus cuentas de servicio, que
-solo se obtienen por WIF desde Actions, y las personas tienen solo lectura.
+Desmonta las cargas de dev o qa y, a pedido, su spoke; es como se demuestra el criterio
+"`destroy` de dev sin huérfanos" (pendiente 11). En el proyecto único no se borra ningún
+proyecto: se destruye recurso por recurso (ADR 0029 §8). No hay otra forma: las raíces 1 a 3
+solo las aplican sus cuentas, que solo se obtienen por WIF desde Actions en su entorno de
+GitHub, y las personas tienen solo lectura.
 
 Se lanza a mano desde `main` (Actions → destroy → Run workflow, o
-`gh workflow run destroy.yml --ref main -f entorno=dev -f confirmacion=dev`) con
-`GCP_ENABLED = true`. Entradas: `entorno` (lista cerrada `dev`, `qa`) y `confirmacion` (el nombre
-del entorno, escrito exactamente).
+`gh workflow run destroy.yml --ref main -f entorno=dev -f confirmacion=dev`, con
+`-f incluir_red=true` para incluir el spoke) con `GCP_ENABLED = true`. Entradas: `entorno`
+(lista cerrada `dev`, `qa`), `confirmacion` (el nombre del entorno, escrito exactamente) e
+`incluir_red` (`false` por defecto).
 
 ```
 pedido de destrucción
-  → <env> / destruir 5-workloads → <env> / destruir 4-projects → <env> / destruir 3-networks
+  → <env> / destruir 3-workloads
+  → <env> / destruir 2-networks          (solo con incluir_red = true)
   → <env> / huérfanos (Cloud Asset)
 ```
 
@@ -293,23 +368,29 @@ pedido de destrucción
    `dev` o `qa` (prod con un mensaje propio, también `PROD` o con espacios), si la confirmación no
    es exactamente el nombre del entorno, si la rama no es `main` o si `GCP_ENABLED` no es `true`
    (a diferencia de `apply.yml`, falla: se pidió destruir y no se destruiría nada). Deja en el
-   resumen quién lo pidió.
-2. **Una raíz por trabajo, en orden inverso al de `apply.yml`**, cada una con la cuenta de su
-   etapa (`5-workloads`, `4-projects`, `3-networks`) y `_terraform-root.yml` con
-   `destroy: true`: los mismos trabajos `plan` y `apply` de §1.2 (aquí `plan -destroy <raíz>` y
-   `destroy <raíz>`), con estas diferencias:
+   resumen quién lo pidió, qué se destruye y qué se conserva.
+2. **Una raíz por trabajo, en orden inverso al de `apply.yml`**: `3-workloads/envs/<env>`
+   siempre y `2-networks/envs/<env>` solo con `incluir_red`. Cada una pasa por
+   `_terraform-root.yml` con `destroy: true`: los mismos trabajos `plan` y `apply` de §1.2 (aquí
+   `plan -destroy <raíz>`, con `tf-read`, y `destroy <raíz>`, con `tf-wl-<env>` o
+   `tf-net-<env>` en el entorno de GitHub `dev` o `qa`), con estas diferencias:
    - `scripts/destroy-guard.sh raiz` en los dos trabajos, antes de autenticarse: solo
-     `stages/{3-networks,4-projects,5-workloads}/envs/<entorno>` con entorno `dev` o `qa`;
+     `stages/3-workloads/envs/<entorno>` o `stages/2-networks/envs/<entorno>`, con entorno `dev`
+     o `qa`. `0-bootstrap`, `1-base` y el hub no tienen destroy;
    - `terraform plan -destroy`, con el plan guardado, la huella y Conftest de siempre (las
      políticas aceptan un plan de destrucción: probado con los planes de
      `scripts/testdata/destroy/`);
    - `scripts/destroy-plan-check.py` sobre ese plan, en el trabajo `plan` (antes de la
      aprobación, con una tabla en el resumen) y otra vez en `destroy` (antes de
-     `terraform apply`). Sale con 2 si alguna acción no es `delete`, con 1 si el estado tiene un
-     **bloqueo** (abajo) y con 0 con **avisos**;
+     `terraform apply`). Sale con 2 si alguna acción no es `delete` o no sabe el prefijo, con 1
+     si hay un **bloqueo** (abajo) y con 0 con **avisos**;
    - el resumen se titula "Plan de DESTRUCCIÓN" y lista `delete <dirección>` de cada recurso;
-   - `destroy <raíz>` corre en el entorno de GitHub `dev` o `qa`, compara las variables y la
-     huella con las del plan revisado, repite `check-main-tip.sh` y aplica ese `tfplan`.
+   - `destroy <raíz>` compara las variables y la huella con las del plan revisado, repite
+     `check-main-tip.sh` y aplica ese `tfplan`.
+
+   Por qué el spoke solo a pedido: la conexión de Private Service Access puede tardar días en
+   poder borrarse después de borrar Cloud SQL (HYPOTHESIS de la revisión, ADR 0029 §8;
+   pendiente 87). Conviene destruir las cargas primero y la red en otra ejecución, días después.
 
    Una raíz ya destruida planea "sin cambios" y no pide aprobación ni aplica. Comprobado sin
    GCP el 23 nov 2026 con Terraform 1.16.5 y recursos integrados: con el estado vacío,
@@ -318,41 +399,46 @@ pedido de destrucción
    inverso). Así, **volver a lanzar el flujo** retoma un destroy que falló a medias. "Re-run
    failed jobs" no sirve después de un destroy parcial: el trabajo `destroy` vuelve a planear,
    la huella ya no es la revisada y falla sin aplicar.
-3. **`huérfanos`**, con `GCP_AUDIT_SERVICE_ACCOUNT` (los roles de §3 ya alcanzan): toma la
-   carpeta del entorno de la salida `folder_ids` del estado de `1-org`, la lista con
-   `gcloud asset search-all-resources --scope=<carpeta> --format=json` y
-   `scripts/destroy-orphans.py` falla con la lista de lo que quede. Si quedan recursos, vuelve a
-   listar hasta tres veces con cinco minutos entre intentos (HYPOTHESIS: el índice de Cloud Asset
-   tarda en reflejar los borrados; la documentación no da un plazo). Es **esperado** (se lista
-   en el resumen, no falla):
-   - la carpeta misma (es de `1-org`);
-   - un proyecto en `DELETE_REQUESTED` o `DELETE_IN_PROGRESS` (estados que la
-     [referencia de searchAllResources](https://docs.cloud.google.com/asset-inventory/docs/reference/rest/v1/TopLevel/searchAllResources#ResourceSearchResult)
-     lista para un proyecto) y todo lo que esté dentro de él: según la
-     [documentación de Resource Manager](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),
-     un proyecto borrado se elimina del todo a los 30 días;
-   - un recurso en estado `DELETED`, `DELETE_REQUESTED` o `DELETE_IN_PROGRESS`;
-   - una versión de llave de KMS `DESTROYED` o `DESTROY_SCHEDULED`. Las llaves de los entornos
-     viven en `security` (carpeta `common`) y este flujo no las toca: en la carpeta del entorno
-     solo aparecerían si alguien las creó a mano.
+3. **`huérfanos`**, con `GCP_AUDIT_SERVICE_ACCOUNT` (`tf-read`: `storage.objectViewer` en el
+   bucket de estado y `cloudasset.viewer` en el proyecto). Corre si las cargas se destruyeron y
+   el spoke se destruyó o no se pidió. Descarga todos los estados, toma `project_id` y
+   `project_number` del estado de `0-bootstrap`, lista el proyecto con
+   `gcloud asset search-all-resources --scope=projects/<ID> --format=json` y
+   `scripts/destroy-orphans.py` (con el `prefix` del plan de `3-workloads`) falla con la lista de
+   lo que quede. Si quedan recursos, vuelve a listar hasta tres veces con cinco minutos entre
+   intentos (HYPOTHESIS: el índice de Cloud Asset tarda en reflejar los borrados; la
+   documentación no da un plazo).
 
-   Todo lo demás es **huérfano**: un proyecto `ACTIVE` (por ejemplo, con `deletion_policy =
-   "ABANDON"`), una red, un bucket. Un listado vacío pasa (un error de permisos hace fallar a
-   `gcloud`); un listado mal formado sale con 2. Lo que el destroy deja fuera de la carpeta (el
-   peering y la zona DNS sobre la VPC hub, IAM sobre las llaves de `security`) lo destruyen las
-   mismas raíces; si algo quedara, lo ve el trabajo de recursos no administrados de `common` en
-   `drift.yml` (§1.3).
+   Un recurso es **del entorno** si tiene la etiqueta `env` igual al entorno o si su nombre, su
+   `displayName` o su correo llevan `<prefix>-<env>-`. VPC, subredes, routers, políticas de
+   firewall y cuentas de servicio no llevan etiquetas: se reconocen por el nombre. Lo demás del
+   proyecto (lo compartido y lo de otros entornos) no se revisa. De lo que es del entorno, es
+   **esperado** (se lista en el resumen, no falla):
+   - lo que conserva `1-base` a propósito: llaveros, llaves y versiones de Cloud KMS (no se
+     pueden borrar), repositorios de Artifact Registry con sus imágenes y contenedores de
+     secretos con sus versiones;
+   - lo que todavía administra un estado (por ejemplo, el spoke cuando `incluir_red = false`);
+   - un recurso en estado `DELETED`, `DELETE_REQUESTED` o `DELETE_IN_PROGRESS` (estados que la
+     [referencia de searchAllResources](https://docs.cloud.google.com/asset-inventory/docs/reference/rest/v1/TopLevel/searchAllResources#ResourceSearchResult)
+     lista);
+   - una versión de llave de KMS `DESTROYED` o `DESTROY_SCHEDULED`.
+
+   Todo lo demás es **huérfano** y el trabajo falla: un bucket, una VM o una cuenta de servicio
+   del entorno que sobrevivieron al destroy (por ejemplo, con `deletion_policy = "ABANDON"`). Un
+   listado vacío, sin el proyecto mismo o con recursos de otro proyecto sale con 2.
+   **VERIFICAR** en el primer destroy de dev (pendiente 85): que Cloud Asset devuelva `labels`
+   y, para las cuentas de servicio, `additionalAttributes.email`, y que liste el proyecto mismo.
 
 **Contra un destroy de prod.** En el flujo, cuatro barreras independientes: la lista cerrada de
 `entorno` (HYPOTHESIS: que GitHub rechace por API un valor fuera de `options`; la
 [sintaxis de flujos](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
 solo dice que el valor por defecto debe estar en la lista), `destroy-guard.sh pedido`, la
 condición `inputs.entorno == 'dev' || inputs.entorno == 'qa'` de cada trabajo y
-`destroy-guard.sh raiz` en los dos trabajos de cada raíz. Además, en Terraform, prod exige
-`deletion_protection = true` en `5-workloads` y `deletion_policy = "PREVENT"` en sus proyectos
-(validaciones de la raíz y de `project-factory`), que el proveedor respeta y
-`destroy-plan-check.py` detiene antes de borrar. No cierra la limitación de §5: una rama puede
-traer su propio flujo y tomar la identidad de las cuentas.
+`destroy-guard.sh raiz` en los dos trabajos de cada raíz. Además, `destroy-plan-check.py`
+detiene todo recurso cuyo nombre no lleve `<prefix>-<env>-` del entorno pedido, y en Terraform
+prod exige `deletion_protection = true` en `3-workloads` (validación de la raíz), que el
+proveedor respeta y `destroy-plan-check.py` detiene antes de borrar. No cierra la limitación de
+§5: una rama puede traer su propio flujo y declarar un entorno.
 
 **Contra un commit viejo.** Lo mismo que `apply.yml`: `check-main-tip.sh` en el trabajo `plan` y
 justo antes de `terraform apply`, y el grupo de concurrencia `apply-gcp-datacenter`, el mismo de
@@ -375,51 +461,63 @@ con un `apply.yml` antes del destroy. En `GCP_TFVARS_JSON`, para el entorno:
 
 | Llave | Valor | Ejemplo actual |
 |---|---|---|
-| `stages/5-workloads/envs/<env>` | `"deletion_protection": false` | `false` en dev y qa |
-| `stages/4-projects/envs/<env>` | `"deletion_policy": "DELETE"` | `DELETE` en dev, `PREVENT` en qa |
-| `stages/3-networks/envs/<env>` | `"project_deletion_policy": "DELETE"` | sin valor: `PREVENT` por defecto en los tres |
+| `stages/3-workloads/envs/<env>` | `"deletion_protection": false` | `false` en dev y qa |
+| `stages/2-networks/envs/<env>` | nada: el spoke no tiene protección contra borrado | — |
 
-Después, `apply.yml` (cambios en el lugar) y entonces `destroy.yml`. Si falta, el trabajo
-`plan -destroy` de la raíz falla en `destroy-plan-check.py` con un **bloqueo** que nombra el
-recurso y la variable, antes de borrar nada. Bloqueos: `deletion_protection = true` o
-`deletion_protection_enabled = true` (también en `settings` de Cloud SQL) en cualquier recurso,
-`deletion_policy = "PREVENT"` en cualquier recurso y, en `google_project`, todo lo que no sea
-`"DELETE"` (con `"ABANDON"` el proyecto quedaría vivo y sería un huérfano).
+Si falta, el trabajo `plan -destroy` de la raíz falla en `destroy-plan-check.py` con un
+**bloqueo** que nombra el recurso y la variable, antes de borrar nada.
+
+**Bloqueos** de `destroy-plan-check.py` (sale con 1 antes de borrar):
+
+- por protección, leída del estado: `deletion_protection = true` o
+  `deletion_protection_enabled = true` (también en `settings` de Cloud SQL) en cualquier recurso,
+  y `deletion_policy = "PREVENT"` en cualquier recurso;
+- por alcance (protegen lo compartido del proyecto, ADR 0029 §4 y §8): `google_project`; un
+  recurso que existe una vez por proyecto (APIs, metadatos, configuración de auditoría, Binary
+  Authorization, sinks y buckets de logs, presupuesto, roles personalizados, políticas de
+  organización, la cuenta de Compute por defecto, WIF, IAM de proyecto autoritativo…); y un
+  recurso de GCP cuyo nombre no lleve `<prefix>-<env>-`. Los hijos que GCP nombra dentro de un
+  padre (reglas de una política de firewall, valores de etiquetas, registros DNS, la conexión de
+  PSA) pasan por el atributo que nombra al padre o porque el padre está en el mismo plan y pasó;
+  un tablero de Monitoring se reconoce por el `displayName` de su `dashboard_json`.
+
+Así pasan enteros los destroy reales sin GCP del spoke de dev (40 recursos) y de `3-workloads`
+de dev (90 recursos), `scripts/testdata/destroy/plan-real-spoke-dev.json` y
+`plan-real-workloads-dev.json` (`plan -destroy -refresh=false` sin conexión; los valores
+calculados son IDs ficticios).
 
 **Lo que el plan no ve (avisos) y qué hacer:**
 
 | Caso | Qué pasa | Qué hacer |
 |---|---|---|
-| Bóveda de Backup and DR con respaldos (`enable_backup = true`, retención forzada de 30 días en `stages/5-workloads/envs/*/operations.tf`) | Según la [documentación de la bóveda](https://docs.cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault), ningún respaldo se borra antes de la retención forzada y, desde el 1 nov 2026, Backup and DR pone un gravamen (lien) en el proyecto que los tenga. El destroy de `5-workloads` borra lo demás (incluida la asociación, que deja de crear respaldos) y falla en la bóveda | Para la prueba de destroy, desplegar dev con `"enable_backup": false`. Con respaldos: esperar a que venzan y volver a lanzar; puede seguir fallando sin `ignore_inactive_datasources` (pendiente 86) |
-| Conexión de Private Service Access | Según la [documentación de PSA](https://docs.cloud.google.com/vpc/docs/configure-private-services-access), después de borrar una instancia de Cloud SQL el servicio espera cuatro días antes de liberar sus recursos y la conexión no se borra mientras tanto | `3-networks` falla; volver a lanzar `destroy.yml` pasados cuatro días (`5-workloads` y `4-projects` se saltan) (pendiente 87) |
+| Bóveda de Backup and DR con respaldos (`enable_backup = true`, retención forzada de 30 días en `stages/3-workloads/envs/*/operations.tf`) | Según la [documentación de la bóveda](https://docs.cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault), ningún respaldo se borra antes de la retención forzada y, desde el 1 nov 2026, Backup and DR pone un gravamen (lien) en el proyecto que los tenga. El destroy de `3-workloads` borra lo demás (incluida la asociación, que deja de crear respaldos) y falla en la bóveda | Para la prueba de destroy, desplegar dev con `"enable_backup": false`. Con respaldos: esperar a que venzan y volver a lanzar; puede seguir fallando sin `ignore_inactive_datasources` (pendiente 86) |
+| Conexión de Private Service Access (solo con `incluir_red`) | Según la [documentación de PSA](https://docs.cloud.google.com/vpc/docs/configure-private-services-access), después de borrar una instancia de Cloud SQL el servicio espera cuatro días antes de liberar sus recursos y la conexión no se borra mientras tanto | `2-networks` falla; volver a lanzar `destroy.yml` con `incluir_red = true` pasados cuatro días (`3-workloads` se salta) (pendiente 87) |
 | Bucket de la aplicación sin `force_destroy` | Si tiene objetos, el borrado falla | Pendiente 89 |
-| `deletion_policy = "ABANDON"` fuera de un proyecto | Terraform lo suelta y queda en GCP | La comprobación de huérfanos lo ve si está en la carpeta |
+| `deletion_policy = "ABANDON"` | Terraform lo suelta y queda en GCP | La búsqueda de huérfanos lo ve si es del entorno |
 
 **Después del destroy.**
 
-- **El siguiente `apply.yml` vuelve a crear el entorno**: cualquier push a `main` que toque
+- **El siguiente `apply.yml` vuelve a crear lo destruido**: cualquier push a `main` que toque
   `gcp-datacenter/**` o `.github/workflows/**`, o una ejecución manual. Para que no lo haga,
-  `GCP_ENABLED` a otro valor después del destroy (guía del colaborador, sección H).
-- **IDs de proyecto nuevos antes de recrear.** Según la
-  [documentación de Resource Manager](https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects),
-  el ID de un proyecto borrado no se puede volver a usar. Con el mismo `project_suffix`, el
-  `apply.yml` siguiente fallaría al crear el proyecto `net-spoke` del entorno y, como los entornos
-  van en cadena, tampoco aplicaría los que vienen después. Antes de recrear, poner un
-  `project_suffix` nuevo (hasta 8 minúsculas o dígitos) en las llaves
-  `stages/3-networks/envs/<env>` y `stages/4-projects/envs/<env>` de `GCP_TFVARS_JSON`
-  (pendiente 88).
+  `GCP_ENABLED` a otro valor después del destroy
+  ([guía del colaborador](guia-colaborador-gcp.md)).
+- **Lo que queda a propósito** (llaves, repositorios y contenedores de secretos del entorno en
+  `1-base`) se reutiliza al recrear: no hay IDs de proyecto que cambiar.
+- **Nombre de Cloud SQL.** El nombre de una instancia borrada no se puede reutilizar de
+  inmediato (HYPOTHESIS: hasta una semana; README de `stages/3-workloads/envs/dev`). Para
+  recrear el entorno poco después, cambiar `sql_instance_name` (por ejemplo a `sql2`) en la
+  llave `stages/3-workloads/envs/<env>` de `GCP_TFVARS_JSON`.
 - **`drift.yml` se queja hasta recrear el entorno**: las raíces destruidas planean todo como
-  creación (incidencias `Drift: …`), la de `5-workloads` puede fallar al leer salidas que ya no
-  existen, y el trabajo de recursos no administrados del entorno sale con 2 (ningún proyecto de
-  los estados está en la carpeta). Se cierran a mano después de recrear.
+  creación (incidencias `Drift: …`) y la de `3-workloads` puede fallar al leer salidas del spoke
+  que ya no existen (con `incluir_red`). Se cierran a mano después de recrear.
 
-Probado sin GCP (`scripts/selftest.sh`): rechazos de `destroy-guard.sh` (prod, mayúsculas,
-espacios, confirmación distinta, otra rama, raíz de otro entorno o etapa, `..`), los bloqueos y
-avisos de `destroy-plan-check.py` sobre dos planes de destrucción reales de google 6.50.0
-(`plan -destroy -refresh=false` sobre un estado escrito a mano), la huella de dos planes de
-destrucción reales del mismo estado, la clasificación de `destroy-orphans.py` y la estructura de
-`destroy.yml` y del modo destroy de `_terraform-root.yml`. **VERIFICAR** en el primer destroy de
-dev (pendiente 85).
+Probado sin GCP (`scripts/selftest.sh`, 24 nov 2026: 162 OK, 0 FALLA): rechazos de
+`destroy-guard.sh` (prod, mayúsculas, espacios, confirmación distinta, otra rama, raíz de otro
+entorno, el hub, `1-base`, `0-bootstrap`, `..` y etapas que ya no existen), los bloqueos y avisos
+de `destroy-plan-check.py` sobre los dos planes reales de destrucción de dev y sobre un plan con
+protecciones y recursos ajenos al entorno, la huella de dos planes de destrucción reales del
+mismo estado, la clasificación de `destroy-orphans.py` y la estructura de `destroy.yml` y del
+modo destroy de `_terraform-root.yml`. **VERIFICAR** en el primer destroy de dev (pendiente 85).
 
 ## 2. Variables, secretos y entornos que crea el equipo
 
@@ -430,52 +528,53 @@ en ningún lado.
 | Variable | Contenido | Ejemplo (marcador) |
 |---|---|---|
 | `GCP_ENABLED` | `true` activa los trabajos que tocan GCP; cualquier otro valor o ausente los omite | `true` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Salida `workload_identity_provider` de `0-bootstrap` | `projects/<número-proyecto-semilla>/locations/global/workloadIdentityPools/<pool>/providers/<proveedor>` |
-| `GCP_STAGE_SERVICE_ACCOUNTS` | Salida `stage_service_accounts` de `0-bootstrap`, en JSON | `{"1-org": "<prefix>-tf-1-org@<proyecto-semilla>.iam.gserviceaccount.com", "2-security": "…", "3-networks": "…", "4-projects": "…", "5-workloads": "…"}` |
-| `GCP_STATE_BUCKET` | Salida `state_bucket` de `0-bootstrap` | `<nombre-del-bucket-de-estado>` |
-| `GCP_TFVARS_JSON` | Valores de las variables por raíz, en JSON. Para cada raíz se combinan `common` y la llave de la raíz, y se sobreponen a `terraform.tfvars.example` | `{"common": {"org_id": "<org_id>", "billing_account": "<cuenta>", "state_bucket": "<bucket>"}, "stages/1-org": {"groups": {…}}, "stages/5-workloads/envs/prod": {…}}` |
-| `GCP_AUDIT_SERVICE_ACCOUNT` | Cuenta de solo lectura de la prueba de humo de dev y de los recursos no administrados (ver §3; `0-bootstrap` no la crea) | `<cuenta>@<proyecto-semilla>.iam.gserviceaccount.com` |
-| `TERRATEST_SERVICE_ACCOUNT` | Cuenta de servicio de las pruebas de integración (no es de una etapa; ver §3) | `<cuenta>@<proyecto-de-pruebas>.iam.gserviceaccount.com` |
-| `TERRATEST_PROJECT_ID` | Proyecto de pruebas (cuota y llamadas que no van a un proyecto efímero) | `<proyecto-de-pruebas>` |
-| `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | `<XXXXXX-XXXXXX-XXXXXX>` |
-| `TERRATEST_ORG_ID` | ID numérico de la organización | `<org_id>` |
-| `TERRATEST_FOLDER_ID` | Carpeta donde se crean los proyectos efímeros (opcional) | `<folder_id>` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Salida `workload_identity_provider` de `0-bootstrap` | `projects/<número-del-proyecto>/locations/global/workloadIdentityPools/<pool>/providers/<proveedor>` |
+| `GCP_STAGE_SERVICE_ACCOUNTS` | Salida `stage_service_accounts` de `0-bootstrap`, en JSON: las ocho cuentas que aplican, por llave de raíz. Solo los trabajos `apply` de `apply.yml` y `destroy.yml` se autentican con ellas | `{"1-base": "<prefix>-tf-base@<proyecto>.iam.gserviceaccount.com", "2-networks": "<prefix>-tf-net@…", "2-networks/dev": "<prefix>-tf-net-dev@…", "2-networks/qa": "…", "2-networks/prod": "…", "3-workloads/dev": "<prefix>-tf-wl-dev@…", "3-workloads/qa": "…", "3-workloads/prod": "…"}` |
+| `GCP_AUDIT_SERVICE_ACCOUNT` | Salida `read_service_account` de `0-bootstrap`: la cuenta de solo lectura `tf-read`. La usan los `plan` de `pr.yml`, `apply.yml` y `destroy.yml`, `drift.yml`, la prueba de humo y la búsqueda de huérfanos | `<prefix>-tf-read@<proyecto>.iam.gserviceaccount.com` |
+| `GCP_STATE_BUCKET` | Salida `state_bucket` de `0-bootstrap` | `<prefix>-bootstrap-ops-tfstate` |
+| `GCP_TFVARS_JSON` | Valores de las variables por raíz, en JSON. Para cada raíz, `scripts/root-tfvars.py` combina `common` y la llave de la raíz (gana la raíz) y los sobrepone a `terraform.tfvars.example`. **`common.project_id` es obligatorio**: las ocho raíces del pipeline declaran `project_id`, y sin él `root-tfvars.py` sale con 2 y el plan no corre | `{"common": {"project_id": "<proyecto>", "state_bucket": "<bucket>"}, "stages/1-base": {"groups": {…}, "essential_contacts": {…}}, "stages/3-workloads/envs/prod": {…}}` |
+| `TERRATEST_SERVICE_ACCOUNT` | Cuenta de servicio de las pruebas de integración (no es del pipeline; ver §3) | `<cuenta>@<proyecto-de-pruebas>.iam.gserviceaccount.com` |
+| `TERRATEST_PROJECT_ID` | Proyecto único de pruebas, donde corren todas por defecto | `<proyecto-de-pruebas>` |
+| `TEST_EPHEMERAL_PROJECTS` | `true`: un proyecto efímero por prueba en vez del proyecto único (opcional) | — |
+| `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros (solo con `TEST_EPHEMERAL_PROJECTS`) | `<XXXXXX-XXXXXX-XXXXXX>` |
+| `TERRATEST_ORG_ID` | ID numérico de la organización: proyectos efímeros sin `TERRATEST_FOLDER_ID` y pruebas de organización (opcional) | `<org_id>` |
+| `TERRATEST_FOLDER_ID` | Carpeta de GCP donde se crean los proyectos efímeros (opcional) | `<folder_id>` |
 | `TERRATEST_MAX_SKIPS` | Máximo de pruebas omitidas que acepta `terratest.yml` (por defecto 0) | `0` |
 | `TEST_ALLOW_EXPENSIVE`, `TEST_ALLOW_ORG` | Compuertas de las pruebas caras y de organización (`tests/README.md`) | `true` |
-| `TEST_DIRECTORY_CUSTOMER_ID`, `TEST_ACCESS_POLICY_ID`, `TEST_NOTIFICATION_EMAIL`, `TEST_GKE_SECURITY_GROUP` | Datos que piden `TestOrg`, `TestVPCSC`, `TestObservability` y `TestGKE` | `C0xxxxxxx`, `<número>`, `<buzón>`, `gke-security-groups@<dominio>` |
+| `TEST_DIRECTORY_CUSTOMER_ID`, `TEST_ACCESS_POLICY_ID`, `TEST_NOTIFICATION_EMAIL`, `TEST_GKE_SECURITY_GROUP` | Datos que piden `TestOrg`, `TestVPCSC`, `TestObservability` y `TestAuditAlerts`, y `TestGKE` | `C0xxxxxxx`, `<número>`, `<buzón>`, `gke-security-groups@<dominio>` |
 | `TEST_MIG_IMAGE`, `TEST_CLOUD_RUN_IMAGE`, `TEST_LB_DOMAIN`, `TEST_REGION`, `TEST_DR_REGION` | Ajustes opcionales de las pruebas (tienen valor por defecto) | — |
 
 `GCP_TFVARS_JSON` tiene que llevar todos los valores reales: lo que no traiga se toma de
-`terraform.tfvars.example`, que solo tiene valores de ejemplo.
+`terraform.tfvars.example`, que solo tiene valores de ejemplo. Una llave de `common` que una raíz
+no declara (por ejemplo `state_bucket` en el hub, que no lee estados) llega igual a su
+`zz-ci.auto.tfvars.json`.
 
 **Marcadores de los ejemplos que hay que reemplazar antes de la primera ejecución.** Lista
-sacada de los `terraform.tfvars.example` el 23 nov 2026. La columna "Si queda el ejemplo" dice
+sacada de los `terraform.tfvars.example` el 24 nov 2026. La columna "Si queda el ejemplo" dice
 lo que valida Terraform; lo que diga la API de GCP es HIPÓTESIS hasta el primer apply
 (pendiente 55).
 
 | Llave de `GCP_TFVARS_JSON` | Variables | Si queda el ejemplo |
 |---|---|---|
-| `common` | `org_id`, `billing_account`, `state_bucket`; `prefix` si la etapa 0 usó otro; `project_suffix` si los IDs de proyecto lo necesitan para ser únicos | `000000000000` y `000000-000000-000000` no existen; `state_bucket` de ejemplo solo coincide con `prefix = "bnt"` sin sufijo |
-| `stages/1-org` | `directory_customer_id`, `groups` (los siete grupos reales), `budget_amount` | `directory_customer_id` es el único cliente que admite `iam.allowedPolicyMemberDomains`: con el marcador `C00000000` la política rechazaría a los grupos y cuentas propios. Los grupos `@example.com` no existen |
-| `stages/2-security` | `access_policy_id` (si la organización ya tiene política, runbook 01 paso 8), `secret_names` | Con una política existente y `access_policy_id = null`, la etapa intenta crear otra |
-| `stages/3-networks` y `stages/3-networks/envs/<env>` | Ninguna obligatoria con on-premises simulado; `labels` | Etiquetas `example-team` y `example-cc` en los recursos |
-| `stages/4-projects/envs/<env>` | `workloads_service_account` (salida `stage_service_accounts["5-workloads"]` de la etapa 0), `artifact_registry_publishers` | El correo de ejemplo solo coincide con `prefix = "bnt"` sin `project_suffix` en la etapa 0 (con otro proyecto la validación pasa y la etapa 5 falla por permisos). El publicador de ejemplo (`bnt-ci-app@example-cicd…`) no existe: `{}` o identidades reales |
-| `stages/5-workloads/envs/<env>` | `cloud_run_image`, `mig_image` (qa y prod), `gke_authenticator_security_group` y `gke_master_authorized_networks` (prod), `domain_names`, `internal_domain_names` (prod), `notification_emails` | Las imágenes de ejemplo apuntan a proyectos `example-*` que no son del equipo (ver abajo); con dominios de ejemplo los certificados no se emiten; las alertas irían a `@example.com` |
+| `common` | `project_id` (obligatorio), `state_bucket`; `prefix` si la etapa 0 usó otro | Sin `project_id`, `root-tfvars.py` detiene el plan. Los ejemplos traen tres marcadores distintos (`example-project-id`, `example-landing-zone`, `example-lz-000000`); ninguno es el proyecto del equipo. `state_bucket` de ejemplo solo coincide con `prefix = "bnt"` sin `name_suffix` |
+| `stages/1-base` | `security_alert_email`, `essential_contacts`, `groups`, `secret_names`, `artifact_registry_publishers`; con organización, `org_id`, `directory_customer_id` y `access_policy_id` | Un `project_id` distinto del de 0-bootstrap detiene el plan (precondición). Los correos y grupos `@example.com` no existen |
+| `stages/2-networks` y `stages/2-networks/envs/<env>` | Ninguna obligatoria con on-premises simulado; `labels` | Etiquetas `example-team` y `example-cc` en los recursos |
+| `stages/3-workloads/envs/<env>` | `cloud_run_image`, `mig_image` (qa y prod), `gke_authenticator_security_group` y `gke_master_authorized_networks` (prod), `domain_names`, `internal_domain_names` (prod), `notification_emails` | Las imágenes de ejemplo apuntan a proyectos `example-*` que no son del equipo (ver abajo); con dominios de ejemplo los certificados no se emiten; las alertas irían a `@example.com` |
 
-No poner `labels` en `common`: cada raíz valida las suyas (en `5-workloads`, `labels.app` tiene
+No poner `labels` en `common`: cada raíz valida las suyas (en `3-workloads`, `labels.app` tiene
 que ser igual a `application`) y `common` las pisaría en todas.
 
 **Primera ejecución: sin imágenes todavía.** El repositorio de Artifact Registry de cada
-aplicación lo crea `4-projects/envs/<env>` en la misma ejecución que después aplica
-`5-workloads/envs/<env>`, así que en la primera ejecución no puede haber una imagen publicada.
+entorno y aplicación lo crea `1-base` en la misma ejecución que después aplica
+`3-workloads/envs/<env>`, así que en la primera ejecución no puede haber una imagen publicada.
 Los ejemplos de dev, qa y prod traen `enable_cloud_run = true` (y qa y prod, `enable_mig = true`
 con una imagen de ejemplo). Para la primera ejecución, en la llave de cada raíz de
-`5-workloads`: `enable_cloud_run = false` y `enable_mig = false`; en prod, además,
+`3-workloads`: `enable_cloud_run = false` y `enable_mig = false`; en prod, además,
 `enable_internal_lb = false` (el balanceador interno exige un backend `mig` o `run`) y
 `enable_gke = false` mientras no exista el grupo `gke-security-groups@<dominio>`. Con todo el
 cómputo apagado la raíz sigue planeando: datos, observabilidad y respaldo, sin balanceadores
 (pruebas `primera_ejecucion_sin_computo` y `prod_primera_ejecucion_sin_computo` de
-`stages/5-workloads/envs/*/tests/`, con proveedores simulados). Después, el runbook
+`stages/3-workloads/envs/*/tests/`, con proveedores simulados). Después, el runbook
 [02](runbooks/02-alta-proyecto-aplicacion.md), pasos 3 y 4: publicar la imagen, cambiar la
 variable y lanzar `apply.yml` otra vez.
 
@@ -494,65 +593,62 @@ el mensaje de huella de plan distinta también lo recuerda.
 |---|---|
 | `INFRACOST_API_KEY` | Opcional, solo `pr.yml`. Sin él se omite el costo |
 
-**Entornos** (Settings → Environments). Los trabajos `apply` se ligan a ellos; GitHub crea un
-entorno sin reglas la primera vez que un trabajo lo usa, así que hay que crearlos y protegerlos
-**antes** de poner `GCP_ENABLED = true`.
+**Entornos** (Settings → Environments): `common`, `dev`, `qa` y `prod`. Los trabajos `apply` se
+ligan a ellos, y cada cuenta que escribe solo acepta tokens de su entorno (§5): el entorno
+decide quién obtiene esas cuentas. GitHub crea un entorno sin reglas la primera vez que un
+trabajo lo usa, así que hay que crearlos y protegerlos **antes** de poner `GCP_ENABLED = true`.
 
-| Entorno | Lo usan | Reglas |
-|---|---|---|
-| `common` | apply de `1-org`, `2-security`, `3-networks` (hub) | **Required reviewers** (seguridad y plataforma), "Prevent self-review" y "Deployment branches: `main`" |
-| `dev` | apply de las raíces de dev; destroy de dev (`destroy.yml`) | Ninguna (automático); "Deployment branches: `main`" recomendado |
-| `qa` | apply de las raíces de qa; destroy de qa (`destroy.yml`) | Ninguna; el apply corre solo después de dev y de la prueba de humo de dev |
-| `prod` | apply de las raíces de prod | **Required reviewers** con dos revisores, "Prevent self-review" y "Deployment branches: `main`" |
+| Entorno | Lo usan | Cuentas que obtiene | Reglas |
+|---|---|---|---|
+| `common` | apply de `1-base` y del hub | `tf-base`, `tf-net` | **Required reviewers** (seguridad y plataforma), "Prevent self-review" y "Deployment branches: `main`" |
+| `dev` | apply de las raíces de dev; destroy de dev (`destroy.yml`) | `tf-net-dev`, `tf-wl-dev` | Sin revisores (automático); "Deployment branches: `main`" |
+| `qa` | apply de las raíces de qa; destroy de qa (`destroy.yml`) | `tf-net-qa`, `tf-wl-qa` | Sin revisores; "Deployment branches: `main`". El apply corre solo después de dev y de la prueba de humo de dev |
+| `prod` | apply de las raíces de prod | `tf-net-prod`, `tf-wl-prod` | **Required reviewers** con dos revisores, "Prevent self-review" y "Deployment branches: `main`" |
 
-Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se vea el plan.
+Los trabajos `plan`, la prueba de humo, `drift.yml` y la búsqueda de huérfanos no usan entorno:
+corren con `tf-read`, antes de la aprobación en el caso del plan, para que se vea lo que se
+aprueba.
 
 ## 3. Cómo se enciende GCP
 
-1. Una persona administradora aplica `0-bootstrap` (runbook de la etapa 0).
-2. Carga sus salidas como variables: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-   `GCP_STAGE_SERVICE_ACCOUNTS`, `GCP_STATE_BUCKET`; y escribe `GCP_TFVARS_JSON`.
-3. Crea los entornos y sus reglas (§2 y §4).
-4. Crea a mano la cuenta `GCP_AUDIT_SERVICE_ACCOUNT` (`0-bootstrap` no la crea), le da
-   `roles/iam.workloadIdentityUser` al `principalSet://…/attribute.repository_id/<id-del-repositorio>`
-   del pool de la etapa 0 (el mismo `github_repository_id` de su `terraform.tfvars`, igual que
-   las cuentas de etapa), y estos roles de solo lectura (**VERIFICAR** con la documentación y
-   la primera corrida):
-   - `roles/storage.objectViewer` en el bucket de estado (lee todos los prefijos);
-   - `roles/cloudasset.viewer` en las carpetas common, dev, qa y prod (`search-all-resources`);
-   - `roles/networkmanagement.admin` en el proyecto host de dev (crear y borrar las
-     Connectivity Tests), `roles/compute.networkViewer` en los proyectos host de dev y del hub,
-     y `roles/cloudsql.viewer` en los proyectos de servicio de dev;
-   - la API `cloudasset.googleapis.com` habilitada en el proyecto de cuota de la cuenta, que para
-     una cuenta de servicio es el proyecto donde vive. Si vive en el proyecto semilla (como en el
-     ejemplo de §2), ya la habilita `0-bootstrap` (`project-factory` la agrega a todo proyecto,
-     CIS 2.14; pendiente 60); si vive en otro proyecto, habilitarla ahí. La API
-     `networkmanagement.googleapis.com` del proyecto host (donde se crean las Connectivity
-     Tests) la habilita `3-networks/envs/<env>`; no se habilita a mano.
+1. Una persona crea el proyecto y lo liga a una cuenta de facturación de pago, borra la red
+   `default`, revisa las cuotas y aplica `0-bootstrap` con la migración del estado al bucket
+   ([runbook 01](runbooks/01-arranque-etapa-0.md); comandos en el
+   [README de `gcp-datacenter`](../README.md)).
+   `0-bootstrap` crea las nueve cuentas del pipeline, incluida `tf-read`, sus roles, su acceso
+   al estado y WIF: no hay cuentas del pipeline que crear a mano.
+2. Carga sus salidas como variables de repositorio (§2):
+   - `GCP_WORKLOAD_IDENTITY_PROVIDER` ← `workload_identity_provider`;
+   - `GCP_STAGE_SERVICE_ACCOUNTS` ← `stage_service_accounts`
+     (`terraform output -json stage_service_accounts`);
+   - `GCP_AUDIT_SERVICE_ACCOUNT` ← `read_service_account`;
+   - `GCP_STATE_BUCKET` ← `state_bucket`;
 
-   **Orden.** Solo el bucket de estado y el proyecto semilla existen después de la etapa 0. Las
-   carpetas y el proyecto del hub existen después del apply de `1-org`; el host de dev, después
-   de `dev / 3-networks`; los proyectos de servicio de dev, después de `dev / 4-projects`. Por
-   eso, antes de encender el pipeline solo se pueden crear la cuenta, su
-   `workloadIdentityUser` y el rol sobre el bucket; el resto se asigna durante la primera
-   ejecución, a medida que existen los recursos (los da una persona con
-   `resourcemanager.projectIamAdmin` o administración de la organización; las personas de los
-   grupos solo tienen lectura). Si `dev / prueba de humo` corre antes de que estén, falla y qa
-   no empieza: asignar los roles y usar "Re-run failed jobs" en esa ejecución
-   (`check-main-tip.sh` lo permite mientras `main` no cambie el despliegue). El trabajo de
-   recursos no administrados de `drift.yml` falla igual hasta que la cuenta tenga
-   `cloudasset.viewer` en las cuatro carpetas. El trabajo de huérfanos de `destroy.yml` (§1.5)
-   usa los mismos roles: lectura del estado de `1-org` y `cloudasset.viewer` en la carpeta del
-   entorno.
-5. Pone `GCP_ENABLED = true`. Desde ese momento:
-   - `pr.yml` planea las raíces afectadas por cada PR y comenta el resultado;
-   - el siguiente push a `main` (o una ejecución manual de `apply`) planea y aplica 1 → 5,
-     pidiendo aprobación en `common` y `prod` donde haya cambios;
+   y escribe `GCP_TFVARS_JSON` con `common.project_id` (salida `project_id`) y los valores
+   reales de §2.
+3. Crea los entornos `common`, `dev`, `qa` y `prod` con sus reglas (§2 y §4). Sin `common`,
+   `1-base` y el hub no pueden tomar sus cuentas.
+4. Pone `GCP_ENABLED = true`. Desde ese momento:
+   - `pr.yml` planea con `tf-read` las raíces afectadas por cada PR y comenta el resultado;
+   - el siguiente push a `main` (o una ejecución manual de `apply`) planea y aplica de `1-base`
+     a las cargas de prod, pidiendo aprobación en `common` y `prod` donde haya cambios;
    - `drift.yml` corre cada día.
-6. Para las pruebas reales de Terratest: crear a mano la cuenta `TERRATEST_SERVICE_ACCOUNT`
-   (permiso para crear proyectos en `TERRATEST_FOLDER_ID`, `billing.user` en la cuenta de
-   facturación) y darle `roles/iam.workloadIdentityUser` al mismo `principalSet`.
-   `0-bootstrap` no crea esa cuenta. Después, las variables `TERRATEST_*` y `TEST_*`.
+
+   `tf-read` ya tiene desde `0-bootstrap` todo lo que usan el plan, la prueba de humo, el drift y
+   la búsqueda de huérfanos: `roles/viewer`, `roles/iam.securityReviewer`,
+   `roles/cloudasset.viewer`, `roles/networkmanagement.admin` y
+   `roles/serviceusage.serviceUsageConsumer` en el proyecto, y `roles/storage.objectViewer` en
+   el bucket de estado. Las APIs `cloudasset` y `networkmanagement` también las habilita
+   `0-bootstrap`. Que esos roles alcancen es HYPOTHESIS (`VERIFICAR-EN-APPLY` en
+   `stages/0-bootstrap/service_accounts.tf`; pendiente 50); si falta uno, se agrega en
+   `0-bootstrap`, nunca en una raíz.
+5. Para las pruebas reales de Terratest: crear a mano la cuenta `TERRATEST_SERVICE_ACCOUNT`
+   (`0-bootstrap` no la crea), darle `roles/iam.workloadIdentityUser` al `principalSet` del
+   repositorio en el pool de `0-bootstrap`
+   (`principalSet://…/attribute.repository_id/<id-del-repositorio>`, el mismo de `tf-read`,
+   porque `terratest.yml` no usa entorno) y los roles que pide `tests/README.md` en el proyecto
+   de pruebas (con proyectos efímeros, además permiso para crearlos y `billing.user` en la
+   cuenta de facturación). Después, las variables `TERRATEST_*` y `TEST_*`.
 
 Para apagarlo, `GCP_ENABLED` a cualquier otro valor: los trabajos de GCP vuelven a omitirse y
 los flujos terminan en verde (`plan-gate` pasa).
@@ -592,10 +688,11 @@ repositorio.
    configuración de checkov y tflint son los del PR: un PR puede debilitar su propia compuerta
    (por ejemplo, `exit 0` en `plan-gate.sh` o una exclusión en `.checkov.yaml`) y las
    comprobaciones obligatorias pasarían. Lo único que lo impide es la revisión de Code Owners
-   (GitHub lee `CODEOWNERS` de la rama base): seguridad es dueña de `/.github/`,
-   `scripts/`, `policies/`, `stages/0-bootstrap/`, `.checkov.yaml`, `.tflint.hcl` y
-   `tests/e2e/` (la prueba de humo antes de qa). Sin las dos opciones de aprobación de arriba,
-   un commit subido después de la aprobación de seguridad entraría sin revisión nueva.
+   (GitHub lee `CODEOWNERS` de la rama base): seguridad es dueña de `/.github/`, `scripts/`,
+   `policies/`, `stages/0-bootstrap/`, `stages/1-base/`, `.checkov.yaml`, `.tflint.hcl` y
+   `tests/e2e/` (la prueba de humo antes de qa); red, de `stages/2-networks/` y los módulos de
+   red; plataforma, del resto (`3-workloads` incluida). Sin las dos opciones de aprobación de
+   arriba, un commit subido después de la aprobación de seguridad entraría sin revisión nueva.
 
    **Guía de revisión:** quien revisa un PR mira también los `#checkov:skip=` y
    `# tflint-ignore` en línea de los `.tf` (no pasan por un archivo con dueño de seguridad):
@@ -605,32 +702,63 @@ repositorio.
    apruebe; la regla no cuenta aprobaciones. La aprobación de dos personas la da la protección
    de `main` (dos aprobaciones del PR); el entorno agrega una aprobación por raíz con cambios,
    con el plan a la vista. **Verificar** este comportamiento en la configuración real.
-3. **Plan de GitHub.** Según la documentación de GitHub (no comprobado aquí): en repositorios
+3. **"Deployment branches: `main`" en los cuatro entornos** (Settings → Environments →
+   Deployment branches and tags). Con WIF por entorno, esta regla es la que ata las cuentas que
+   escriben a `main`: sin ella, un trabajo de cualquier rama que declare el entorno obtiene sus
+   cuentas (§5). En `dev` y `qa`, que no tienen revisores, es la única barrera. Que GitHub no
+   deje correr ese trabajo desde otra rama es HIPÓTESIS hasta comprobarlo en la configuración
+   real (pendiente 12).
+4. **Plan de GitHub.** Según la documentación de GitHub (no comprobado aquí): en repositorios
    públicos, protección de rama, entornos y revisores obligatorios están en todos los planes;
    en repositorios privados, la protección de rama exige GitHub Pro, Team o Enterprise, y los
    revisores obligatorios de un entorno, GitHub Enterprise. **Hay que verificarlo** con el plan
    del equipo antes de contar con estos controles (pendiente 12 del primer apply). Sin
    revisores obligatorios, `common` y `prod` se aplicarían sin aprobación.
 
-## 5. Limitación conocida: WIF filtra solo por repositorio
+## 5. Limitación conocida: WIF filtra por entorno de GitHub, no por rama
 
-Documentada en el README de `stages/0-bootstrap` y en el ADR
-[0023](adr/0023-endurecimiento-de-la-identidad-del-pipeline.md). El proveedor de WIF acepta
-cualquier token con `assertion.repository_id == <id>` y `assertion.repository_owner_id == <id>`
+Documentada en el README de `stages/0-bootstrap` y en el ADR 0029 §3 (antes, ADR
+[0023](adr/0023-endurecimiento-de-la-identidad-del-pipeline.md)). El proveedor de WIF acepta
+solo tokens con `assertion.repository_id == <id>` y `assertion.repository_owner_id == <id>`
 (IDs numéricos: un repositorio borrado y vuelto a crear con el mismo nombre no hereda la
-confianza), y cada cuenta de etapa da `roles/iam.workloadIdentityUser` al `principalSet` del
-repositorio completo (`attribute.repository_id/<id>`). Por eso
-**cualquier rama o flujo del repositorio** (incluido un PR desde una rama del mismo
-repositorio) puede tomar la identidad de las cuentas de etapa, que pueden aplicar cambios. La
-condición `github.ref == refs/heads/main` de `apply.yml` y la protección de los entornos no
-lo impiden: una rama puede traer su propio flujo modificado. Lo mismo vale para el trabajo
-`plan` de `_terraform-root.yml`, que usa la cuenta de la etapa sin entorno.
+confianza), y mapea `attribute.environment = assertion.environment`. Dentro del repositorio,
+cada cuenta da `roles/iam.workloadIdentityUser` a un `principalSet` distinto
+(`stages/0-bootstrap/service_accounts.tf`):
 
-Mitigación prevista (no construida): restringir las cuentas que aplican a `main` o a un entorno
-con `attribute.ref` o `attribute.environment` en el `principalSet`, y separar cuentas de solo
-lectura para los `plan`. Mientras tanto, limitar quién tiene permiso de escritura en el
-repositorio; `CODEOWNERS` pone `.github/`, `stages/0-bootstrap/`, `scripts/`, `policies/`,
-`.checkov.yaml`, `.tflint.hcl` y `tests/e2e/` a cargo de seguridad.
+| Cuenta | `principalSet` | La obtiene |
+|---|---|---|
+| `tf-base`, `tf-net` | `…/attribute.environment/common` | un trabajo en el entorno `common` |
+| `tf-net-<env>`, `tf-wl-<env>` | `…/attribute.environment/<env>` | un trabajo en el entorno `<env>` |
+| `tf-read` | `…/attribute.repository_id/<id>` | cualquier trabajo del repositorio |
+
+Lo que el diseño resuelve: un trabajo sin entorno de GitHub (el `plan` de `_terraform-root.yml`,
+`pr.yml`, `drift.yml`) solo obtiene `tf-read`, que no escribe; y un trabajo de `dev` no obtiene
+las cuentas de `prod`, ni al revés. **HYPOTHESIS** hasta la primera ejecución: que el mapeo de
+`attribute.environment` no falle en trabajos sin entorno y que esos trabajos solo obtengan
+`tf-read` (`VERIFICAR-EN-APPLY` en `stages/0-bootstrap/wif.tf`).
+
+Lo que sigue abierto:
+
+- **El entorno lo declara el flujo, y una rama puede traer su propio flujo.** Cualquier rama del
+  repositorio (incluido un PR desde una rama del mismo repositorio) puede tener un trabajo con
+  `environment: dev` o `environment: prod` y pedir las cuentas de ese entorno. La condición
+  `github.ref == refs/heads/main` de los flujos no lo impide: está en el YAML que la rama
+  cambia. Lo frenan la regla "Deployment branches: `main`" de cada entorno y, en `common` y
+  `prod`, los revisores obligatorios (§4).
+- **Lo que alcanza una cuenta de entorno.** `tf-wl-<env>` tiene los roles de Compute, GKE, Cloud
+  Run, Cloud SQL, Memorystore y Filestore sin condición, y `tf-net-<env>` los de red: la cuenta
+  de dev puede, técnicamente, cambiar recursos de prod de esos servicios (riesgo aceptado,
+  ADR 0029 §3 y §9).
+- **`tf-read` la obtiene cualquier rama.** Es de solo lectura, pero lee todo el bucket de
+  estado, y los estados llevan valores sensibles (por ejemplo, el secreto compartido de la VPN
+  simulada solo existe en el estado del hub, README de `stages/2-networks`).
+
+Mitigación prevista (no construida, propuesta): que el `principalSet` de las cuentas que
+escriben exija también `main`, con un atributo que combine entorno y rama (por ejemplo, un
+mapeo propio de `assertion.environment` y `assertion.ref`); sin comprobar en GCP. Mientras
+tanto, limitar quién tiene permiso de escritura en el repositorio; `CODEOWNERS` pone
+`.github/`, `stages/0-bootstrap/`, `stages/1-base/`, `scripts/`, `policies/`, `.checkov.yaml`,
+`.tflint.hcl` y `tests/e2e/` a cargo de seguridad.
 
 ## 6. Acciones fijadas por SHA
 
