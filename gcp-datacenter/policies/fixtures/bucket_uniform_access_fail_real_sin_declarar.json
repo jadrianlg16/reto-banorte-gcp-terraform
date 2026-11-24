@@ -1,0 +1,123 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_storage_bucket.no_uniform",
+          "expressions": {
+            "location": {
+              "constant_value": "US-CENTRAL1"
+            },
+            "name": {
+              "constant_value": "bnt-dev-data-nouni-usc1"
+            },
+            "public_access_prevention": {
+              "constant_value": "enforced"
+            }
+          },
+          "mode": "managed",
+          "name": "no_uniform",
+          "provider_config_key": "google",
+          "schema_version": 3,
+          "type": "google_storage_bucket"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_storage_bucket.no_uniform",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "default_event_based_hold": null,
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "enable_object_retention": null,
+          "encryption": [],
+          "force_destroy": false,
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "labels": null,
+          "lifecycle_rule": [],
+          "location": "US-CENTRAL1",
+          "logging": [],
+          "name": "bnt-dev-data-nouni-usc1",
+          "public_access_prevention": "enforced",
+          "requester_pays": null,
+          "retention_policy": [],
+          "storage_class": "STANDARD",
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "retention_policy": [],
+          "soft_delete_policy": [],
+          "terraform_labels": {},
+          "versioning": [],
+          "website": []
+        },
+        "after_unknown": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "id": true,
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "project": true,
+          "project_number": true,
+          "retention_policy": [],
+          "rpo": true,
+          "self_link": true,
+          "soft_delete_policy": true,
+          "terraform_labels": {},
+          "time_created": true,
+          "uniform_bucket_level_access": true,
+          "updated": true,
+          "url": true,
+          "versioning": true,
+          "website": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "no_uniform",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_storage_bucket"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

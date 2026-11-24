@@ -1,0 +1,387 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_cloud_run_v2_service_iam_member.invoker",
+          "expressions": {
+            "location": {
+              "constant_value": "us-central1"
+            },
+            "member": {
+              "references": [
+                "local.sa_run"
+              ]
+            },
+            "name": {
+              "constant_value": "bnt-dev-app-run-usc1"
+            },
+            "role": {
+              "constant_value": "roles/run.invoker"
+            }
+          },
+          "mode": "managed",
+          "name": "invoker",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_cloud_run_v2_service_iam_member"
+        },
+        {
+          "address": "google_compute_router.dr",
+          "expressions": {
+            "name": {
+              "constant_value": "bnt-dev-net-spoke-router-use4"
+            },
+            "network": {
+              "references": [
+                "google_compute_network.good.id",
+                "google_compute_network.good"
+              ]
+            },
+            "region": {
+              "constant_value": "us-east4"
+            }
+          },
+          "mode": "managed",
+          "name": "dr",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_compute_router"
+        },
+        {
+          "address": "google_compute_subnetwork.no_region",
+          "expressions": {
+            "ip_cidr_range": {
+              "constant_value": "10.10.1.0/24"
+            },
+            "name": {
+              "constant_value": "bnt-dev-net-run-usc1"
+            },
+            "network": {
+              "references": [
+                "google_compute_network.good.id",
+                "google_compute_network.good"
+              ]
+            }
+          },
+          "mode": "managed",
+          "name": "no_region",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_compute_subnetwork"
+        },
+        {
+          "address": "google_kms_key_ring.us",
+          "expressions": {
+            "location": {
+              "constant_value": "us"
+            },
+            "name": {
+              "constant_value": "bnt-dev-sec-kr-us"
+            }
+          },
+          "mode": "managed",
+          "name": "us",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_kms_key_ring"
+        },
+        {
+          "address": "google_storage_bucket.dual",
+          "expressions": {
+            "custom_placement_config": [
+              {
+                "data_locations": {
+                  "constant_value": [
+                    "US-CENTRAL1",
+                    "US-EAST4"
+                  ]
+                }
+              }
+            ],
+            "location": {
+              "constant_value": "US"
+            },
+            "name": {
+              "constant_value": "bnt-dev-data-dual-us"
+            },
+            "public_access_prevention": {
+              "constant_value": "enforced"
+            },
+            "uniform_bucket_level_access": {
+              "constant_value": true
+            }
+          },
+          "mode": "managed",
+          "name": "dual",
+          "provider_config_key": "google",
+          "schema_version": 3,
+          "type": "google_storage_bucket"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_cloud_run_v2_service_iam_member.invoker",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "condition": [],
+          "location": "us-central1",
+          "member": "serviceAccount:bnt-dev-app-run@example-project.iam.gserviceaccount.com",
+          "name": "bnt-dev-app-run-usc1",
+          "role": "roles/run.invoker"
+        },
+        "after_sensitive": {
+          "condition": []
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "project": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "invoker",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_cloud_run_v2_service_iam_member"
+    },
+    {
+      "address": "google_compute_router.dr",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "bgp": [],
+          "description": null,
+          "encrypted_interconnect_router": null,
+          "md5_authentication_keys": [],
+          "name": "bnt-dev-net-spoke-router-use4",
+          "project": "example-project",
+          "region": "us-east4",
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "bgp": [],
+          "md5_authentication_keys": []
+        },
+        "after_unknown": {
+          "bgp": [],
+          "creation_timestamp": true,
+          "id": true,
+          "md5_authentication_keys": [],
+          "network": true,
+          "self_link": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "dr",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_router"
+    },
+    {
+      "address": "google_compute_subnetwork.no_region",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "ip_cidr_range": "10.10.1.0/24",
+          "ip_collection": null,
+          "ipv6_access_type": null,
+          "log_config": [],
+          "name": "bnt-dev-net-run-usc1",
+          "params": [],
+          "project": "example-project",
+          "reserved_internal_range": null,
+          "role": null,
+          "send_secondary_ip_range_if_empty": null,
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "log_config": [],
+          "params": [],
+          "secondary_ip_range": []
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "enable_flow_logs": true,
+          "external_ipv6_prefix": true,
+          "fingerprint": true,
+          "gateway_address": true,
+          "id": true,
+          "internal_ipv6_prefix": true,
+          "ipv6_cidr_range": true,
+          "ipv6_gce_endpoint": true,
+          "log_config": [],
+          "network": true,
+          "params": [],
+          "private_ip_google_access": true,
+          "private_ipv6_google_access": true,
+          "purpose": true,
+          "region": true,
+          "secondary_ip_range": true,
+          "self_link": true,
+          "stack_type": true,
+          "state": true,
+          "subnetwork_id": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "no_region",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_subnetwork"
+    },
+    {
+      "address": "google_kms_key_ring.us",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "location": "us",
+          "name": "bnt-dev-sec-kr-us",
+          "project": "example-project",
+          "timeouts": null
+        },
+        "after_sensitive": {},
+        "after_unknown": {
+          "id": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "us",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_kms_key_ring"
+    },
+    {
+      "address": "google_storage_bucket.dual",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [
+            {
+              "data_locations": [
+                "US-CENTRAL1",
+                "US-EAST4"
+              ]
+            }
+          ],
+          "default_event_based_hold": null,
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "enable_object_retention": null,
+          "encryption": [],
+          "force_destroy": false,
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "labels": null,
+          "lifecycle_rule": [],
+          "location": "US",
+          "logging": [],
+          "name": "bnt-dev-data-dual-us",
+          "public_access_prevention": "enforced",
+          "requester_pays": null,
+          "retention_policy": [],
+          "storage_class": "STANDARD",
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null,
+          "uniform_bucket_level_access": true
+        },
+        "after_sensitive": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [
+            {
+              "data_locations": [
+                false,
+                false
+              ]
+            }
+          ],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "retention_policy": [],
+          "soft_delete_policy": [],
+          "terraform_labels": {},
+          "versioning": [],
+          "website": []
+        },
+        "after_unknown": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [
+            {
+              "data_locations": [
+                false,
+                false
+              ]
+            }
+          ],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "id": true,
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "project": true,
+          "project_number": true,
+          "retention_policy": [],
+          "rpo": true,
+          "self_link": true,
+          "soft_delete_policy": true,
+          "terraform_labels": {},
+          "time_created": true,
+          "updated": true,
+          "url": true,
+          "versioning": true,
+          "website": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "dual",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_storage_bucket"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}
