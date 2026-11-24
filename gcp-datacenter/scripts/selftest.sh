@@ -107,6 +107,21 @@ check "unmanaged-resources: una API habilitada a mano sale con 1" 1 $?
 [ "$(grep '^NO ADMINISTRADO ' "$tmp/out3.txt")" = \
   "NO ADMINISTRADO serviceusage.googleapis.com/Service projects/111111111111/services/aiplatform.googleapis.com" ]
 check "unmanaged-resources: solo la API manual sale; storage-api y containerfilesystem se permiten" 0 $?
+# Imágenes de contenedor (DockerImage, HIPÓTESIS de formato): las del repositorio de 1-base son
+# hijas del repositorio; la de un repositorio creado a mano (cloud-run-source-deploy) la permite
+# la regla de imágenes, pero el repositorio sí sale como no administrado.
+um --assets "$u/assets-imagenes.json" --state "$u/1-base.state.json" >"$tmp/out-img.txt" 2>&1
+rc=$?
+[ "$rc" = 1 ] && [ "$(grep '^NO ADMINISTRADO ' "$tmp/out-img.txt")" = \
+  "NO ADMINISTRADO artifactregistry.googleapis.com/Repository projects/111111111111/locations/us-central1/repositories/cloud-run-source-deploy" ] &&
+  grep -q '^  hijos de un recurso administrado: 2$' "$tmp/out-img.txt" &&
+  grep -q '^  permitidos por regla: 1$' "$tmp/out-img.txt"
+check "unmanaged-resources: imágenes permitidas (2 hijas del repositorio de 1-base, 1 por regla) y el repositorio manual sí sale" 0 $?
+grep -v 'DockerImage' scripts/unmanaged-allowlist.txt >"$tmp/allow-sin-imagenes.txt"
+um --assets "$u/assets-imagenes.json" --state "$u/1-base.state.json" --allowlist "$tmp/allow-sin-imagenes.txt" \
+  >"$tmp/out-img2.txt" 2>&1
+grep -c '^NO ADMINISTRADO artifactregistry.googleapis.com/DockerImage ' "$tmp/out-img2.txt" >"$tmp/n-img.txt"
+check "unmanaged-resources: sin la regla de imágenes, la imagen del repositorio manual sale como no administrada" 1 "$(cat "$tmp/n-img.txt")"
 # drift.yml lista el proyecto (no una carpeta) y pasa su ID y su número al script.
 grep -qF -- '--scope="projects/${PROJECT_ID}"' "$WF/drift.yml" &&
   grep -qF -- '--project "${PROJECT_ID}" --project-number "${PROJECT_NUMBER}"' "$WF/drift.yml" &&
