@@ -9,11 +9,14 @@
 # cuentas de servicio; que las llaves hereden la etiqueta de su llavero es HYPOTHESIS.
 #
 # Límites conocidos (la denegación no los cubre):
-# - iam.serviceAccounts.createTagBinding/deleteTagBinding y cloudkms.keyRings.deleteTagBinding no
-#   se pueden negar. Por eso ninguna cuenta del pipeline tiene esos permisos sobre lo protegido:
-#   las de cargas usan un rol propio sin ellos (custom_roles.tf) y la de 1-base no tiene tagUser
-#   ni KMS sobre el llavero del estado. Las cuentas de spoke tienen tagAdmin, pero ningún permiso
-#   sobre cuentas, buckets ni llaves.
+# - iam.serviceAccounts.createTagBinding/deleteTagBinding, cloudkms.keyRings.deleteTagBinding y
+#   resourcemanager.tagValueBindings.* no se pueden negar. Por eso ninguna cuenta del pipeline
+#   tiene esos permisos sobre lo protegido: ninguna tiene tagUser ni tagAdmin de proyecto, la de
+#   1-base usa un rol de cuentas de servicio sin etiquetas (custom_roles.tf) y no tiene KMS sobre
+#   el llavero del estado, y las de spoke usan TfNetworkTagManager, que administra claves, valores
+#   y su IAM pero no liga etiquetas. Aunque una cuenta de spoke se diera tagUser sobre el valor
+#   de protección, le faltaría deleteTagBinding sobre la cuenta, el bucket o el llavero (prueba
+#   ningun_rol_del_pipeline_liga_etiquetas).
 # - Los permisos de las políticas de denegación (iam.denypolicies.*) no se pueden negar; ninguna
 #   cuenta del pipeline tiene roles/iam.denyAdmin.
 # - Los permisos de objeto de Cloud Storage no se niegan: los prefijos del estado se separan con
@@ -60,9 +63,35 @@ locals {
     "iam.googleapis.com/serviceAccounts.disable",
   ]
 
-  # En todo el proyecto: WIF, roles personalizados, llaves de cuentas y borrar el proyecto.
-  # Ninguna cuenta del pipeline los necesita.
+  # Valores de los secretos (ADR 0015): ninguna cuenta del pipeline los lee, salvo tf-net, que lee
+  # la llave compartida de la VPN real en el hub (stages/2-networks/vpn.tf). 1-base administra el
+  # IAM de los secretos (custom_roles.tf) y podría darse secretAccessor: esta regla se lo niega.
+  # Todo en la lista de permisos admitidos en políticas de denegación
+  # (https://cloud.google.com/iam/docs/deny-permissions-support).
+  secret_value_denied_principals = concat(
+    [for k in sort(keys(local.stage_roots)) : "principal://iam.googleapis.com/projects/-/serviceAccounts/${google_service_account.stage[k].email}" if k != "2-networks"],
+    ["principal://iam.googleapis.com/projects/-/serviceAccounts/${google_service_account.read.email}"],
+  )
+  secret_value_denied_permissions = [
+    "secretmanager.googleapis.com/versions.access",
+  ]
+
+  # En todo el proyecto: WIF, roles personalizados, llaves de cuentas, borrar el proyecto y
+  # obtener tokens o firmas de cualquier cuenta de servicio. Ninguna cuenta del pipeline los
+  # necesita: adjuntar una cuenta de ejecución a un nodo, una VM, un servicio de Cloud Run o un
+  # trabajo de Cloud Scheduler pide actAs (que no se niega aquí), no un token. Así una cuenta que
+  # se diera serviceAccountTokenCreator sobre una cuenta de ejecución (tf-base administra su IAM)
+  # no podría actuar como ella fuera de Terraform. La toma de las cuentas del pipeline por WIF no
+  # se ve afectada: quien pide su token es la identidad federada, no la cuenta. Todos figuran en
+  # la lista de permisos admitidos en políticas de denegación (actualizada el 2026-11-18).
+  # VERIFICAR-EN-APPLY: que crear un trabajo de Cloud Scheduler con oauth_token de la cuenta sched
+  # y un clúster de GKE con la cuenta gke-nodes funcione con esta regla (solo piden actAs).
   untagged_denied_permissions = [
+    "iam.googleapis.com/serviceAccounts.getAccessToken",
+    "iam.googleapis.com/serviceAccounts.getOpenIdToken",
+    "iam.googleapis.com/serviceAccounts.implicitDelegation",
+    "iam.googleapis.com/serviceAccounts.signBlob",
+    "iam.googleapis.com/serviceAccounts.signJwt",
     "iam.googleapis.com/workloadIdentityPools.create",
     "iam.googleapis.com/workloadIdentityPools.update",
     "iam.googleapis.com/workloadIdentityPools.delete",
@@ -163,10 +192,18 @@ resource "google_iam_deny_policy" "pipeline" {
   }
 
   rules {
-    description = "Las cuentas del pipeline no pueden cambiar WIF, roles personalizados, crear llaves de cuentas ni borrar el proyecto."
+    description = "Las cuentas del pipeline no pueden cambiar WIF ni roles personalizados, crear llaves, pedir tokens o firmas de cuentas de servicio ni borrar el proyecto."
     deny_rule {
       denied_principals  = local.denied_principals
       denied_permissions = local.untagged_denied_permissions
+    }
+  }
+
+  rules {
+    description = "Las cuentas del pipeline, salvo la del hub de red, no leen valores de secretos."
+    deny_rule {
+      denied_principals  = local.secret_value_denied_principals
+      denied_permissions = local.secret_value_denied_permissions
     }
   }
 

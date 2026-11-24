@@ -9,7 +9,7 @@ output "job_ids" {
 }
 
 output "window" {
-  description = "Horario encendido calculado de los crons: zona horaria, crons, días, minutos del día de encendido y apagado y duración en segundos. La etapa 5 lo usa para el programa de escalado del MIG (business_hours) y para la ventana de Backup and DR."
+  description = "Horario encendido calculado de los crons: zona horaria, crons, días, minutos del día de encendido y apagado y duración en segundos. 3-workloads lo usa para el programa de escalado del MIG (business_hours) y para la ventana de Backup and DR."
   value = {
     time_zone      = var.time_zone
     start_schedule = var.start_schedule

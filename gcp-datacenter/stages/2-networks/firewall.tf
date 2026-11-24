@@ -39,7 +39,7 @@ module "firewall_hub" {
 # lo necesario para probar el reenvío DNS, es decir, las consultas de Cloud DNS (TCP y UDP 53
 # desde 35.199.192.0/19) y el SSH por IAP para administrar la VM DNS de prueba. Lo demás lo
 # deniega la regla por defecto del módulo.
-# VERIFICAR-EN-APPLY: que una VM DNS en onprem_dns_servers responda a una consulta de un
+# VERIFICAR-EN-APPLY: que la VM DNS de onprem_dns.tf responda a una consulta de un
 # spoke (zona de peering → zona de reenvío del hub → VPN → onprem-sim) y que la respuesta
 # vuelva a 35.199.192.0/19 por la ruta que el hub anuncia por BGP.
 module "firewall_onprem_sim" {

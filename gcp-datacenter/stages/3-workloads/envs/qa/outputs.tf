@@ -89,17 +89,17 @@ output "internal_lb_dns_records" {
 }
 
 output "gke_workload_identity_member" {
-  description = "Miembro serviceAccount:<proyecto>.svc.id.goog[<namespace>/<cuenta>] que actúa como la cuenta workload (null sin enable_gke). El namespace es <application>-<environment> por defecto (ADR 0029 §9)."
-  value       = try(google_service_account_iam_member.workload_identity["workload"].member, null)
+  description = "Miembro serviceAccount:<proyecto>.svc.id.goog[<application>-<environment>/<cuenta>] que actúa como la cuenta workload (ADR 0029 §9). Lo enlaza 1-base (gke_workload_identity_bindings); null sin enable_gke o mientras 1-base no lo enlace."
+  value       = var.enable_gke ? local.gke_workload_identity_member : null
 }
 
 output "service_accounts" {
-  description = "Uso → correo de las cuentas de ejecución de la aplicación (<prefix>-<environment>-<application>-<uso>): gke_nodes, workload, mig y run. La cuenta de Kubernetes de Workload Identity lleva la anotación iam.gke.io/gcp-service-account con el correo de workload."
+  description = "Uso → correo de las cuentas de ejecución de la aplicación (<prefix>-<environment>-<application>-<uso>): gke_nodes, workload, mig y run. Las crea 1-base (runtime_service_accounts). La cuenta de Kubernetes de Workload Identity lleva la anotación iam.gke.io/gcp-service-account con el correo de workload."
   value       = local.service_accounts
 }
 
 output "scheduler_service_account" {
-  description = "Correo de la cuenta de los trabajos del apagado fuera de horario (<prefix>-<environment>-<application>-sched, ADR 0028). null sin off_hours_shutdown (siempre en prod)."
+  description = "Correo de la cuenta de los trabajos del apagado fuera de horario (<prefix>-<environment>-<application>-sched, ADR 0028), que crea 1-base. null sin off_hours_shutdown (siempre en prod)."
   value       = local.scheduler_service_account
 }
 

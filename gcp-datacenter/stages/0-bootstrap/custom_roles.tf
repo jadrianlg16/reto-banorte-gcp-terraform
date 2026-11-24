@@ -7,53 +7,38 @@
 
 locals {
   custom_roles = {
-    # 1-base: contenedores de secretos (ADR 0015) sin leer sus valores. roles/secretmanager.admin
-    # incluye secretmanager.versions.access; este rol no tiene permisos de versiones ni
-    # secrets.setIamPolicy (con él la cuenta podría darse secretAccessor a sí misma).
+    # 1-base: contenedores de secretos (ADR 0015) y su IAM (secretAccessor de las cuentas de
+    # ejecución de cada entorno), sin leer sus valores. roles/secretmanager.admin incluye
+    # secretmanager.versions.access; este rol no tiene permisos de versiones. Con
+    # secrets.setIamPolicy la cuenta podría darse secretAccessor a sí misma: la política de
+    # denegación niega secretmanager.versions.access a las cuentas del pipeline salvo tf-net
+    # (deny_policy.tf), así que ese permiso no le sirve para leer un valor.
     secret_container_admin = {
       role_id     = "${var.prefix}TfSecretContainerAdmin"
       title       = "Terraform: contenedores de secretos sin acceso a valores"
-      description = "Crear, cambiar y borrar secretos de Secret Manager (1-base). Sin leer ni agregar versiones y sin cambiar su IAM."
+      description = "Crear, cambiar y borrar secretos de Secret Manager y administrar su IAM (1-base). Sin leer ni agregar versiones."
       permissions = [
         "secretmanager.locations.get",
         "secretmanager.locations.list",
         "secretmanager.secrets.create",
         "secretmanager.secrets.delete",
         "secretmanager.secrets.get",
-        "secretmanager.secrets.list",
-        "secretmanager.secrets.update",
-      ]
-    }
-    # 3-workloads: leer y asignar IAM de llaves y secretos de su entorno, sin administrar, usar
-    # ni destruir llaves ni leer valores. Se asigna condicionado a <prefix>-<env>-
-    # (service_accounts.tf).
-    kms_secret_iam_granter = {
-      role_id     = "${var.prefix}TfKmsSecretIamGranter"
-      title       = "Terraform: IAM de llaves KMS y secretos"
-      description = "Leer y asignar IAM de llaves KMS y secretos (3-workloads, condicionado al entorno). Sin administrar ni usar las llaves."
-      permissions = [
-        "cloudkms.cryptoKeys.get",
-        "cloudkms.cryptoKeys.getIamPolicy",
-        "cloudkms.cryptoKeys.list",
-        "cloudkms.cryptoKeys.setIamPolicy",
-        "cloudkms.keyRings.get",
-        "cloudkms.keyRings.list",
-        "secretmanager.secrets.get",
         "secretmanager.secrets.getIamPolicy",
         "secretmanager.secrets.list",
         "secretmanager.secrets.setIamPolicy",
+        "secretmanager.secrets.update",
       ]
     }
-    # 3-workloads: lo que necesita de roles/iam.serviceAccountAdmin (crear sus cuentas de
-    # ejecución y administrar su IAM, incluido el enlace de Workload Identity) SIN
-    # iam.serviceAccounts.createTagBinding ni deleteTagBinding. serviceAccountAdmin los incluye, y
-    # deleteTagBinding no se puede negar en una política de denegación: con él y tagUser, una
-    # cuenta de entorno podría quitar la etiqueta de protección a las cuentas del pipeline y
-    # después cambiar su IAM (ADR 0029 §5).
+    # 1-base: lo que necesita de roles/iam.serviceAccountAdmin (crear las cuentas de ejecución
+    # de los entornos y administrar su IAM: serviceAccountUser de tf-wl-<env> y el enlace de
+    # Workload Identity) SIN iam.serviceAccounts.createTagBinding ni deleteTagBinding.
+    # serviceAccountAdmin los incluye, y deleteTagBinding no se puede negar en una política de
+    # denegación: con él y tagUser, una cuenta podría quitar la etiqueta de protección a las
+    # cuentas del pipeline y después cambiar su IAM (ADR 0029 §5).
     service_account_manager = {
       role_id     = "${var.prefix}TfServiceAccountManager"
       title       = "Terraform: cuentas de servicio sin etiquetas"
-      description = "Crear, cambiar, borrar y administrar el IAM de cuentas de servicio (3-workloads). Sin crear ni quitar etiquetas de las cuentas."
+      description = "Crear, cambiar, borrar y administrar el IAM de cuentas de servicio (1-base). Sin crear ni quitar etiquetas de las cuentas."
       permissions = [
         "iam.serviceAccounts.create",
         "iam.serviceAccounts.delete",
@@ -68,17 +53,35 @@ locals {
         "resourcemanager.projects.get",
       ]
     }
-    # 3-workloads: dar artifactregistry.reader sobre el repositorio de su entorno a sus cuentas de
-    # ejecución. Lo asigna 1-base sobre cada repositorio del entorno (no en el proyecto), así que
-    # no depende de condiciones sobre Artifact Registry.
-    repository_iam_granter = {
-      role_id     = "${var.prefix}TfRepositoryIamGranter"
-      title       = "Terraform: IAM de repositorios de Artifact Registry"
-      description = "Leer y asignar IAM de un repositorio de Artifact Registry (3-workloads, por repositorio). Sin leer ni publicar imágenes."
+    # 2-networks/envs/<env>: las claves y valores de las etiquetas seguras del spoke y su IAM
+    # (tagUser de tf-wl-<env> y tagHoldAdmin del agente de GKE sobre sus valores). Reemplaza a
+    # roles/resourcemanager.tagAdmin sin resourcemanager.tagHolds.*; como tagAdmin, no tiene
+    # resourcemanager.tagValueBindings.* ni ningún *TagBinding, así que no liga ni quita
+    # etiquetas de recursos (permisos de roles/resourcemanager.tagAdmin y tagUser en la
+    # referencia de roles predefinidos, https://cloud.google.com/iam/docs/roles-permissions/resourcemanager).
+    # Con tagValues.setIamPolicy podría darse tagUser sobre el valor de protección, pero quitar
+    # ese enlace de una cuenta, del bucket o del llavero del estado exige además
+    # deleteTagBinding sobre el recurso, que ningún rol del pipeline tiene sobre ellos (prueba
+    # "ningun_rol_del_pipeline_liga_etiquetas" de tests/0-bootstrap.tftest.hcl).
+    network_tag_manager = {
+      role_id     = "${var.prefix}TfNetworkTagManager"
+      title       = "Terraform: etiquetas seguras de red sin ligarlas"
+      description = "Crear, cambiar y borrar claves y valores de etiquetas y administrar su IAM (2-networks/envs). Sin ligar ni quitar etiquetas de recursos ni retenerlas."
       permissions = [
-        "artifactregistry.repositories.get",
-        "artifactregistry.repositories.getIamPolicy",
-        "artifactregistry.repositories.setIamPolicy",
+        "resourcemanager.tagKeys.create",
+        "resourcemanager.tagKeys.delete",
+        "resourcemanager.tagKeys.get",
+        "resourcemanager.tagKeys.getIamPolicy",
+        "resourcemanager.tagKeys.list",
+        "resourcemanager.tagKeys.setIamPolicy",
+        "resourcemanager.tagKeys.update",
+        "resourcemanager.tagValues.create",
+        "resourcemanager.tagValues.delete",
+        "resourcemanager.tagValues.get",
+        "resourcemanager.tagValues.getIamPolicy",
+        "resourcemanager.tagValues.list",
+        "resourcemanager.tagValues.setIamPolicy",
+        "resourcemanager.tagValues.update",
       ]
     }
     # Apagado fuera de horario (ADR 0028, ADR 0029 §4): exactamente los permisos de las tres

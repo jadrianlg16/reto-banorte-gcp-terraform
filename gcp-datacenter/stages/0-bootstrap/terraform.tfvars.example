@@ -4,9 +4,12 @@
 project_id      = "example-project-id"
 billing_account = "000000-000000-000000"
 
-# Solo si el proyecto está dentro de una organización (si no, dejar comentados).
-# org_id           = "000000000000"
-# access_policy_id = "000000000000"
+# Solo si el proyecto está dentro de una organización (si no, dejar comentados). Con org_id esta
+# etapa aplica las políticas de organización al proyecto y, con access_policy_id, el perímetro de
+# VPC-SC en dry-run (org.tf).
+# org_id                = "000000000000"
+# directory_customer_id = "C00000000"
+# access_policy_id      = "000000000000"
 
 prefix         = "bnt"
 name_suffix    = ""
@@ -30,6 +33,10 @@ budget_amount = 300
 # Protección del estado (ADR 0029 §5). Apagar solo si un apply demuestra que no funciona.
 enable_protection_tags = true
 enable_deny_policy     = true
+
+# VM DNS de prueba de onprem-sim: el hub recibe compute.instanceAdmin.v1 y 1-base crea su cuenta.
+# Solo junto con simulate_onprem = true y onprem_dns_vm = true en 2-networks.
+# onprem_dns_vm = true
 
 labels = {
   app         = "landing-zone"

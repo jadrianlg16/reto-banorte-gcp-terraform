@@ -55,8 +55,12 @@ ADR 0029 §4):
   compruebe los de sus backends.
 
   Para adjuntar una etiqueta a una VM o nodo, quien crea el recurso necesita
-  `roles/resourcemanager.tagUser` sobre el valor (salida `secure_tags`); esta raíz no lo
-  otorga.
+  `roles/resourcemanager.tagUser` sobre el valor (salida `secure_tags`). Esta raíz se lo da a la
+  cuenta de cargas del entorno, `<prefix>-tf-wl-<env>`, solo sobre `lb_backend` e `iap_ssh`
+  (`google_tags_tag_value_iam_member`; el correo se arma con `prefix`, `environment` y
+  `project_id`, como en `0-bootstrap`), y `roles/resourcemanager.tagHoldAdmin` sobre
+  `lb_backend` al agente de GKE (guía de GKE de etiquetas para firewalls). El `tagUser` de
+  proyecto del agente de GKE y de `<número>@cloudservices` lo da `0-bootstrap`.
 - DNS (módulo `dns`): zona privada `<env>.<dns_domain_base>` (por defecto
   `<env>.empresa.internal.`) adjunta a la VPC spoke y a la VPC hub (on-premises la resuelve por
   el reenvío entrante del hub; los otros entornos no la ven); zona de peering de
@@ -75,7 +79,8 @@ ADR 0029 §4):
 No crea (regla de recursos únicos, ADR 0029 §4): APIs del proyecto (`compute`, `dns`,
 `servicenetworking` y, para las Connectivity Tests de la prueba de humo, `networkmanagement`),
 que habilita `0-bootstrap` una sola vez; métricas y alertas de auditoría (CIS 2.5 a 2.12), que
-viven una sola vez en `1-base`; ni permisos de proyecto.
+viven una sola vez en `1-base`; ni permisos de proyecto (solo IAM sobre sus valores de
+etiqueta).
 
 Validaciones del plan de direccionamiento (contrato §5): `spoke_supernet` es un /16, no se
 traslapa con `onprem_cidrs` y coincide con `spoke_supernets[env]` del hub (lo que el hub
@@ -112,13 +117,13 @@ Todos en el proyecto y otorgados por `0-bootstrap` (ADR 0029 §3). Lo que esta r
 |---|---|---|
 | Proyecto | `roles/compute.networkAdmin` | VPC, subredes, rutas, routers, NAT, PSA y el peering hub → spoke sobre la VPC hub |
 | Proyecto | `roles/compute.securityAdmin` | Política de firewall de red, sus reglas y su asociación |
-| Proyecto | `roles/resourcemanager.tagAdmin` | Llaves y valores de las etiquetas seguras (padre: el proyecto) |
+| Proyecto | `<prefix>TfNetworkTagManager` (rol personalizado de `0-bootstrap`) | Llaves y valores de las etiquetas seguras (padre: el proyecto) y su IAM; sin `*TagBinding`, `tagValueBindings` ni `tagHolds`, así que no liga ni quita etiquetas de recursos |
 | Proyecto | `roles/dns.admin` | Zonas, registros y política de servidor; adjuntar la zona del entorno a la VPC hub y la zona de peering hacia ella (`dns.networks.bindPrivateDNSZone`, `dns.networks.targetWithPeeringZone`) |
 | Proyecto | `roles/servicenetworking.networksAdmin` | Conexión de Private Service Access |
 | Bucket de estado | escritura de `2-networks/<env>`, lectura de `2-networks/hub` | Estado |
 
 Que estos roles alcancen (en especial `servicenetworking.networksAdmin` para la conexión de PSA
-y `tagAdmin` en un proyecto sin organización) es HYPOTHESIS (`VERIFICAR-EN-APPLY`).
+y el rol de etiquetas en un proyecto sin organización) es HYPOTHESIS (`VERIFICAR-EN-APPLY`).
 
 Lectura de estado: `2-networks/hub` (`hub_network_self_link` y `spoke_supernets`, interfaz del
 ADR 0029). ADR 0029 §2 permite además `1-base`, del que el spoke no usa ninguna salida.
@@ -136,6 +141,7 @@ ADR 0029). ADR 0029 §2 permite además `1-base`, del que el spoke no usa ningun
 
 | Name | Version |
 | ---- | ------- |
+| <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
 | <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
@@ -150,6 +156,8 @@ ADR 0029). ADR 0029 §2 permite además `1-base`, del que el spoke no usa ningun
 
 | Name | Type |
 | ---- | ---- |
+| [google_tags_tag_value_iam_member.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/tags_tag_value_iam_member) | resource |
+| [google_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/project) | data source |
 | [terraform_remote_state.hub](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/data-sources/remote_state) | data source |
 
 ## Inputs

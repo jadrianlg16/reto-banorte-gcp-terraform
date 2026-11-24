@@ -147,6 +147,21 @@ run "spoke_dev_sin_dr" {
     error_message = "secure_tags y secure_tag_keys deben tener las llaves lb_backend e iap_ssh."
   }
 
+  # Hallazgo 1: tf-wl-<env> recibe tagUser solo sobre los valores de su entorno, no en el
+  # proyecto; el agente de GKE, tagHoldAdmin sobre la etiqueta de los nodos.
+  assert {
+    condition = alltrue([
+      length(google_tags_tag_value_iam_member.this) == 3,
+      google_tags_tag_value_iam_member.this["lb_backend|workloads"].tag_value == "tagValues/1000000000001",
+      google_tags_tag_value_iam_member.this["iap_ssh|workloads"].tag_value == "tagValues/1000000000002",
+      google_tags_tag_value_iam_member.this["iap_ssh|workloads"].role == "roles/resourcemanager.tagUser",
+      google_tags_tag_value_iam_member.this["iap_ssh|workloads"].member == "serviceAccount:bnt-tf-wl-dev@example-landing-zone.iam.gserviceaccount.com",
+      google_tags_tag_value_iam_member.this["lb_backend|gke_agent"].role == "roles/resourcemanager.tagHoldAdmin",
+      endswith(google_tags_tag_value_iam_member.this["lb_backend|gke_agent"].member, "@container-engine-robot.iam.gserviceaccount.com"),
+    ])
+    error_message = "tagUser de tf-wl-dev sobre lb_backend e iap_ssh del spoke y tagHoldAdmin del agente de GKE sobre lb_backend."
+  }
+
   assert {
     condition = (
       toset(output.firewall_policy_rules["allow-lb-health-checks"].src_ip_ranges) == toset(["35.191.0.0/16", "130.211.0.0/22"]) &&
@@ -389,6 +404,10 @@ run "spoke_prod" {
   assert {
     condition     = output.network_name == "bnt-prod-net-spoke" && module.firewall.policy_name == "bnt-prod-net-fw" && output.private_dns_domain == "prod.empresa.internal." && length(output.subnets) == 6 && length(output.nat_names) == 2
     error_message = "prod debe crear bnt-prod-net-spoke, la zona prod.empresa.internal. y las subredes y NAT de las dos regiones."
+  }
+  assert {
+    condition     = google_tags_tag_value_iam_member.this["lb_backend|workloads"].member == "serviceAccount:bnt-tf-wl-prod@example-landing-zone.iam.gserviceaccount.com"
+    error_message = "En prod, el tagUser de los valores del spoke es para tf-wl-prod."
   }
 }
 

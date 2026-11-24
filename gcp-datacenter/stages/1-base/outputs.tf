@@ -2,12 +2,12 @@
 # fijos.
 
 output "kms_key_ids" {
-  description = "Mapa entorno → llave → ID de la llave KMS. Llave: <uso> en primary_region, <uso>_dr en dr_region y <uso>_us en la multirregión us (formato de la etapa 2 anterior; el uso es la primera palabra y la ubicación sale del ID). Usos: gke, compute, sql, storage, filestore, redis, secrets, backup, run y artifacts (en us solo storage, backup y artifacts)."
+  description = "Mapa entorno → llave → ID de la llave KMS. Llave: <uso> en primary_region, <uso>_dr en dr_region y <uso>_us en la multirregión us (formato de la etapa 2 anterior; el uso es la primera palabra y la ubicación sale del ID). Solo las llaves que alguien usa: en la primaria gke, compute, run, sql, storage, redis, filestore y secrets; en dr_region (solo entornos de dr_environments) gke, compute, run, sql, backup y secrets; en us storage (solo dr_environments); y artifacts solo en artifact_registry_location."
   value = {
-    for e in var.environments : e => merge([
+    for e in var.environments : e => merge({}, [
       for l in local.kms_locations : {
         for use, id in module.kms["${e}/${l}"].key_ids : "${use}${local.location_suffix[l]}" => id
-      }
+      } if contains(keys(module.kms), "${e}/${l}")
     ]...)
   }
 }
@@ -28,6 +28,31 @@ output "artifact_registry_repositories" {
   }
 }
 
+output "runtime_service_accounts" {
+  description = "Mapa entorno → aplicación → uso → correo de las cuentas de ejecución (<prefix>-<env>-<app>-<uso>): gke_nodes, workload, mig, run y, en off_hours_environments, scheduler (<prefix>-<env>-<app>-sched). 3-workloads las usa; no las crea."
+  value = {
+    for e in var.environments : e => {
+      for a in var.applications : a => {
+        for k, acc in local.runtime_accounts : acc.use => local.runtime_emails[k] if acc.environment == e && acc.application == a
+      }
+    }
+  }
+}
+
+output "gke_workload_identity_members" {
+  description = "Mapa entorno → aplicación → miembro serviceAccount:<proyecto>.svc.id.goog[<app>-<env>/<cuenta>] que actúa como la cuenta workload, o null mientras gke_workload_identity_bindings sea false (el enlace no existe)."
+  value = {
+    for e in var.environments : e => {
+      for a in var.applications : a => try(google_service_account_iam_member.workload_identity["${e}/${a}"].member, null)
+    }
+  }
+}
+
+output "onprem_dns_service_account" {
+  description = "Correo de la cuenta de la VM DNS de onprem-sim (<prefix>-common-net-dns), o null si 0-bootstrap no tiene onprem_dns_vm = true. El hub la adjunta a la VM; ninguna raíz lee esta salida."
+  value       = local.onprem_dns_vm ? local.onprem_dns_email : null
+}
+
 output "off_hours_role_id" {
   description = "ID completo (projects/<id>/roles/<prefix>OffHoursScheduler) del rol personalizado del apagado fuera de horario (ADR 0028). Lo crea 0-bootstrap; 1-base lo publica."
   value       = local.custom_role_ids["off_hours_scheduler"]
@@ -39,23 +64,14 @@ output "security_alert_email" {
 }
 
 output "notification_channel_ids" {
-  description = "Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security_alert_email (alertas de auditoría)."
-  value = {
-    security = module.audit_alerts.notification_channel_id
-  }
+  description = "Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security_alert_email (alertas de auditoría, solo de 1-base). operations: canal de operations_alert_email, que 3-workloads agrega a las alertas de su entorno; solo existe con operations_alert_email."
+  value = merge(
+    { security = module.audit_alerts.notification_channel_id },
+    { for k, c in google_monitoring_notification_channel.operations : "operations" => c.id },
+  )
 }
 
 output "log_bucket" {
   description = "Nombre del bucket de logs de auditoría (destino del sink de proyecto)."
   value       = module.audit_logs.bucket_name
-}
-
-output "vpc_sc_perimeter_name" {
-  description = "Nombre completo del perímetro de VPC-SC (accessPolicies/<política>/servicePerimeters/<nombre>), o null sin access_policy_id."
-  value       = try(module.vpc_sc[0].perimeter_name, null)
-}
-
-output "org_policies_enabled" {
-  description = "true si el proyecto está en una organización (org_id) y se aplicaron las políticas de organización."
-  value       = var.org_id != null
 }

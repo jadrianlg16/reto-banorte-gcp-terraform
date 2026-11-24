@@ -63,6 +63,6 @@ resource "google_redis_instance" "this" {
   }
 
   # VERIFICAR-EN-APPLY: el agente de servicio de Memorystore tiene
-  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga la etapa 4) y la
-  # instancia se crea con PRIVATE_SERVICE_ACCESS sobre la red del host de Shared VPC.
+  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga 1-base, kms.tf) y la
+  # instancia se crea con PRIVATE_SERVICE_ACCESS sobre la red del spoke del entorno.
 }

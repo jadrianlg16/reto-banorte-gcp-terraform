@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto de servicio donde se crea la instancia."
+  description = "ID del proyecto (único, ADR 0029) donde se crea la instancia."
   type        = string
 
   validation {
@@ -116,7 +116,7 @@ variable "share_name" {
 }
 
 variable "network" {
-  description = "VPC de la Shared VPC (host), como ID o self link: projects/<host>/global/networks/<red>. La conexión es por Private Service Access."
+  description = "VPC del spoke del entorno, como ID o self link: projects/<proyecto>/global/networks/<red>. La conexión es por Private Service Access."
   type        = string
 
   validation {

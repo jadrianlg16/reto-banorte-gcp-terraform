@@ -42,8 +42,23 @@ output "workload_identity_pool" {
 }
 
 output "custom_role_ids" {
-  description = "Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret_container_admin, kms_secret_iam_granter, service_account_manager, repository_iam_granter y off_hours_scheduler."
+  description = "Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret_container_admin, service_account_manager, network_tag_manager y off_hours_scheduler."
   value       = { for k in keys(google_project_iam_custom_role.this) : k => local.custom_role_ids[k] }
+}
+
+output "org_policies_enabled" {
+  description = "true si el proyecto está en una organización (org_id) y esta etapa le aplicó las políticas de organización (org.tf)."
+  value       = var.org_id != null
+}
+
+output "vpc_sc_perimeter_name" {
+  description = "Nombre completo del perímetro de VPC-SC (accessPolicies/<política>/servicePerimeters/<nombre>) que crea esta etapa, o null sin access_policy_id."
+  value       = try(module.vpc_sc[0].perimeter_name, null)
+}
+
+output "onprem_dns_vm_enabled" {
+  description = "true con onprem_dns_vm: el hub tiene compute.instanceAdmin.v1 y 1-base crea la cuenta de la VM DNS de onprem-sim."
+  value       = var.onprem_dns_vm
 }
 
 output "state_iam_conditions" {

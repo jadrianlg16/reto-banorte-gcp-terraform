@@ -255,6 +255,140 @@ run "hub_con_onprem_simulado" {
     )
     error_message = "La VPC onprem-sim necesita una política DNS con registro de consultas (CIS 2.13)."
   }
+
+  assert {
+    condition     = length(google_compute_instance.onprem_dns) == 0 && output.onprem_dns_vm == null
+    error_message = "Sin onprem_dns_vm no hay VM DNS en onprem-sim (el hub no administra VM por defecto)."
+  }
+}
+
+# VM DNS de prueba de onprem-sim (onprem_dns.tf).
+run "hub_con_vm_dns" {
+  command = plan
+
+  variables {
+    onprem_dns_vm = true
+  }
+
+  assert {
+    condition = alltrue([
+      google_compute_instance.onprem_dns[0].name == "bnt-common-net-dns-usc1",
+      google_compute_instance.onprem_dns[0].zone == "us-central1-b",
+      google_compute_instance.onprem_dns[0].machine_type == "e2-micro",
+      google_compute_instance.onprem_dns[0].boot_disk[0].initialize_params[0].image == "debian-cloud/debian-12",
+      google_compute_instance.onprem_dns[0].can_ip_forward == false,
+    ])
+    error_message = "La VM DNS es una e2-micro debian-12 en <primary_region>-b llamada <prefix>-common-net-dns-<región>."
+  }
+
+  assert {
+    condition = alltrue([
+      google_compute_instance.onprem_dns[0].network_interface[0].network_ip == "192.168.0.10",
+      google_compute_instance.onprem_dns[0].network_interface[0].stack_type == "IPV4_ONLY",
+      length(google_compute_instance.onprem_dns[0].network_interface[0].access_config) == 0,
+      length(google_compute_instance.onprem_dns[0].network_interface[0].ipv6_access_config) == 0,
+    ])
+    error_message = "La VM DNS usa la primera IP de onprem_dns_servers y no tiene IP pública."
+  }
+
+  assert {
+    condition = alltrue([
+      google_compute_instance.onprem_dns[0].shielded_instance_config[0].enable_secure_boot,
+      google_compute_instance.onprem_dns[0].shielded_instance_config[0].enable_vtpm,
+      google_compute_instance.onprem_dns[0].shielded_instance_config[0].enable_integrity_monitoring,
+      google_compute_instance.onprem_dns[0].metadata["enable-oslogin"] == "TRUE",
+      google_compute_instance.onprem_dns[0].metadata["block-project-ssh-keys"] == "TRUE",
+      google_compute_instance.onprem_dns[0].metadata["serial-port-enable"] == "FALSE",
+      google_compute_instance.onprem_dns[0].service_account[0].email == "bnt-common-net-dns@example-landing-zone.iam.gserviceaccount.com",
+    ])
+    error_message = "La VM DNS es Shielded VM con OS Login y corre con la cuenta <prefix>-common-net-dns que crea 1-base."
+  }
+
+  assert {
+    condition = alltrue([
+      strcontains(google_compute_instance.onprem_dns[0].metadata["startup-script"], "\"zone\":\"corp.example.com.\""),
+      strcontains(google_compute_instance.onprem_dns[0].metadata["startup-script"], "\"bind\":\"192.168.0.10\""),
+      strcontains(google_compute_instance.onprem_dns[0].metadata["startup-script"], "\"records\":{\"dns\":\"192.168.0.10\"}"),
+      strcontains(google_compute_instance.onprem_dns[0].metadata["startup-script"], "def build_response"),
+      strcontains(google_compute_instance.onprem_dns[0].metadata["startup-script"], "systemctl restart onprem-dns.service"),
+      !strcontains(google_compute_instance.onprem_dns[0].metadata["startup-script"], "\r"),
+      startswith(google_compute_instance.onprem_dns[0].metadata["startup-script"], "#!/bin/bash\n"),
+    ])
+    error_message = "El arranque instala el servidor DNS con la zona onprem_dns_domain en la IP de la VM, con fin de línea LF."
+  }
+
+  assert {
+    condition = alltrue([
+      google_compute_instance.onprem_dns[0].labels["env"] == "common",
+      google_compute_instance.onprem_dns[0].labels["managed_by"] == "terraform",
+      google_compute_instance.onprem_dns[0].labels["app"] == "network",
+      output.onprem_dns_vm.ip == "192.168.0.10",
+      output.onprem_dns_vm.record == "dns.corp.example.com.",
+    ])
+    error_message = "La VM DNS lleva las etiquetas de la raíz y la salida onprem_dns_vm dice qué nombre responde."
+  }
+}
+
+run "hub_con_vm_dns_en_otra_zona" {
+  command = plan
+
+  variables {
+    onprem_dns_vm      = true
+    onprem_dns_vm_zone = "us-central1-c"
+    onprem_dns_servers = ["192.168.0.53"]
+  }
+
+  assert {
+    condition     = google_compute_instance.onprem_dns[0].zone == "us-central1-c" && google_compute_instance.onprem_dns[0].network_interface[0].network_ip == "192.168.0.53"
+    error_message = "onprem_dns_vm_zone y onprem_dns_servers deciden la zona y la IP de la VM DNS."
+  }
+}
+
+run "rechaza_vm_dns_con_onprem_real" {
+  command = plan
+
+  variables {
+    simulate_onprem           = false
+    onprem_vpn_gateway_ips    = ["203.0.113.10", "203.0.113.11"]
+    onprem_vpn_secret_id      = "projects/example-landing-zone/secrets/bnt-common-vpn-psk"
+    onprem_vpn_secret_version = "3"
+    onprem_dns_vm             = true
+  }
+
+  expect_failures = [var.onprem_dns_vm]
+}
+
+run "rechaza_vm_dns_fuera_de_onprem_sim" {
+  command = plan
+
+  variables {
+    onprem_dns_vm      = true
+    onprem_dns_servers = ["192.168.5.10"]
+  }
+
+  expect_failures = [var.onprem_dns_vm]
+}
+
+run "rechaza_vm_dns_en_ip_reservada" {
+  command = plan
+
+  variables {
+    onprem_dns_vm      = true
+    onprem_dns_servers = ["192.168.0.1"]
+  }
+
+  expect_failures = [var.onprem_dns_vm]
+}
+
+run "rechaza_zona_de_la_vm_dns_en_otra_region" {
+  command = plan
+
+  variables {
+    onprem_dns_vm      = true
+    onprem_dns_vm_zone = "us-east4-a"
+  }
+
+  expect_failures = [var.onprem_dns_vm_zone]
 }
 
 run "hub_sin_vpn_dr" {

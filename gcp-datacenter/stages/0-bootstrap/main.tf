@@ -142,6 +142,30 @@ resource "google_project_default_service_accounts" "this" {
   depends_on = [google_project_service.this]
 }
 
+# Etiquetas seguras de la red (lb_backend, iap_ssh) en nodos de GKE y VM de MIG: el agente de GKE
+# y la cuenta de las APIs de Google (crea las VM de los MIG y los nodos) las ligan. La guía de GKE
+# "Use Tags for firewalls" (https://cloud.google.com/kubernetes-engine/docs/how-to/tags-firewall-policies)
+# indica tagUser en el proyecto para los dos. Va aquí y no en 1-base: si 1-base pudiera asignar
+# tagUser, su cuenta podría dárselo a sí misma y quitar la etiqueta de protección a las cuentas
+# del pipeline (iam.serviceAccounts.deleteTagBinding, que la denegación no puede negar). Limitarlo
+# a los valores de etiqueta no está documentado para etiquetas del mismo proyecto (HYPOTHESIS):
+# queda en el proyecto como riesgo aceptado de dos agentes de Google.
+# VERIFICAR-EN-APPLY: que el agente de GKE exista justo después de habilitar container (si no, el
+# binding falla y se repite el apply) y que con tagUser basten para crear nodos y VM con
+# resource_manager_tags.
+resource "google_project_iam_member" "tag_user_agents" {
+  for_each = {
+    gke  = "serviceAccount:service-${local.project_number}@container-engine-robot.iam.gserviceaccount.com"
+    apis = "serviceAccount:${local.project_number}@cloudservices.gserviceaccount.com"
+  }
+
+  project = var.project_id
+  role    = "roles/resourcemanager.tagUser"
+  member  = each.value
+
+  depends_on = [google_project_service.this]
+}
+
 # --- Llave KMS del estado (ADR 0008) ------------------------------------------------------------
 
 module "state_kms" {
@@ -231,8 +255,8 @@ resource "google_storage_bucket" "state" {
     prevent_destroy = true
 
     precondition {
-      condition     = !local.state_bucket_dual_region || contains(var.state_bucket_dual_regions, var.primary_region)
-      error_message = "state_bucket_dual_regions debe incluir primary_region (y la región de DR)."
+      condition     = !local.state_bucket_dual_region || toset(var.state_bucket_dual_regions) == toset([var.primary_region, var.dr_region])
+      error_message = "state_bucket_dual_regions debe ser primary_region y dr_region: el estado debe seguir disponible en la región de DR."
     }
   }
 

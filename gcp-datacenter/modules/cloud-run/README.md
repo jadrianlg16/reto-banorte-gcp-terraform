@@ -58,11 +58,11 @@ No modules.
 | <a name="input_image"></a> [image](#input\_image) | Imagen del contenedor (por ejemplo, <región>-docker.pkg.dev/<proyecto>/<repo>/<imagen>@sha256:<digest>). En prod no se admite la etiqueta latest. | `string` | n/a | yes |
 | <a name="input_kms_key"></a> [kms\_key](#input\_kms\_key) | ID de la llave KMS (CMEK) que cifra la imagen y los datos del servicio. Debe estar en la misma región que el servicio. | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
-| <a name="input_network"></a> [network](#input\_network) | Self link (o ruta projects/<host>/global/networks/<red>) de la VPC compartida del proyecto host, para la salida directa a la VPC. | `string` | n/a | yes |
+| <a name="input_network"></a> [network](#input\_network) | Self link (o ruta projects/<proyecto>/global/networks/<red>) de la VPC del spoke del entorno, para la salida directa a la VPC. | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (por ejemplo, bnt). | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crean el servicio y su NEG sin servidor. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto (único, ADR 0029) donde se crean el servicio y su NEG sin servidor. | `string` | n/a | yes |
 | <a name="input_region"></a> [region](#input\_region) | Región del servicio (primaria, o la de DR durante una conmutación). | `string` | n/a | yes |
-| <a name="input_service_account"></a> [service\_account](#input\_service\_account) | Correo de la cuenta de servicio propia del servicio (uso run de la etapa 4). No se admite la cuenta de Compute por defecto. | `string` | n/a | yes |
+| <a name="input_service_account"></a> [service\_account](#input\_service\_account) | Correo de la cuenta de servicio propia del servicio (uso run, la crea 1-base). No se admite la cuenta de Compute por defecto. | `string` | n/a | yes |
 | <a name="input_subnet"></a> [subnet](#input\_subnet) | Self link (o ruta projects/<host>/regions/<región>/subnetworks/<subred>) de la subred compartida de Cloud Run (llave run de §5). | `string` | n/a | yes |
 | <a name="input_concurrency"></a> [concurrency](#input\_concurrency) | Solicitudes simultáneas máximas por instancia. | `number` | `80` | no |
 | <a name="input_container_port"></a> [container\_port](#input\_container\_port) | Puerto en el que escucha el contenedor. | `number` | `8080` | no |

@@ -1,15 +1,16 @@
-# Etapa 3-workloads (ADR 0029 §2): cuentas de ejecución y cargas de trabajo de un entorno en el
-# proyecto único (project_id), sobre la VPC del spoke del entorno (2-networks/<env>), sin
-# proyectos de servicio ni Shared VPC. Los recursos están repartidos por tema:
-#   service_accounts.tf  cuentas de ejecución y del apagado, y sus permisos
+# Etapa 3-workloads (ADR 0029 §2): cargas de trabajo de un entorno en el proyecto único
+# (project_id), sobre la VPC del spoke del entorno (2-networks/<env>), sin proyectos de servicio
+# ni Shared VPC. Los recursos están repartidos por tema:
+#   service_accounts.tf  cuentas de ejecución y del apagado que crea 1-base (solo lectura)
 #   compute.tf           GKE, MIG y Cloud Run (por región activa)
 #   data.tf              Cloud SQL, Memorystore, Filestore y Cloud Storage
 #   load_balancing.tf    Cloud Armor, balanceador HTTPS externo y balanceador interno
 #   operations.tf        observabilidad y respaldo
 #   off_hours.tf         apagado fuera de horario de dev y qa (ADR 0028)
 # Lo que existe una vez por proyecto (APIs, Binary Authorization, repositorios de imágenes,
-# llaves y secretos, el rol del apagado, permisos de agentes de servicio, auditoría) lo crea
-# 1-base; esta raíz no lo declara (ADR 0029 §4). Todo nombre empieza con <prefix>-<env>-.
+# llaves y secretos, cuentas de ejecución y sus permisos, permisos de agentes de servicio,
+# auditoría) lo crean 0-bootstrap y 1-base; esta raíz no lo declara ni asigna roles de proyecto
+# o de cuentas de servicio (ADR 0029 §4). Todo nombre empieza con <prefix>-<env>-.
 # Este archivo tiene los valores comunes y las comprobaciones de las salidas de otras etapas.
 
 locals {
@@ -51,15 +52,12 @@ locals {
     dr      = "${var.prefix}-${var.environment}-${var.application}-gke-dr"
   }
 
-  # Namespace de la cuenta de Kubernetes de Workload Identity (ADR 0029 §9): <app>-<env> por
-  # defecto; la variable valida que termine en -<env>.
-  gke_workload_namespace = coalesce(var.gke_workload_namespace, "${var.application}-${var.environment}")
-
   # Etiquetas seguras del spoke: llave tagKeys/… → valor tagValues/… (ver resource_manager_tags).
-  # El tagUser sobre los valores no se declara aquí: se lo da 0-bootstrap a tf-wl-<env>.
-  # VERIFICAR-EN-APPLY: que con el tagUser de tf-wl-<env> basten para crear la plantilla del MIG
-  # y los pools de GKE con estas etiquetas, o si el agente de GKE y <número>@cloudservices también
-  # necesitan tagUser sobre los valores (antes se lo daba la etapa 4).
+  # El tagUser sobre los valores no se declara aquí: se lo da a tf-wl-<env> el spoke del entorno,
+  # solo sobre sus valores (stages/2-networks/envs/<env>/firewall.tf); el de los agentes de GKE y
+  # <número>@cloudservices, que crean los nodos y las VM, lo da 0-bootstrap en el proyecto.
+  # VERIFICAR-EN-APPLY: que con el tagUser sobre los valores basten para crear la plantilla del
+  # MIG y los pools de GKE con estas etiquetas.
   mig_secure_tags = {
     for k in ["lb_backend", "iap_ssh"] : local.secure_tag_keys[k] => local.secure_tags[k]
   }
@@ -99,7 +97,7 @@ resource "terraform_data" "upstream_checks" {
   lifecycle {
     precondition {
       condition     = alltrue([for p in local.required_kms : contains(keys(lookup(local.kms_key_ids, p[0], {})), p[1])])
-      error_message = "Falta en kms_key_ids[environment] de 1-base alguna llave [ubicación][uso] que esta configuración necesita (la ubicación sale del ID de la llave)."
+      error_message = "Falta en kms_key_ids[environment] de 1-base alguna llave [ubicación][uso] que esta configuración necesita (la ubicación sale del ID de la llave). Con enable_dr, el entorno tiene que estar en dr_environments de 1-base: solo esos entornos tienen llaves en dr_region y storage en la multirregión."
     }
     precondition {
       condition = alltrue(flatten([

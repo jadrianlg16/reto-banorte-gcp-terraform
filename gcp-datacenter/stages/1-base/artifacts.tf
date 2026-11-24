@@ -27,18 +27,63 @@ locals {
     ]
   ])...)
 
-  # Sin atestadores: se niega todo lo que no esté en la lista de permitidos. Con atestadores:
-  # además de la lista, cualquier imagen con la atestación de todos ellos.
-  binauthz_evaluation_mode = length(var.binary_authorization_attestors) > 0 ? "REQUIRE_ATTESTATION" : "ALWAYS_DENY"
+  # --- Binary Authorization (ADR 0024 y 0029 §4) ---------------------------------------------
+  # Dos modos, según binary_authorization_env_attestors:
+  #
+  # Por entorno (con un atestador por entorno): los repositorios salen de la lista de permitidos,
+  # que queda solo con binary_authorization_allowlist_patterns. Cada clúster de GKE de cada
+  # entorno, por convención de nombres, exige el atestador de su entorno (más los de
+  # binary_authorization_attestors). Así una imagen de dev sin la atestación de prod no entra a
+  # un clúster de prod.
+  #
+  # Sin atestadores por entorno (el de hoy): los repositorios de los tres entornos están en la
+  # lista de permitidos, que es global, y una imagen que coincide con ella se admite en cualquier
+  # clúster y en Cloud Run sin mirar las reglas. RIESGO (ADR 0024): una imagen del repositorio de
+  # dev se puede desplegar en prod; nada lo impide salvo quién publica en cada repositorio
+  # (artifact_registry_publishers) y la revisión del cambio en 3-workloads.
+  binauthz_per_environment = length(var.binary_authorization_env_attestors) > 0
 
-  # Clústeres de GKE de prod por convención (ADR 0029 §4): <prefix>-prod-<app>-gke en la región
-  # primaria y <prefix>-prod-<app>-gke-dr en la de DR (identificador <ubicación>.<clúster>).
-  prod_clusters = contains(var.environments, "prod") ? toset(flatten([
-    for a in var.applications : [
-      "${var.primary_region}.${var.prefix}-prod-${a}-gke",
-      "${var.dr_region}.${var.prefix}-prod-${a}-gke-dr",
-    ]
-  ])) : toset([])
+  binauthz_allowlist = local.binauthz_per_environment ? var.binary_authorization_allowlist_patterns : concat(
+    [for k in sort(keys(local.repository_paths)) : "${local.repository_paths[k]}/**"],
+    var.binary_authorization_allowlist_patterns,
+  )
+
+  # Regla por defecto (Cloud Run, que no admite reglas por clúster, y todo clúster que no siga la
+  # convención). Binary Authorization exige las atestaciones de TODOS los atestadores de
+  # require_attestations_by, así que "cualquiera de los atestadores de entorno" no se puede
+  # expresar. Con atestadores por entorno y sin binary_authorization_attestors, la regla por
+  # defecto exige el del primer entorno de la promoción (dev, qa, prod) que tenga uno: toda imagen
+  # promovida lo trae. RIESGO: Cloud Run de qa y prod solo exige ese atestador (no hay reglas por
+  # servicio de Cloud Run); separar Cloud Run por entorno exige binary_authorization_attestors o
+  # proyectos separados.
+  binauthz_default_attestors = length(var.binary_authorization_attestors) > 0 ? var.binary_authorization_attestors : (
+    local.binauthz_per_environment ? [
+      [for e in ["dev", "qa", "prod"] : var.binary_authorization_env_attestors[e] if contains(keys(var.binary_authorization_env_attestors), e)][0]
+    ] : []
+  )
+  binauthz_evaluation_mode = length(local.binauthz_default_attestors) > 0 ? "REQUIRE_ATTESTATION" : "ALWAYS_DENY"
+
+  # Clústeres de GKE por convención (ADR 0029 §4): <prefix>-<env>-<app>-gke en la región primaria
+  # y <prefix>-<env>-<app>-gke-dr en la de DR (identificador <ubicación>.<clúster>). Una regla de
+  # un clúster que no existe no tiene efecto.
+  # Por entorno: los clústeres de todos los entornos, cada uno con el atestador de su entorno.
+  # Sin atestadores por entorno: solo los de prod, con la misma evaluación que la regla por defecto.
+  binauthz_rule_environments = local.binauthz_per_environment ? var.environments : [for e in var.environments : e if e == "prod"]
+  binauthz_cluster_rules = merge({}, [
+    for e in local.binauthz_rule_environments : merge([
+      for a in var.applications : {
+        "${var.primary_region}.${var.prefix}-${e}-${a}-gke" = e
+        "${var.dr_region}.${var.prefix}-${e}-${a}-gke-dr"   = e
+      }
+    ]...)
+  ]...)
+  binauthz_cluster_attestors = {
+    for c, e in local.binauthz_cluster_rules : c => (
+      local.binauthz_per_environment
+      ? distinct(concat([var.binary_authorization_env_attestors[e]], var.binary_authorization_attestors))
+      : local.binauthz_default_attestors
+    )
+  }
 }
 
 # VERIFICAR-EN-APPLY: que el agente de Artifact Registry tenga cryptoKeyEncrypterDecrypter sobre
@@ -72,7 +117,7 @@ resource "google_artifact_registry_repository" "this" {
 
 # Cloud Run descarga la imagen con su agente de servicio, que es uno por proyecto: lectura de los
 # repositorios de los tres entornos (riesgo aceptado, ADR 0029 §9). Los nodos de GKE y las VM
-# reciben la lectura de su repositorio desde 3-workloads.
+# reciben la lectura de su repositorio en runtime_accounts.tf.
 resource "google_artifact_registry_repository_iam_member" "run_agent_reader" {
   for_each = local.repositories
 
@@ -81,19 +126,6 @@ resource "google_artifact_registry_repository_iam_member" "run_agent_reader" {
   repository = google_artifact_registry_repository.this[each.key].repository_id
   role       = "roles/artifactregistry.reader"
   member     = local.service_agents["run"]
-}
-
-# 3-workloads da artifactregistry.reader a sus cuentas de ejecución sobre el repositorio de su
-# entorno: su cuenta recibe aquí el rol personalizado de IAM de repositorios, solo sobre esos
-# repositorios (sin condiciones sobre Artifact Registry, que el ADR no puede comprobar).
-resource "google_artifact_registry_repository_iam_member" "workloads_iam_granter" {
-  for_each = local.repositories
-
-  project    = google_artifact_registry_repository.this[each.key].project
-  location   = google_artifact_registry_repository.this[each.key].location
-  repository = google_artifact_registry_repository.this[each.key].repository_id
-  role       = local.custom_role_ids["repository_iam_granter"]
-  member     = "serviceAccount:${local.stage_service_accounts["3-workloads/${each.value.environment}"]}"
 }
 
 # Publicación: writer solo sobre el repositorio de su entorno y aplicación. Es la única vía para
@@ -116,27 +148,32 @@ resource "google_artifact_registry_repository_iam_member" "writer" {
 }
 
 # Política única de Binary Authorization del proyecto (GKE con PROJECT_SINGLETON_POLICY_ENFORCE y
-# Cloud Run con use_default = true). La lista de permitidos tiene los repositorios del proyecto y
-# los patrones extra; la regla por defecto niega lo demás (o exige atestaciones). La política
-# global de Google (imágenes de sistema de GKE) se evalúa antes.
+# Cloud Run con use_default = true). La política global de Google (imágenes de sistema de GKE) se
+# evalúa antes. Los dos modos (por entorno o con la lista global) están en los locals de arriba.
 #
-# Desviación del ADR 0029 §4: la lista de permitidos es global y una imagen que coincide con ella
-# se admite "regardless of your admission rules" (descripción del campo en el proveedor 6.x).
-# Por eso una regla por clúster no puede limitar los clústeres de prod al repositorio de prod sin
-# atestaciones. Las reglas de los clústeres de prod existen por convención de nombres y aplican
-# la misma evaluación que la regla por defecto: con binary_authorization_attestors exigen
-# atestación a lo que no esté en la lista.
+# Fuentes: "Policy" de la API v1 (una imagen de admissionWhitelistPatterns "will always be
+# permitted"; la regla exige que "all the attestors listed in requireAttestationsBy" atestigüen)
+# y "Key concepts" (Cloud Run solo admite la regla por defecto), Google Cloud,
+# https://docs.cloud.google.com/binary-authorization/docs/reference/rest/v1/projects.policy y
+# https://docs.cloud.google.com/binary-authorization/docs/key-concepts.
+#
+# Sin atestadores por entorno, desviación del ADR 0029 §4: las reglas de los clústeres de prod
+# existen por convención de nombres pero no limitan prod al repositorio de prod (la lista es
+# global); con binary_authorization_attestors exigen atestación a lo que no esté en la lista.
 # VERIFICAR-EN-APPLY: que un pod de GKE y un despliegue de Cloud Run con una imagen del
 # repositorio pasen y que una imagen de otro registro se rechace con
-# ENFORCED_BLOCK_AND_AUDIT_LOG.
+# ENFORCED_BLOCK_AND_AUDIT_LOG. Con atestadores por entorno: que una imagen con solo la
+# atestación de dev se rechace en un clúster de prod y que el agente de Binary Authorization del
+# proyecto pueda leer cada atestador (si está en otro proyecto necesita
+# roles/binaryauthorization.attestorsVerifier allí; los atestadores no los crea esta etapa).
 resource "google_binary_authorization_policy" "this" {
   project                       = local.project_id
-  description                   = "Política del proyecto: solo imágenes de los repositorios de Artifact Registry del proyecto y de los patrones aprobados (administrada por Terraform, 1-base)."
+  description                   = local.binauthz_per_environment ? "Política del proyecto: cada clúster exige la atestación de su entorno; Cloud Run, la regla por defecto (administrada por Terraform, 1-base)." : "Política del proyecto: solo imágenes de los repositorios de Artifact Registry del proyecto y de los patrones aprobados (administrada por Terraform, 1-base)."
   global_policy_evaluation_mode = "ENABLE"
 
   # La barra antes de ** evita que el patrón cubra otro repositorio cuyo nombre empiece igual.
   dynamic "admission_whitelist_patterns" {
-    for_each = concat([for k in sort(keys(local.repository_paths)) : "${local.repository_paths[k]}/**"], var.binary_authorization_allowlist_patterns)
+    for_each = local.binauthz_allowlist
     content {
       name_pattern = admission_whitelist_patterns.value
     }
@@ -145,16 +182,16 @@ resource "google_binary_authorization_policy" "this" {
   default_admission_rule {
     evaluation_mode         = local.binauthz_evaluation_mode
     enforcement_mode        = "ENFORCED_BLOCK_AND_AUDIT_LOG"
-    require_attestations_by = length(var.binary_authorization_attestors) > 0 ? var.binary_authorization_attestors : null
+    require_attestations_by = length(local.binauthz_default_attestors) > 0 ? local.binauthz_default_attestors : null
   }
 
   dynamic "cluster_admission_rules" {
-    for_each = local.prod_clusters
+    for_each = local.binauthz_cluster_attestors
     content {
-      cluster                 = cluster_admission_rules.value
-      evaluation_mode         = local.binauthz_evaluation_mode
+      cluster                 = cluster_admission_rules.key
+      evaluation_mode         = length(cluster_admission_rules.value) > 0 ? "REQUIRE_ATTESTATION" : "ALWAYS_DENY"
       enforcement_mode        = "ENFORCED_BLOCK_AND_AUDIT_LOG"
-      require_attestations_by = length(var.binary_authorization_attestors) > 0 ? var.binary_authorization_attestors : null
+      require_attestations_by = length(cluster_admission_rules.value) > 0 ? cluster_admission_rules.value : null
     }
   }
 

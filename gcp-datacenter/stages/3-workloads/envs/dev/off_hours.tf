@@ -1,7 +1,7 @@
 # Apagado fuera de horario de dev y qa (ADR 0028), con off_hours_shutdown.enabled:
 # - Cloud SQL y los pools de GKE: trabajos de Cloud Scheduler (módulo off-hours-shutdown) con la
-#   cuenta <prefix>-<env>-<app>-sched (service_accounts.tf), que solo tiene el rol del apagado
-#   que crea 1-base una vez para todo el proyecto (off_hours_role_id);
+#   cuenta <prefix>-<env>-<app>-sched, que crea 1-base (off_hours_environments) con el único rol
+#   del apagado, el que crea 0-bootstrap una vez para todo el proyecto (off_hours_role_id);
 # - el MIG: programa de escalado de su autoescalador (business_hours en compute.tf);
 # - Backup and DR: la ventana de respaldo se mueve al horario encendido (operations.tf).
 # Sin deriva: Cloud SQL ignora activation_policy (módulo cloud-sql, allow_scheduled_stop) y los
@@ -64,8 +64,8 @@ module "off_hours_shutdown" {
     }
   } : {}
 
-  # La cuenta debe tener el rol antes de que corra el primer trabajo.
-  depends_on = [terraform_data.upstream_checks, google_project_iam_member.scheduler]
+  # La cuenta y su rol los aplica 1-base antes (postcondición de remote_state.tf).
+  depends_on = [terraform_data.upstream_checks]
 }
 
 # Aviso (no error) en cada plan con Cloud SQL detenida: no es deriva, pero un apply que cree

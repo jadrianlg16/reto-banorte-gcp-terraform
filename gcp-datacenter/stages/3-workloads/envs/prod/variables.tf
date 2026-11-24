@@ -38,7 +38,7 @@ variable "environment" {
 }
 
 variable "application" {
-  description = "Aplicación cuyas cargas crea esta raíz (por defecto app): llave de artifact_registry_repositories[environment] de 1-base y parte de los nombres de las cuentas de ejecución (<prefix>-<environment>-<application>-<uso>), del clúster de GKE, del balanceador, de la política de Cloud Armor y del bucket."
+  description = "La única aplicación del entorno (por defecto app): cada entorno tiene una sola raíz de 3-workloads y por eso una sola aplicación. Es la llave de artifact_registry_repositories[environment] y runtime_service_accounts[environment] de 1-base y parte de los nombres de las cuentas de ejecución (<prefix>-<environment>-<application>-<uso>), del clúster de GKE, del balanceador, de la política de Cloud Armor y del bucket. Otros nombres no la llevan (el servicio de Cloud Run <prefix>-<environment>-app-run-<código de región> y la instancia de Cloud SQL <prefix>-<environment>-data-<sql_instance_name>-<región>): una segunda aplicación en el mismo entorno chocaría con ellos."
   type        = string
   default     = "app"
 
@@ -52,18 +52,6 @@ variable "application" {
     # El uso más largo es gke-nodes (9 caracteres): <prefix>-<environment>-<app>-gke-nodes.
     condition     = length("${var.prefix}-${var.environment}-${var.application}-gke-nodes") <= 30
     error_message = "application demasiado larga: <prefix>-<environment>-<application>-gke-nodes no puede pasar de 30 caracteres (límite del ID de cuenta de servicio, ADR 0017)."
-  }
-}
-
-variable "application_secrets" {
-  description = "Nombres cortos de secretos de secret_ids[environment] de 1-base que leen las cuentas workload y run de la aplicación (roles/secretmanager.secretAccessor sobre cada secreto). Los valores los carga una persona fuera de Terraform (ADR 0015)."
-  type        = set(string)
-  default     = []
-  nullable    = false
-
-  validation {
-    condition     = alltrue([for s in var.application_secrets : can(regex("^[a-z][a-z0-9-]*$", s))])
-    error_message = "Cada secreto es el nombre corto de secret_ids de 1-base (minúsculas, dígitos y guiones)."
   }
 }
 
@@ -293,33 +281,6 @@ variable "gke_node_pools" {
   validation {
     condition     = !var.enable_gke || length(var.gke_node_pools) > 0
     error_message = "enable_gke = true exige al menos un pool en gke_node_pools."
-  }
-}
-
-variable "gke_workload_namespace" {
-  description = "Namespace de Kubernetes de la cuenta de servicio de Kubernetes que actúa como la cuenta workload de la aplicación (Workload Identity). null: <application>-<environment>. Debe terminar en -<environment>: en el proyecto único el pool de Workload Identity (<proyecto>.svc.id.goog) es el mismo para los tres entornos y la identidad es solo <namespace>/<cuenta> (ADR 0029 §9)."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.gke_workload_namespace == null || (can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", coalesce(var.gke_workload_namespace, "x"))) && !contains(["default", "kube-system", "kube-public", "kube-node-lease"], coalesce(var.gke_workload_namespace, "x")))
-    error_message = "gke_workload_namespace debe ser un nombre DNS-1123 de hasta 63 caracteres y no un namespace del sistema ni default."
-  }
-  validation {
-    condition     = var.gke_workload_namespace == null || endswith(coalesce(var.gke_workload_namespace, "x"), "-${var.environment}")
-    error_message = "gke_workload_namespace debe terminar en -<environment> (por ejemplo app-dev): el pool de Workload Identity del proyecto único es el mismo en los tres entornos (ADR 0029 §9)."
-  }
-}
-
-variable "gke_workload_ksa_name" {
-  description = "Nombre de la cuenta de servicio de Kubernetes (en gke_workload_namespace) que actúa como la cuenta workload de la aplicación (Workload Identity)."
-  type        = string
-  default     = "app"
-  nullable    = false
-
-  validation {
-    condition     = can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", var.gke_workload_ksa_name)) && var.gke_workload_ksa_name != "default"
-    error_message = "gke_workload_ksa_name debe ser un nombre DNS-1123 de hasta 63 caracteres y no la cuenta default del namespace."
   }
 }
 
@@ -732,7 +693,8 @@ variable "off_hours_shutdown" {
     Cloud Run ya escala a 0 (min_instances = 0); Memorystore y Filestore no se pueden detener.
     Los crons van en time_zone con la forma "M H * * D" (minuto, hora, días de la semana 0-6) y
     los mismos días en los dos. La cuenta de los trabajos (<prefix>-<environment>-<app>-sched) la
-    crea esta raíz con el rol off_hours_role_id de 1-base. Se rechaza en prod y con enable_dr.
+    crea 1-base con el rol del apagado si off_hours_environments de 1-base incluye el entorno.
+    Se rechaza en prod y con enable_dr.
   EOT
   type = object({
     enabled        = bool

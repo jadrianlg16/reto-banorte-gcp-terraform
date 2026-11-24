@@ -23,7 +23,6 @@ locals {
   # (lo publica 0-bootstrap, así que se conocen en el plan). 0-bootstrap crea los que no existen
   # hasta el primer uso (google_project_service_identity).
   service_agents = {
-    apis             = "serviceAccount:${local.project_number}@cloudservices.gserviceaccount.com"
     artifactregistry = "serviceAccount:service-${local.project_number}@gcp-sa-artifactregistry.iam.gserviceaccount.com"
     compute          = "serviceAccount:service-${local.project_number}@compute-system.iam.gserviceaccount.com"
     filestore        = "serviceAccount:service-${local.project_number}@cloud-filer.iam.gserviceaccount.com"
@@ -145,6 +144,23 @@ module "audit_alerts" {
   environment        = local.environment
   notification_email = var.security_alert_email
   labels             = merge(local.labels, { app = "audit" })
+}
+
+# Canal de operaciones opcional (hallazgo H8 de R1): las alertas de los entornos (3-workloads)
+# van aquí y no al canal de seguridad, que queda solo para las alertas de auditoría. Sin
+# operations_alert_email no se crea y cada entorno avisa solo a sus notification_emails.
+# VERIFICAR-EN-APPLY: que la lista acepte correo de Cloud Monitoring (como el de audit-alerts).
+resource "google_monitoring_notification_channel" "operations" {
+  for_each = var.operations_alert_email == null ? toset([]) : toset(["this"])
+
+  project      = local.project_id
+  display_name = "${var.prefix}-${local.environment}-ops-operations"
+  description  = "Operaciones: alertas de disponibilidad, SLO y recursos de los entornos (3-workloads)."
+  type         = "email"
+  labels = {
+    email_address = lower(var.operations_alert_email)
+  }
+  user_labels = merge(local.labels, { app = "operations" })
 }
 
 # --- Contactos esenciales del proyecto (CIS 1.17) --------------------------------------------------

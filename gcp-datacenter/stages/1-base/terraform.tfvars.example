@@ -8,10 +8,8 @@ dr_region      = "us-east4"
 # Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<name_suffix>]).
 state_bucket = "bnt-bootstrap-ops-tfstate"
 
-# Solo si el proyecto está dentro de una organización (si no, dejar comentados).
-# org_id                = "000000000000"
-# directory_customer_id = "C00000000"
-# access_policy_id      = "000000000000"
+# Las políticas de organización y el perímetro de VPC-SC los aplica 0-bootstrap (org_id,
+# directory_customer_id y access_policy_id van en sus variables, no aquí).
 
 applications = ["app"]
 
@@ -25,6 +23,14 @@ secret_names = {
 # Quién publica imágenes en cada repositorio (entorno → aplicación → miembros).
 # artifact_registry_publishers = {
 #   dev = { app = ["serviceAccount:ci-app@example-project-id.iam.gserviceaccount.com"] }
+# }
+
+# Binary Authorization por entorno (ADR 0024): un atestador por entorno. Sin él, la lista de
+# permitidos es global y una imagen del repositorio de dev se admite en un clúster de prod.
+# binary_authorization_env_attestors = {
+#   dev  = "projects/example-project-id/attestors/bnt-dev"
+#   qa   = "projects/example-project-id/attestors/bnt-qa"
+#   prod = "projects/example-project-id/attestors/bnt-prod"
 # }
 
 # Alertas de auditoría (CIS 2.5 a 2.12).

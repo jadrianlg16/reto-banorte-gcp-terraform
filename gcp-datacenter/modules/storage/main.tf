@@ -84,7 +84,7 @@ resource "google_storage_bucket" "this" {
   }
 
   # VERIFICAR-EN-APPLY: el agente de servicio de Cloud Storage del proyecto tiene
-  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga la etapa 4); para doble
+  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga 1-base, kms.tf); para doble
   # región, que la llave de la multirregión "us" sirva para un bucket con custom_placement_config.
   # VERIFICAR-EN-APPLY: la restricción gcp.resourceLocations admite la doble región (§12, punto 3).
 }

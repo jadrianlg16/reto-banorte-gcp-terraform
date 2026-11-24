@@ -6,8 +6,9 @@
 # of the project's LogsMetric resource is set to ..."):
 # https://docs.cloud.google.com/security-command-center/docs/concepts-vulnerabilities-findings
 # Por eso no se les agrega nada: los cambios de políticas de firewall (las de red que usa este
-# repositorio en lugar de reglas de VPC, y las jerárquicas) van en una novena métrica aparte
-# (firewall_policy), para no arriesgar que el detector de 2.8 deje de reconocer su filtro.
+# repositorio en lugar de reglas de VPC; el filtro cubre también las jerárquicas, que el proyecto
+# único ya no crea) van en una novena métrica aparte (firewall_policy), para no arriesgar que el
+# detector de 2.8 deje de reconocer su filtro.
 # VERIFICAR-EN-APPLY: que SHA reconozca los filtros escritos en una sola línea (la documentación
 # los muestra en varias) y que dé por buenas las alertas (pendiente 58).
 

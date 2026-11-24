@@ -9,9 +9,32 @@ locals {
   multi_region  = "us"
   kms_locations = distinct([var.primary_region, var.dr_region, local.multi_region])
 
-  # Usos de llave. En la multirregión solo storage, backup y artifacts.
-  regional_key_uses     = ["gke", "compute", "sql", "storage", "filestore", "redis", "secrets", "backup", "run", "artifacts"]
-  multi_region_key_uses = ["storage", "backup", "artifacts"]
+  # Usos de llave por ubicación: solo los que alguien usa (hallazgo H9 de R1). Quién usa cada uno
+  # (3-workloads/envs/<env>, required_kms en main.tf, y esta etapa):
+  #   primaria  gke, compute, run (cómputo), sql, storage (sin DR), redis, filestore (solo en la
+  #             primaria) y secrets (réplica de los secretos, kms.tf).
+  #   DR        gke, compute y run (dr_active), sql (réplica), backup (Backup for GKE en dr_region)
+  #             y secrets (segunda réplica): solo en dr_environments. No hay llaves redis, filestore
+  #             ni storage en la región de DR: nadie las pide.
+  #   us        storage (bucket de doble región, solo con enable_dr, así que solo en
+  #             dr_environments). backup de la multirregión no la usa nadie.
+  #   artifacts solo en artifact_registry_location (los repositorios de artifacts.tf).
+  # Un entorno de 3-workloads con enable_dr que no esté en dr_environments falla en su plan con
+  # el mensaje de la precondición de las llaves (main.tf de 3-workloads).
+  primary_key_uses = ["gke", "compute", "run", "sql", "storage", "redis", "filestore", "secrets"]
+  dr_key_uses      = ["gke", "compute", "run", "sql", "backup", "secrets"]
+  multi_key_uses   = ["storage"]
+
+  key_uses_by_location = {
+    for e in var.environments : e => {
+      for loc in local.kms_locations : loc => distinct(concat(
+        loc == var.primary_region ? local.primary_key_uses : [],
+        loc == var.dr_region && contains(var.dr_environments, e) ? local.dr_key_uses : [],
+        loc == local.multi_region && contains(var.dr_environments, e) ? local.multi_key_uses : [],
+        loc == var.artifact_registry_location ? ["artifacts"] : [],
+      ))
+    }
+  }
 
   # Uso → agentes que cifran con esa llave. gke: el agente de GKE cifra los secretos de
   # Kubernetes y el de Compute los discos de los nodos (el módulo gke usa la misma llave).
@@ -39,6 +62,7 @@ locals {
     (local.multi_region) = "_us"
   }
 
+  # Un llavero por entorno y ubicación con al menos una llave (sin llaves no se crea).
   keyrings = {
     for pair in setproduct(var.environments, local.kms_locations) : "${pair[0]}/${pair[1]}" => {
       environment = pair[0]
@@ -46,11 +70,11 @@ locals {
       # VERIFICAR-EN-APPLY: que cada agente exista antes de recibir el permiso (los crea
       # 0-bootstrap o aparecen al habilitar la API) y pueda cifrar con su llave.
       keys = {
-        for u in(pair[1] == local.multi_region ? local.multi_region_key_uses : local.regional_key_uses) : u => {
+        for u in local.key_uses_by_location[pair[0]][pair[1]] : u => {
           encrypter_decrypters = [for a in local.kms_consumers[u] : local.service_agents[a]]
         }
       }
-    }
+    } if length(local.key_uses_by_location[pair[0]][pair[1]]) > 0
   }
 
   # Entornos con al menos un secreto.
@@ -81,11 +105,13 @@ module "secrets" {
   prefix      = var.prefix
   environment = each.key
   names       = each.value
-  # Una réplica por región, cada una con la llave secrets de su región.
-  kms_keys = {
-    (var.primary_region) = module.kms["${each.key}/${var.primary_region}"].key_ids["secrets"]
-    (var.dr_region)      = module.kms["${each.key}/${var.dr_region}"].key_ids["secrets"]
-  }
+  # Una réplica por región, cada una con la llave secrets de su región: la primaria siempre y la
+  # de DR solo en dr_environments (en dev y qa los secretos no sobreviven a la caída de la región
+  # primaria, igual que sus cargas).
+  kms_keys = merge(
+    { (var.primary_region) = module.kms["${each.key}/${var.primary_region}"].key_ids["secrets"] },
+    contains(var.dr_environments, each.key) ? { (var.dr_region) = module.kms["${each.key}/${var.dr_region}"].key_ids["secrets"] } : {},
+  )
   labels = merge(local.labels_by_env[each.key], { app = "secrets" })
 
   # El agente de Secret Manager debe tener ya encrypter/decrypter sobre las llaves (lo da el

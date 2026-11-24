@@ -220,6 +220,21 @@ run "dev_sin_dr" {
   }
 }
 
+# Sin grant_iam_login_roles (3-workloads: los roles los da 1-base) el módulo crea los usuarios
+# IAM de la base y ningún rol de proyecto.
+run "usuarios_iam_sin_roles_de_proyecto" {
+  command = plan
+
+  variables {
+    grant_iam_login_roles = false
+  }
+
+  assert {
+    condition     = length(google_project_iam_member.login) == 0 && length(google_sql_user.iam) == 3
+    error_message = "Sin grant_iam_login_roles no hay roles de proyecto, pero sí usuarios IAM."
+  }
+}
+
 # Con un plan de Backup and DR (respaldos mejorados) el plan es el dueño del horario y de la
 # retención: el módulo no los declara, pero los respaldos y PITR siguen encendidos al crear.
 run "respaldos_administrados_por_el_plan" {

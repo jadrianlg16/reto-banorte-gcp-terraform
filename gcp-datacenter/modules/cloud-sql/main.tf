@@ -60,7 +60,7 @@ locals {
 }
 
 resource "google_sql_database_instance" "this" {
-  # checkov:skip=CKV_GCP_79: la versión mayor de PostgreSQL llega por la variable database_version (por defecto POSTGRES_16); la elige la etapa 5.
+  # checkov:skip=CKV_GCP_79: la versión mayor de PostgreSQL llega por la variable database_version (por defecto POSTGRES_16); la elige 3-workloads.
   project             = var.project_id
   name                = local.instance_name
   region              = var.region
@@ -204,7 +204,7 @@ resource "google_sql_database_instance" "this" {
   }
 
   # VERIFICAR-EN-APPLY: el agente de servicio de Cloud SQL del proyecto existe y tiene
-  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga la etapa 4).
+  # roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms_key (lo otorga 1-base, kms.tf).
   # VERIFICAR-EN-APPLY: la conexión de Private Service Access de la red existe antes del create.
 
   lifecycle {

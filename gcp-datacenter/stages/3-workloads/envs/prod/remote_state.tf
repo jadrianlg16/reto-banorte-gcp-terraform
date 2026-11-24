@@ -14,16 +14,20 @@ data "terraform_remote_state" "base" {
       error_message = "El estado de 1-base no tiene kms_key_ids[environment] (llaves del entorno)."
     }
     postcondition {
-      condition     = alltrue([for s in var.application_secrets : can(self.outputs.secret_ids[var.environment][s])])
-      error_message = "Algún secreto de application_secrets no existe en secret_ids[environment] del estado de 1-base."
-    }
-    postcondition {
       condition     = can(self.outputs.artifact_registry_repositories[var.environment][var.application])
       error_message = "El estado de 1-base no tiene artifact_registry_repositories[environment][application]: 1-base crea el repositorio de imágenes de cada entorno y aplicación."
     }
+    # Las cuentas de ejecución las crea 1-base (runtime_accounts.tf): esta raíz no las crea.
     postcondition {
-      condition     = !var.off_hours_shutdown.enabled || try(self.outputs.off_hours_role_id, null) != null
-      error_message = "off_hours_shutdown.enabled exige la salida off_hours_role_id de 1-base (rol personalizado del apagado fuera de horario, ADR 0028)."
+      condition = alltrue([
+        for use in ["gke_nodes", "workload", "mig", "run"] :
+        can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", self.outputs.runtime_service_accounts[var.environment][var.application][use]))
+      ])
+      error_message = "El estado de 1-base no tiene runtime_service_accounts[environment][application] con gke_nodes, workload, mig y run: 1-base crea las cuentas de ejecución de cada entorno y aplicación (applications de 1-base debe incluir application)."
+    }
+    postcondition {
+      condition     = !var.off_hours_shutdown.enabled || can(regex("@", self.outputs.runtime_service_accounts[var.environment][var.application]["scheduler"]))
+      error_message = "off_hours_shutdown.enabled exige la cuenta scheduler en runtime_service_accounts[environment][application] de 1-base: off_hours_environments de 1-base debe incluir el entorno (ADR 0028)."
     }
   }
 }
@@ -94,9 +98,6 @@ locals {
     for loc, uses in local.kms_key_groups : loc => { for use, ids in uses : use => ids[0] }
   }
 
-  # 1-base: secret_ids (map(map(string)) entorno → secreto → ID).
-  secret_ids = lookup(local.base.secret_ids, var.environment, {})
-
   # 1-base: artifact_registry_repositories[entorno][aplicación], la URL Docker del repositorio
   # (<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>, como la etapa 4 anterior). Se acepta
   # también un objeto { id, url } o su JSON.
@@ -113,16 +114,12 @@ locals {
     repository = local.artifact_repository_parts[2]
   }
 
-  # 1-base: off_hours_role_id (rol personalizado del apagado, ADR 0028). Se acepta el ID
-  # completo (projects/<p>/roles/<rol>) o solo el nombre del rol.
-  off_hours_role_raw = try(local.base.off_hours_role_id, null)
-  off_hours_role_id = local.off_hours_role_raw == null ? null : (
-    startswith(local.off_hours_role_raw, "projects/") ? local.off_hours_role_raw : "projects/${var.project_id}/roles/${local.off_hours_role_raw}"
-  )
+  # 1-base: runtime_service_accounts y gke_workload_identity_members (service_accounts.tf).
 
-  # 1-base: notification_channel_ids (map(string)): canales que ya existen y reciben también las
-  # alertas del entorno (operations.tf).
-  base_notification_channel_ids = sort(distinct(compact(try(values(local.base.notification_channel_ids), []))))
+  # 1-base: notification_channel_ids (map(string)). Solo el canal operations (operations_alert_email
+  # de 1-base) recibe también las alertas del entorno (operations.tf); security queda para las
+  # alertas de auditoría. Sin canal de operaciones, la lista queda vacía.
+  base_notification_channel_ids = compact([try(local.base.notification_channel_ids["operations"], null)])
 
   # 2-networks/<env>: VPC del spoke en el proyecto único (sin host_project_id).
   network_self_link = data.terraform_remote_state.network.outputs.network_self_link

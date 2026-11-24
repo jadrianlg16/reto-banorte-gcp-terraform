@@ -91,19 +91,19 @@ No modules.
 | <a name="input_environment"></a> [environment](#input\_environment) | Entorno: dev, qa o prod. | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo "bnt". | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde vive el balanceador (ADR 0005). | `string` | n/a | yes |
-| <a name="input_type"></a> [type](#input\_type) | "external": balanceador de aplicaciones externo global (EXTERNAL\_MANAGED). "internal": balanceador de aplicaciones interno regional (INTERNAL\_MANAGED) en la Shared VPC. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto (único, ADR 0029) donde vive el balanceador. | `string` | n/a | yes |
+| <a name="input_type"></a> [type](#input\_type) | "external": balanceador de aplicaciones externo global (EXTERNAL\_MANAGED). "internal": balanceador de aplicaciones interno regional (INTERNAL\_MANAGED) en la VPC del spoke. | `string` | n/a | yes |
 | <a name="input_certificate_manager_certificates"></a> [certificate\_manager\_certificates](#input\_certificate\_manager\_certificates) | Solo "internal": IDs de certificados de Certificate Manager regionales ya existentes (por ejemplo, emitidos por una CA privada para dominios internos). Vacío: el módulo crea un certificado administrado por Google con autorización DNS para domain\_names. | `list(string)` | `[]` | no |
 | <a name="input_domain_names"></a> [domain\_names](#input\_domain\_names) | Dominios del certificado administrado por Google. Obligatorio en "external"; en "internal" se usa si no se pasan certificate\_manager\_certificates. | `list(string)` | `[]` | no |
 | <a name="input_dr_active"></a> [dr\_active](#input\_dr\_active) | Conmutación a DR: true hace que cada servicio de backend use dr\_groups en lugar de groups (§7.6). | `bool` | `false` | no |
 | <a name="input_internal_ip_address"></a> [internal\_ip\_address](#input\_internal\_ip\_address) | IP interna fija opcional para el balanceador interno, dentro de subnet. null: la asigna GCP. | `string` | `null` | no |
 | <a name="input_name"></a> [name](#input\_name) | Nombre corto del balanceador (por ejemplo, la aplicación); forma parte del nombre de cada recurso. | `string` | `"web"` | no |
-| <a name="input_network"></a> [network](#input\_network) | self\_link de la VPC de la Shared VPC (salida network\_self\_link de la etapa 3). Obligatoria en "internal". | `string` | `null` | no |
+| <a name="input_network"></a> [network](#input\_network) | self\_link de la VPC del spoke (salida network\_self\_link de 2-networks/envs/<env>). Obligatoria en "internal". | `string` | `null` | no |
 | <a name="input_region"></a> [region](#input\_region) | Región del balanceador interno (uno por región: sus backends deben estar en esa región). No aplica en "external". | `string` | `null` | no |
 | <a name="input_region_short_codes"></a> [region\_short\_codes](#input\_region\_short\_codes) | Código corto de cada región para los nombres (§4.2). | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_security_policy"></a> [security\_policy](#input\_security\_policy) | self\_link de la política de Cloud Armor (salida policy\_self\_link del módulo cloud-armor). Obligatoria en "external"; no aplica en "internal". | `string` | `null` | no |
 | <a name="input_ssl_policy_profile"></a> [ssl\_policy\_profile](#input\_ssl\_policy\_profile) | Perfil de la política SSL (siempre con TLS 1.2 como mínimo): MODERN o RESTRICTED. | `string` | `"MODERN"` | no |
-| <a name="input_subnet"></a> [subnet](#input\_subnet) | self\_link de la subred de la Shared VPC donde se reserva la IP interna (subred app de la región activa). Obligatoria en "internal". La subred proxy-only de esa región debe existir antes. | `string` | `null` | no |
+| <a name="input_subnet"></a> [subnet](#input\_subnet) | self\_link de la subred del spoke donde se reserva la IP interna (subred app de la región activa). Obligatoria en "internal". La subred proxy-only de esa región debe existir antes. | `string` | `null` | no |
 
 ## Outputs
 

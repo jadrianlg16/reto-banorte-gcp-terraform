@@ -36,9 +36,6 @@ mig_max_replicas = 3
 # registros. Una etiqueta de versión o un digest, nunca latest.
 cloud_run_image = "us-docker.pkg.dev/example-lz-000000/bnt-qa-app/api:1.0.0"
 
-# Secretos de secret_ids["qa"] de 1-base que leen las cuentas workload y run (vacío: ninguno).
-application_secrets = []
-
 sql_tier             = "db-custom-2-7680"
 sql_database_version = "POSTGRES_16"
 sql_databases        = ["app"]

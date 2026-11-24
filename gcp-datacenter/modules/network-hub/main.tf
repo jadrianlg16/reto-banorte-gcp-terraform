@@ -14,7 +14,7 @@ locals {
 # VPC en modo personalizado con enrutamiento global: las rutas aprendidas por BGP en una
 # región quedan disponibles en todas.
 resource "google_compute_network" "this" {
-  # checkov:skip=CKV2_GCP_18: las reglas de firewall viven en el módulo firewall (política jerárquica y de red), no en este módulo
+  # checkov:skip=CKV2_GCP_18: las reglas de firewall viven en políticas de firewall de red del módulo firewall (stages/2-networks/firewall.tf para el hub y onprem-sim, envs/<env>/firewall.tf para los spokes), no en este módulo
   project                         = var.project_id
   name                            = local.network_name
   description                     = "VPC ${var.network_suffix} administrada por Terraform."

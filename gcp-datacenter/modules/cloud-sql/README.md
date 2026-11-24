@@ -102,9 +102,9 @@ No modules.
 | <a name="input_environment"></a> [environment](#input\_environment) | Entorno: dev, qa o prod. | `string` | n/a | yes |
 | <a name="input_kms_key"></a> [kms\_key](#input\_kms\_key) | ID de la llave KMS (CMEK) de la instancia primaria; debe estar en la misma región que region. | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
-| <a name="input_network"></a> [network](#input\_network) | VPC de la Shared VPC donde vive la IP privada, como ID o self link (projects/<host>/global/networks/<red>). | `string` | n/a | yes |
+| <a name="input_network"></a> [network](#input\_network) | VPC del spoke del entorno donde vive la IP privada, como ID o self link (projects/<proyecto>/global/networks/<red>). | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto de servicio donde se crea la instancia. | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto (único, ADR 0029) donde se crea la instancia. | `string` | n/a | yes |
 | <a name="input_region"></a> [region](#input\_region) | Región primaria de la instancia. | `string` | n/a | yes |
 | <a name="input_additional_database_flags"></a> [additional\_database\_flags](#input\_additional\_database\_flags) | Banderas de PostgreSQL adicionales. No pueden reemplazar las banderas obligatorias de autenticación IAM y auditoría que fija el módulo. | `map(string)` | `{}` | no |
 | <a name="input_allocated_ip_range"></a> [allocated\_ip\_range](#input\_allocated\_ip\_range) | Nombre del rango de Private Service Access de donde se toma la IP (psa\_range\_name de la etapa 3). Nulo: cualquier rango de la conexión. | `string` | `null` | no |

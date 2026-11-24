@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto donde se crean canales, verificaciones, alertas, tablero y SLO (proyecto de servicio del entorno, o su proyecto de alcance de métricas)."
+  description = "ID del proyecto donde se crean canales, verificaciones, alertas, tablero y SLO (el proyecto único, ADR 0029)."
   type        = string
 
   validation {

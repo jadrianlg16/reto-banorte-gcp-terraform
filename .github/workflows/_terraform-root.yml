@@ -23,7 +23,11 @@
 #          si el plan tiene cambios: sin cambios no hay apply ni pedido de aprobación. Las
 #          reglas del entorno (revisores) se cumplen antes de que el trabajo empiece. WIF con la
 #          cuenta de la raíz (llave `stage` de GCP_STAGE_SERVICE_ACCOUNTS), que solo acepta
-#          tokens de ese entorno de GitHub. Vuelve a planear con el candado, exige que la
+#          tokens con attribute.deploy igual a ese entorno: ref refs/heads/main, este archivo
+#          como flujo reutilizable del mismo repositorio (job_workflow_ref
+#          <dueño>/<repo>/.github/workflows/_terraform-root.yml@...) y ese entorno de GitHub
+#          (stages/0-bootstrap/wif.tf). Por eso este trabajo solo se llama como flujo
+#          reutilizable desde main. Vuelve a planear con el candado, exige que la
 #          huella sea igual a la del plan revisado (ADR 0025), corre Conftest sobre ese plan y
 #          aplica exactamente ese archivo.
 #          VERIFICAR-EN-APPLY: que el plan con la cuenta de lectura y el del apply con la cuenta
@@ -311,8 +315,9 @@ jobs:
           sudo install -m 0755 conftest /usr/local/bin/conftest
           conftest --version
 
-      # Cuenta de la raíz (tf-base, tf-net, tf-net-<env> o tf-wl-<env>): solo acepta tokens del
-      # entorno de GitHub de este trabajo (ADR 0029 §3).
+      # Cuenta de la raíz (tf-base, tf-net, tf-net-<env> o tf-wl-<env>): solo acepta tokens de
+      # main, de este flujo reutilizable y del entorno de GitHub de este trabajo
+      # (attribute.deploy, stages/0-bootstrap/wif.tf; ADR 0029 §3).
       - name: Autenticar con Workload Identity Federation (cuenta de la raíz)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:

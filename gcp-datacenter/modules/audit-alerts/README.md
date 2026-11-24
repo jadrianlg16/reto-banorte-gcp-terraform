@@ -17,14 +17,13 @@ alerta asociada. Por eso:
   sin cambios (la prueba compara el texto exacto). Van en una sola línea; si el detector exige
   los saltos de línea de la documentación está por verificar (pendiente 58).
 - Los cambios de **políticas de firewall** (lo que usa este repositorio en lugar de reglas de
-  VPC: la jerárquica de la organización y las de red de los spokes y de `onprem-sim`) van en una
-  novena métrica, `firewall_policy`, solo con el registro de actividad. Agregarlos al filtro de
-  2.8 arriesgaba que el detector dejara de reconocerlo. Los cambios de la política jerárquica
-  se registran en la organización (HYPOTHESIS): una métrica de proyecto no los ve.
-- Se instancia una vez por proyecto que crea el repositorio, desde la etapa que lo crea: el
-  semilla en `0-bootstrap`, los cuatro de `common` en `1-org`, cada `net-spoke` en
-  `3-networks/envs/<env>` y cada proyecto de servicio en `4-projects/envs/<env>`. Las API
-  `logging.googleapis.com` y `monitoring.googleapis.com` las habilita `project-factory` en todos.
+  VPC: las políticas de red de los spokes y de `onprem-sim`) van en una novena métrica,
+  `firewall_policy`, solo con el registro de actividad. Agregarlos al filtro de 2.8 arriesgaba
+  que el detector dejara de reconocerlo. El filtro cubre también las políticas jerárquicas, que
+  el proyecto único ya no crea (ADR 0029 §6); sus cambios se registrarían en la organización
+  (HYPOTHESIS): una métrica de proyecto no los ve.
+- Se instancia una sola vez, en `1-base`, para el proyecto único (ADR 0029). Las API
+  `logging.googleapis.com` y `monitoring.googleapis.com` las habilita `0-bootstrap`.
 
 La condición de cada alerta filtra por el tipo de recurso con que Cloud Logging escribe la serie
 de la métrica: `global` para los registros de proyecto, rol, firewall, ruta y red (no son tipos

@@ -103,15 +103,48 @@ variable "environments" {
 }
 
 variable "applications" {
-  description = "Aplicaciones con repositorio de imágenes en cada entorno (<prefix>-<env>-<app>) y regla de Binary Authorization en sus clústeres de prod (<prefix>-prod-<app>-gke[-dr]). Como en 3-workloads: hasta 8 caracteres."
+  description = "Aplicaciones de cada entorno: repositorio de imágenes (<prefix>-<env>-<app>), cuentas de ejecución (<prefix>-<env>-<app>-<uso>) y regla de Binary Authorization en sus clústeres de prod (<prefix>-prod-<app>-gke[-dr]). Misma validación que application de 3-workloads: de 2 a 8 caracteres."
   type        = set(string)
   default     = ["app"]
   nullable    = false
 
+  # Con 8 caracteres como máximo, la cuenta más larga (<prefix de 6>-prod-<app de 8>-gke-nodes)
+  # tiene 30, el límite del ID de cuenta de servicio (ADR 0017).
   validation {
-    condition     = length(var.applications) > 0 && alltrue([for a in var.applications : can(regex("^[a-z][a-z0-9]{0,7}$", a))])
-    error_message = "Cada aplicación: de 1 a 8 minúsculas o dígitos, empezando con letra."
+    condition     = length(var.applications) > 0 && alltrue([for a in var.applications : can(regex("^[a-z][a-z0-9]{1,7}$", a))])
+    error_message = "Cada aplicación debe tener de 2 a 8 caracteres: minúsculas y dígitos, empezando con letra."
   }
+}
+
+variable "off_hours_environments" {
+  description = "Entornos con cuenta de los trabajos del apagado fuera de horario (<prefix>-<env>-<app>-sched, ADR 0028) y su rol. 3-workloads la usa con off_hours_shutdown.enabled. Nunca prod."
+  type        = list(string)
+  default     = ["dev", "qa"]
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for e in var.off_hours_environments : contains(["dev", "qa"], e)])
+    error_message = "off_hours_environments solo admite dev y qa: el apagado fuera de horario nunca es de prod (ADR 0028)."
+  }
+}
+
+variable "gke_workload_ksa_name" {
+  description = "Nombre de la cuenta de servicio de Kubernetes que actúa como la cuenta workload de cada aplicación (Workload Identity), en el namespace <app>-<env>."
+  type        = string
+  default     = "app"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", var.gke_workload_ksa_name)) && var.gke_workload_ksa_name != "default"
+    error_message = "gke_workload_ksa_name debe ser un nombre DNS-1123 de hasta 63 caracteres y no la cuenta default del namespace."
+  }
+}
+
+variable "gke_workload_identity_bindings" {
+  description = "true: crea el enlace de Workload Identity (roles/iam.workloadIdentityUser) de <app>-<env>/<gke_workload_ksa_name> en la cuenta workload de cada entorno y aplicación. Exige que ya exista el pool <proyecto>.svc.id.goog, que GKE crea con el primer clúster con Workload Identity del proyecto: false (por defecto) hasta el primer apply de 3-workloads con enable_gke, y después true."
+  type        = bool
+  default     = false
+  nullable    = false
 }
 
 variable "artifact_registry_location" {
@@ -156,7 +189,7 @@ variable "binary_authorization_allowlist_patterns" {
 }
 
 variable "binary_authorization_attestors" {
-  description = "Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y las reglas de los clústeres de prod. Vacío (por defecto): sin atestaciones, se niega todo lo que no esté en la lista de permitidos."
+  description = "Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y todas las reglas de clúster (todos a la vez: Binary Authorization pide la atestación de cada uno). Vacío (por defecto): sin atestaciones comunes; sin binary_authorization_env_attestors se niega todo lo que no esté en la lista de permitidos."
   type        = list(string)
   default     = []
   nullable    = false
@@ -164,6 +197,22 @@ variable "binary_authorization_attestors" {
   validation {
     condition     = alltrue([for a in var.binary_authorization_attestors : can(regex("^projects/[^/]+/attestors/[^/]+$", a))])
     error_message = "Cada atestador debe tener la forma projects/<proyecto>/attestors/<nombre>."
+  }
+}
+
+variable "binary_authorization_env_attestors" {
+  description = "Mapa entorno → atestador (projects/<p>/attestors/<a>), uno por entorno de environments. Con él, los repositorios del proyecto salen de la lista de permitidos (queda solo binary_authorization_allowlist_patterns), cada clúster <prefix>-<env>-<app>-gke[-dr] exige el atestador de su entorno y la regla por defecto (Cloud Run y clústeres fuera de la convención) exige binary_authorization_attestors o, si está vacío, el atestador del primer entorno de la promoción (dev, qa, prod). Vacío (por defecto): la lista de permitidos global con los repositorios de los tres entornos (una imagen de dev se puede desplegar en prod; riesgo del ADR 0024). Los atestadores no los crea esta etapa."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for e, a in var.binary_authorization_env_attestors : contains(var.environments, e) && can(regex("^projects/[^/]+/attestors/[^/]+$", a))])
+    error_message = "Cada llave de binary_authorization_env_attestors debe ser un entorno de environments y cada valor un atestador projects/<proyecto>/attestors/<nombre>."
+  }
+  validation {
+    condition     = length(var.binary_authorization_env_attestors) == 0 || alltrue([for e in var.environments : contains(keys(var.binary_authorization_env_attestors), e)])
+    error_message = "binary_authorization_env_attestors debe tener un atestador para cada entorno de environments (o quedar vacío): sin él, los clústeres de ese entorno no podrían admitir imágenes de su repositorio."
   }
 }
 
@@ -206,6 +255,29 @@ variable "security_alert_email" {
   validation {
     condition     = can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.security_alert_email))
     error_message = "security_alert_email debe ser un correo válido."
+  }
+}
+
+variable "dr_environments" {
+  description = "Entornos con recuperación ante desastres (enable_dr en su raíz de 3-workloads): solo ellos tienen llaves en dr_region (<uso>_dr), la llave storage de la multirregión us y la segunda réplica de sus secretos. Por defecto prod. Un entorno de 3-workloads con enable_dr que no esté aquí falla en su plan por falta de llaves."
+  type        = list(string)
+  default     = ["prod"]
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for e in var.dr_environments : contains(var.environments, e)])
+    error_message = "Cada entorno de dr_environments debe estar en environments."
+  }
+}
+
+variable "operations_alert_email" {
+  description = "Correo (de preferencia una lista de grupo) del canal de operaciones: recibe las alertas de los entornos que crea 3-workloads (disponibilidad, SLO, recursos), además de los notification_emails de cada entorno. null (por defecto): sin canal de operaciones. Las alertas de auditoría van siempre a security_alert_email, nunca a este canal."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.operations_alert_email == null || can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.operations_alert_email))
+    error_message = "operations_alert_email debe ser un correo válido o null."
   }
 }
 
@@ -300,86 +372,6 @@ variable "scc_notification_filter" {
   validation {
     condition     = length(trimspace(var.scc_notification_filter)) > 0
     error_message = "scc_notification_filter no puede estar vacío."
-  }
-}
-
-variable "org_id" {
-  description = "ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). Con él se aplican las políticas de organización al proyecto. null (por defecto): sin políticas de organización."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.org_id == null || can(regex("^[0-9]{6,20}$", var.org_id))
-    error_message = "org_id debe ser el número de la organización, sin organizations/, o null."
-  }
-}
-
-variable "additional_allowed_locations" {
-  description = "Solo con org_id: ubicaciones extra permitidas por gcp.resourceLocations además de primary_region y dr_region. Por defecto us: la multirregión del estado, de los llaveros y de los repositorios."
-  type        = list(string)
-  default     = ["us"]
-  nullable    = false
-
-  validation {
-    condition     = alltrue([for l in var.additional_allowed_locations : can(regex("^(in:[a-z0-9-]+-locations|[a-z][a-z0-9-]*)$", l))])
-    error_message = "Cada valor debe ser una ubicación (us) o un grupo in:<grupo>-locations."
-  }
-}
-
-variable "directory_customer_id" {
-  description = "Solo con org_id: ID de cliente de Cloud Identity (Cxxxxxxxx), único dominio admitido en las políticas de IAM (iam.allowedPolicyMemberDomains). null: esa política no se crea."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.directory_customer_id == null || can(regex("^C[0-9a-zA-Z]{6,}$", var.directory_customer_id))
-    error_message = "directory_customer_id debe tener la forma C seguida del identificador (por ejemplo, C0abc1234), o ser null."
-  }
-}
-
-variable "access_policy_id" {
-  description = "ID numérico de la política de Access Context Manager de la organización. Con él se crea el perímetro de VPC-SC en dry-run alrededor de todo el proyecto (ADR 0029 §1). null (por defecto): sin perímetro. Exige org_id."
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.access_policy_id == null || can(regex("^[0-9]+$", var.access_policy_id))
-    error_message = "access_policy_id debe ser el número de la política (sin accessPolicies/) o null."
-  }
-  validation {
-    condition     = var.access_policy_id == null || var.org_id != null
-    error_message = "access_policy_id solo tiene sentido con org_id: la política de acceso es de una organización."
-  }
-}
-
-variable "vpc_sc_restricted_services" {
-  description = "Servicios restringidos por el perímetro opcional; debe incluir storage.googleapis.com. Con un solo proyecto, el perímetro ya incluye llaves y secretos: KMS y Secret Manager se restringen también."
-  type        = list(string)
-  default = [
-    "artifactregistry.googleapis.com",
-    "backupdr.googleapis.com",
-    "bigquery.googleapis.com",
-    "cloudkms.googleapis.com",
-    "compute.googleapis.com",
-    "container.googleapis.com",
-    "file.googleapis.com",
-    "gkebackup.googleapis.com",
-    "pubsub.googleapis.com",
-    "redis.googleapis.com",
-    "run.googleapis.com",
-    "secretmanager.googleapis.com",
-    "sqladmin.googleapis.com",
-    "storage.googleapis.com",
-  ]
-  nullable = false
-
-  validation {
-    condition     = alltrue([for s in var.vpc_sc_restricted_services : can(regex("^[a-z0-9.-]+\\.googleapis\\.com$", s))])
-    error_message = "Cada servicio debe tener la forma <servicio>.googleapis.com."
-  }
-  validation {
-    condition     = contains(var.vpc_sc_restricted_services, "storage.googleapis.com")
-    error_message = "vpc_sc_restricted_services debe incluir storage.googleapis.com."
   }
 }
 
