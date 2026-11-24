@@ -1,8 +1,9 @@
 # Reglas del proyecto para Claude Code
 
 Proyecto integrador TC3003B (Equipo 2, socio formador Banorte): landing zone de Google Cloud en
-Terraform. Todo el proyecto está en `gcp-datacenter/`; el pipeline en `.github/workflows/`. Las
-carpetas `labs/` y `entregas/` son de fases anteriores.
+Terraform, todo dentro de **un solo proyecto de GCP** (ADR 0029; el diseño anterior de varios
+proyectos vive en la rama `archivo/multiproyecto`). Todo el proyecto está en `gcp-datacenter/`; el
+pipeline en `.github/workflows/`. Las carpetas `labs/` y `entregas/` son de fases anteriores.
 
 ## Antes de trabajar
 
@@ -24,8 +25,9 @@ carpetas `labs/` y `entregas/` son de fases anteriores.
   verificación y pasos de consola los hace la persona.
 - Nada directo a `main`: rama `fix/<tema>` o `verif/<fecha>` y PR. Integrar a `main` dispara
   `apply.yml`.
-- Las etapas 1 a 5 solo las aplica el pipeline (cuentas de servicio por WIF). Las personas tienen
-  solo lectura; la etapa 0 es la única manual (runbook 01).
+- Las etapas `1-base`, `2-networks` y `3-workloads` solo las aplica el pipeline (una cuenta de
+  servicio por raíz y entorno, por WIF). Las personas tienen solo lectura; `0-bootstrap` es la
+  única manual (runbook 01).
 - Afirmaciones sobre GCP o GitHub solo con fuente oficial o comprobadas; lo demás se marca
   HYPOTHESIS. Cada punto comprobado de `pendientes-apply.md` lleva "Verificado el AAAA-MM-DD con
   `<comando>`: <resultado>" o "Falló el ...".
