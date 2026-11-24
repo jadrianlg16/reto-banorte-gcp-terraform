@@ -1,22 +1,32 @@
 # Flujo reutilizable: plan, Conftest, aprobación y apply de una sola raíz de etapa
-# (CONTRATO §9.3). Lo llama apply.yml una vez por raíz. Ver gcp-datacenter/docs/pipeline.md.
+# (CONTRATO §9.3, ADR 0029 §2 y §3). Lo llaman apply.yml y destroy.yml una vez por raíz. Ver
+# gcp-datacenter/docs/pipeline.md.
 #
 # Modo destroy (entrada `destroy`, solo la usa destroy.yml): los mismos dos trabajos con
-# `terraform plan -destroy`. Antes de autenticarse, scripts/destroy-guard.sh admite solo raíces
-# envs/dev o envs/qa de las etapas 3 a 5 (prod nunca); después del plan,
-# scripts/destroy-plan-check.py detiene la raíz si algo del estado impediría el borrado
-# (deletion_protection, deletion_policy) y avisa de lo que el plan no ve. Ver pipeline.md §1.5.
+# `terraform plan -destroy`. Antes de autenticarse, scripts/destroy-guard.sh admite solo
+# stages/3-workloads/envs/{dev,qa} y stages/2-networks/envs/{dev,qa} (prod nunca); después del
+# plan, scripts/destroy-plan-check.py detiene la raíz si algo del estado impediría el borrado
+# (deletion_protection, deletion_policy) o si el plan borraría algo que no es del entorno
+# (nombre sin <prefix>-<env>-, recursos únicos del proyecto; ADR 0029 §8) y avisa de lo que el
+# plan no ve. Ver pipeline.md §1.5.
 #
 # Dos trabajos:
-#   plan   sin entorno de GitHub: WIF con la cuenta de la etapa, plan guardado, Conftest sobre
-#          el plan y resumen del plan (acciones por dirección y la línea "Plan:") en el resumen
-#          del trabajo, que se ve en la página de la ejecución mientras se espera la
-#          aprobación. Calcula la huella del plan (ver abajo).
+#   plan   sin entorno de GitHub: WIF con la cuenta de LECTURA (GCP_AUDIT_SERVICE_ACCOUNT, salida
+#          read_service_account de 0-bootstrap) y `-lock=false`: esa cuenta no puede escribir
+#          el candado del estado (ADR 0029 §3). Plan guardado, Conftest sobre el plan y
+#          resumen del plan (acciones por dirección y la línea "Plan:") en el resumen del
+#          trabajo, que se ve en la página de la ejecución mientras se espera la aprobación.
+#          Calcula la huella del plan (ver abajo).
 #   apply  en el entorno de GitHub que recibe en `environment` (common, dev, qa o prod) y solo
 #          si el plan tiene cambios: sin cambios no hay apply ni pedido de aprobación. Las
-#          reglas del entorno (revisores) se cumplen antes de que el trabajo empiece. Vuelve a
-#          planear, exige que la huella sea igual a la del plan revisado, corre Conftest sobre
-#          ese plan y aplica exactamente ese archivo.
+#          reglas del entorno (revisores) se cumplen antes de que el trabajo empiece. WIF con la
+#          cuenta de la raíz (llave `stage` de GCP_STAGE_SERVICE_ACCOUNTS), que solo acepta
+#          tokens de ese entorno de GitHub. Vuelve a planear con el candado, exige que la
+#          huella sea igual a la del plan revisado (ADR 0025), corre Conftest sobre ese plan y
+#          aplica exactamente ese archivo.
+#          VERIFICAR-EN-APPLY: que el plan con la cuenta de lectura y el del apply con la cuenta
+#          de la raíz den la misma huella. Una fuente de datos que dependa de la identidad
+#          (google_client_openid_userinfo, por ejemplo) la cambiaría en cada ejecución.
 #
 # Por qué se vuelve a planear en vez de pasar el archivo del plan entre trabajos: `tfplan` y
 # `terraform show -json` llevan los valores sensibles en claro, y un artefacto de Actions lo
@@ -27,8 +37,8 @@
 # apply se detiene sin tocar nada y hay que volver a correr el flujo.
 #
 # Usa las mismas variables de repositorio que pr.yml (ver docs/pipeline.md):
-#   GCP_ENABLED, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_STAGE_SERVICE_ACCOUNTS,
-#   GCP_STATE_BUCKET, GCP_TFVARS_JSON.
+#   GCP_ENABLED, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_AUDIT_SERVICE_ACCOUNT (plan),
+#   GCP_STAGE_SERVICE_ACCOUNTS (apply), GCP_STATE_BUCKET, GCP_TFVARS_JSON.
 
 name: _terraform-root
 
@@ -36,11 +46,11 @@ on:
   workflow_call:
     inputs:
       root:
-        description: Raíz relativa a gcp-datacenter/, por ejemplo stages/3-networks/envs/dev.
+        description: Raíz relativa a gcp-datacenter/, por ejemplo stages/2-networks/envs/dev.
         type: string
         required: true
       stage:
-        description: Llave de la etapa en GCP_STAGE_SERVICE_ACCOUNTS (1-org … 5-workloads).
+        description: Llave de la cuenta del apply en GCP_STAGE_SERVICE_ACCOUNTS (1-base, 2-networks, 2-networks/<env> o 3-workloads/<env>).
         type: string
         required: true
       environment:
@@ -52,6 +62,13 @@ on:
         type: boolean
         required: false
         default: false
+    outputs:
+      changes:
+        description: '"true" si el plan tenía cambios.'
+        value: ${{ jobs.plan.outputs.changes }}
+      prefix:
+        description: Variable prefix de la raíz, leída del plan (destroy.yml la usa para buscar huérfanos).
+        value: ${{ jobs.plan.outputs.prefix }}
 
 permissions:
   contents: read
@@ -79,6 +96,7 @@ jobs:
     outputs:
       changes: ${{ steps.plan.outputs.changes }}
       fingerprint: ${{ steps.plan.outputs.fingerprint }}
+      prefix: ${{ steps.plan.outputs.prefix }}
       vars_fingerprint: ${{ steps.vars.outputs.fingerprint }}
     env:
       ROOT: ${{ inputs.root }}
@@ -89,10 +107,19 @@ jobs:
         with:
           fetch-depth: 0 # check-main-tip.sh necesita la historia de main
 
-      # Modo destroy: solo stages/{3-networks,4-projects,5-workloads}/envs/{dev,qa}, nunca prod.
+      # Modo destroy: solo stages/{3-workloads,2-networks}/envs/{dev,qa}, nunca prod.
       - name: Raíz y entorno que se pueden destruir
         if: inputs.destroy
         run: bash scripts/destroy-guard.sh raiz "${TARGET_ENVIRONMENT}" "${ROOT}"
+
+      - name: Cuenta de lectura del plan
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "${GCP_AUDIT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Falta la variable de repositorio GCP_AUDIT_SERVICE_ACCOUNT (salida read_service_account de 0-bootstrap): los plan corren con la cuenta de lectura (docs/pipeline.md §2)."
+            exit 1
+          fi
 
       # Una ejecución vieja que se vuelve a correr ("Re-run") trae su github.sha original: si
       # main avanzó con cambios en gcp-datacenter/ o .github/workflows/, no se planea código
@@ -129,11 +156,13 @@ jobs:
           sudo install -m 0755 conftest /usr/local/bin/conftest
           conftest --version
 
-      - name: Autenticar con Workload Identity Federation
+      # Cuenta de lectura (tf-read): acepta tokens de cualquier trabajo del repositorio, también
+      # de este, que no tiene entorno de GitHub (ADR 0029 §3).
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[inputs.stage] }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
 
       - name: Variables de la raíz
         env:
@@ -160,10 +189,12 @@ jobs:
           cd "${ROOT}"
           # -detailed-exitcode: 0 sin cambios, 1 error, 2 con cambios. Con -destroy y el estado
           # vacío (raíz ya destruida) sale con 0: sin cambios.
+          # -lock=false: la cuenta de lectura no puede escribir el candado (ADR 0029 §3); el
+          # trabajo apply vuelve a planear con el candado y compara la huella.
           mode=()
           if [ "${DESTROY}" = "true" ]; then mode=(-destroy); fi
           set +e
-          terraform plan "${mode[@]}" -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
+          terraform plan "${mode[@]}" -input=false -no-color -lock=false -detailed-exitcode -out=tfplan
           code=$?
           set -e
           case "${code}" in
@@ -174,18 +205,21 @@ jobs:
           terraform show -json tfplan > plan.json
           terraform show -no-color tfplan > plan.txt
           fingerprint="$(python3 "${GITHUB_WORKSPACE}/gcp-datacenter/scripts/plan-fingerprint.py" plan.json)"
+          prefix="$(jq -r '.variables.prefix.value // empty' plan.json)"
           echo "changes=${changes}" >> "${GITHUB_OUTPUT}"
           echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
+          echo "prefix=${prefix}" >> "${GITHUB_OUTPUT}"
 
       - name: Conftest sobre el plan
         id: conftest
         run: conftest test "${ROOT}/plan.json" --policy policies --no-color
 
-      # Modo destroy: se detiene antes de pedir la aprobación si el estado impide el borrado.
+      # Modo destroy: se detiene antes de pedir la aprobación si el estado impide el borrado o
+      # si el plan borraría algo que no es del entorno.
       - name: Comprobaciones del plan de destrucción
         id: destroy_check
         if: inputs.destroy && steps.plan.outputs.changes == 'true'
-        run: python3 scripts/destroy-plan-check.py "${ROOT}/plan.json" --root "${ROOT}" --summary "${GITHUB_STEP_SUMMARY}"
+        run: python3 scripts/destroy-plan-check.py "${ROOT}/plan.json" --env "${TARGET_ENVIRONMENT}" --root "${ROOT}" --summary "${GITHUB_STEP_SUMMARY}"
 
       - name: Resumen del plan (lo que se aprueba)
         if: always()
@@ -206,7 +240,7 @@ jobs:
           {
             echo "### ${title} de \`${ROOT}\`"
             echo
-            echo "- Plan: ${PLAN_OUTCOME:-no corrió}${line:+ (${line})}"
+            echo "- Plan (cuenta de lectura, sin candado): ${PLAN_OUTCOME:-no corrió}${line:+ (${line})}"
             echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
             if [ "${DESTROY}" = "true" ]; then
               echo "- Comprobaciones del destroy: ${DESTROY_CHECK_OUTCOME:-no corrió}"
@@ -280,7 +314,9 @@ jobs:
           sudo install -m 0755 conftest /usr/local/bin/conftest
           conftest --version
 
-      - name: Autenticar con Workload Identity Federation
+      # Cuenta de la raíz (tf-base, tf-net, tf-net-<env> o tf-wl-<env>): solo acepta tokens del
+      # entorno de GitHub de este trabajo (ADR 0029 §3).
+      - name: Autenticar con Workload Identity Federation (cuenta de la raíz)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -333,7 +369,7 @@ jobs:
       - name: Comprobaciones del plan de destrucción que se aplica
         id: destroy_check
         if: inputs.destroy
-        run: python3 scripts/destroy-plan-check.py "${ROOT}/plan.json"
+        run: python3 scripts/destroy-plan-check.py "${ROOT}/plan.json" --env "${APPLY_ENVIRONMENT}"
 
       # Otra vez justo antes del apply: main pudo avanzar mientras se esperaba la aprobación.
       - name: main no cambió el despliegue desde este commit (antes del apply)

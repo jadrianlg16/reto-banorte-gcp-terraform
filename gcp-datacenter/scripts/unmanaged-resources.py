@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Recursos de una carpeta de GCP que no están en ningún estado de Terraform.
+"""Recursos del proyecto de GCP que no están en ningún estado de Terraform.
 
 Objetivo de la especificación: "cero recursos manuales", verificado con Cloud Asset Inventory.
+Toda la landing zone vive en un solo proyecto (ADR 0029): se lista ese proyecto y se compara con
+los estados de todas las raíces.
 
 Uso:
-    python3 scripts/unmanaged-resources.py --folder folders/<N> --assets ASSETS.json
+    python3 scripts/unmanaged-resources.py --project <ID> --project-number <N> --assets ASSETS.json
         --state S.tfstate [--state ...] [--allowlist scripts/unmanaged-allowlist.txt]
         [--summary RESUMEN.md] [--report-only]
 
-    --folder     carpeta listada (la del entorno, salida folder_ids de 1-org). Los proyectos de
-                 los estados cuyo `folder_id` es esa carpeta son "los proyectos del entorno":
-                 todos tienen que aparecer en el listado.
-
+    --project, --project-number
+                 ID y número del proyecto listado (salidas project_id y project_number de
+                 0-bootstrap). Cloud Asset nombra unos recursos con el número y otros con el ID:
+                 los dos se llevan a la forma projects/<número> para comparar.
     ASSETS.json  salida de
-                 gcloud asset search-all-resources --scope=folders/<N> --format=json
-                 (lista de objetos con name, assetType, displayName, state...). También sirve
-                 `gcloud asset list --format=json` (name y assetType).
+                 gcloud asset search-all-resources --scope=projects/<ID> --format=json
+                 (lista de objetos con name, assetType, project, displayName, state...). También
+                 sirve `gcloud asset list --format=json` (name y assetType).
     --state      estado de Terraform: el archivo crudo del backend (`terraform state pull` o
                  `gcloud storage cat gs://<bucket>/<prefijo>/default.tfstate`, versión 4) o
                  `terraform show -json`. Se repite una vez por raíz; conviene pasar todas.
@@ -25,16 +27,16 @@ Uso:
     --report-only  sale con 0 aunque haya recursos no administrados.
 
 Cómo decide que un recurso está administrado:
+0. El proyecto mismo: lo crea una persona y no lo administra ninguna raíz (ADR 0029 §1).
 1. Nombre exacto. De cada instancia de recurso del estado se toman `id` y `self_link`, más
    formas construidas para tipos cuyo `id` no es el nombre de Cloud Asset
-   (proyecto por número, cuenta de servicio por `unique_id`, API habilitada). Los nombres se
+   (cuenta de servicio por `unique_id`, API habilitada, métrica de log). Los nombres se
    normalizan: sin `//servicio.googleapis.com/`, sin `https://host/version/`, y cada
-   `projects/<id>` se pasa a `projects/<número>` con los proyectos del estado (Cloud Asset usa
-   el número en algunos servicios y el ID en otros).
+   `projects/<id>` se pasa a `projects/<número>`.
 2. Hijo de un recurso administrado: el nombre empieza con el de un recurso administrado de al
    menos cuatro segmentos más "/" (versiones de llaves KMS, revisiones de Cloud Run,
-   versiones de secretos, que se cargan a mano por diseño, ADR 0015). Los proyectos, carpetas
-   y ubicaciones no cuentan como padres, y los node pools de GKE no se aceptan por esta regla.
+   versiones de secretos, que se cargan a mano por diseño, ADR 0015). Los proyectos y
+   ubicaciones no cuentan como padres, y los node pools de GKE no se aceptan por esta regla.
 3. Instancia o disco de un grupo administrado (MIG) del estado: nombre
    `<base_instance_name>-xxxx` en el mismo proyecto.
 4. Regla de la lista de permitidos: una expresión regular sobre
@@ -44,16 +46,15 @@ Lo que queda es "no administrado": se lista y el script sale con 1.
 
 Sale con 2 (también con --report-only) si el listado no sirve para concluir nada:
 - vacío o mal formado (`[]`, `{}`, un objeto sin `results`, elementos sin `name`);
-- ningún proyecto de los estados está en --folder (carpeta equivocada o faltan estados);
-- falta en el listado alguno de los proyectos de los estados que están en --folder (listado
-  de otra carpeta, truncado o hecho sin permisos sobre algún proyecto).
-Así un "0 no administrados" solo sale de un listado que cubre todos los proyectos del entorno.
-HIPÓTESIS (esquema de google 6.50.0, sin estado real): `folder_id` de `google_project` guarda
-el número de la carpeta; se aceptan también `folders/<N>`.
+- no trae el proyecto mismo (listado de otro alcance o hecho sin permisos);
+- trae recursos de otro proyecto (campo `project`): listado de una carpeta, de la organización
+  o de otro proyecto.
+Así un "0 no administrados" solo sale de un listado del proyecto pedido.
 
-VERIFICAR-EN-APPLY: el formato de `name` de Cloud Asset para cada tipo (número o ID del
+VERIFICAR-EN-APPLY: que Cloud Asset liste el proyecto mismo con --scope=projects/<ID> (si no,
+este script sale con 2 en cada corrida), el formato de `name` de cada tipo (número o ID del
 proyecto, ID único de la cuenta de servicio) y que la lista de permitidos cubra los recursos que
-crean GKE, los MIG y los servicios administrados. Solo se puede comprobar con una carpeta real.
+crean GKE, los MIG y los servicios administrados. Solo se puede comprobar con el proyecto real.
 
 Solo biblioteca estándar; Python 3.8 o posterior.
 """
@@ -119,13 +120,17 @@ def state_instances(state):
         stack.extend(module.get("child_modules", []))
 
 
-def build_managed(states):
-    """Nombres administrados (canónicos), padres posibles y patrones de los MIG."""
+def build_managed(states, aliases=None):
+    """Nombres administrados (canónicos), padres posibles, patrones de los MIG y alias de proyectos.
+
+    aliases: ID de proyecto -> número ya conocidos (por ejemplo, el proyecto de la landing zone).
+    Se agregan los de los google_project de los estados.
+    """
     instances = []
     for state in states:
         instances.extend(state_instances(state))
 
-    aliases = {}
+    aliases = dict(aliases or {})
     for rtype, attrs in instances:
         if rtype == "google_project" and attrs.get("project_id") and attrs.get("number"):
             aliases[str(attrs["project_id"])] = str(attrs["number"])
@@ -163,6 +168,19 @@ def build_managed(states):
     return managed, parents, mig_patterns, aliases
 
 
+def managed_class(name, atype, managed, parents, mig_patterns):
+    """"managed", "child" o "mig" si un estado administra el recurso (nombre canónico); si no, None."""
+    if not name:
+        return None
+    if name in managed:
+        return "managed"
+    if atype not in CHILD_RULE_EXCLUDED and any(name.startswith(p + "/") for p in parents):
+        return "child"
+    if any(p.match(name) for p in mig_patterns):
+        return "mig"
+    return None
+
+
 # --- Lista de permitidos -------------------------------------------------------------------
 
 
@@ -184,21 +202,21 @@ def load_allowlist(path):
 # --- Clasificación -------------------------------------------------------------------------
 
 
-def classify(assets, managed, parents, mig_patterns, aliases, rules):
-    result = {"managed": [], "child": [], "mig": [], "allowed": [], "unmanaged": [], "gone": []}
+def classify(assets, managed, parents, mig_patterns, aliases, rules, project_number):
+    result = {"project": [], "managed": [], "child": [], "mig": [], "allowed": [], "unmanaged": [], "gone": []}
     for asset in assets:
         name = canonical(normalize(asset.get("name")), aliases)
         atype = asset.get("assetType", "")
         entry = {"assetType": atype, "name": name or "", "displayName": asset.get("displayName", "")}
         if str(asset.get("state", "")).upper() in GONE_STATES:
             result["gone"].append(entry)
-        elif name in managed:
-            result["managed"].append(entry)
-        elif atype not in CHILD_RULE_EXCLUDED and any(name.startswith(p + "/") for p in parents):
-            result["child"].append(entry)
-        elif any(p.match(name) for p in mig_patterns):
-            result["mig"].append(entry)
+        elif atype == PROJECT_ASSET_TYPE and name == "projects/" + project_number:
+            result["project"].append(entry)
         else:
+            cls = managed_class(name, atype, managed, parents, mig_patterns)
+            if cls:
+                result[cls].append(entry)
+                continue
             subject = "%s %s %s" % (atype, name, entry["displayName"])
             rule = next((r for r in rules if r[0].search(subject)), None)
             if rule:
@@ -214,7 +232,7 @@ def load_json(path):
         return json.load(handle)
 
 
-def read_assets(path):
+def read_assets(path, allow_empty=False):
     """(lista de recursos, None) o (None, motivo) si el listado está vacío o mal formado."""
     try:
         data = load_json(path)
@@ -227,71 +245,69 @@ def read_assets(path):
         data = data[key]
     if not isinstance(data, list):
         return None, "se esperaba una lista de recursos y llegó %s" % type(data).__name__
-    if not data:
-        return None, "listado vacío: una carpeta de entorno siempre tiene al menos sus proyectos"
+    if not data and not allow_empty:
+        return None, "listado vacío: el proyecto siempre tiene al menos su bucket de estado y sus APIs"
     if not all(isinstance(a, dict) and a.get("name") for a in data):
         return None, "hay elementos sin 'name': no es un listado de Cloud Asset"
     return data, None
 
 
-def folder_number(value):
-    """`folders/123` o `123` -> "123"; None si no es una carpeta."""
-    m = re.fullmatch(r"(?:folders/)?([0-9]+)", str(value or "").strip())
-    return m.group(1) if m else None
+def coverage_error(assets, project_id, project_number, aliases):
+    """Motivo por el que el listado no es del proyecto pedido, o None."""
+    own = {"projects/" + project_number, "projects/" + project_id}
+    foreign = sorted({str(a.get("project")) for a in assets if a.get("project") and str(a.get("project")) not in own})
+    if foreign:
+        return ("trae recursos de otros proyectos (%s): ¿listado de una carpeta, de la organización o de otro "
+                "proyecto?" % ", ".join(foreign[:5]))
+    listed = {canonical(normalize(a.get("name")), aliases) for a in assets if a.get("assetType") == PROJECT_ASSET_TYPE}
+    if "projects/" + project_number not in listed:
+        return ("no trae el proyecto %s (projects/%s): ¿listado de otro alcance, truncado o sin permisos?"
+                % (project_id, project_number))
+    return None
 
 
-def env_projects(states, folder):
-    """(project_id, número) de los google_project de los estados que están en la carpeta."""
-    want = folder_number(folder)
-    out = set()
-    for state in states:
-        for rtype, attrs in state_instances(state):
-            if (rtype == "google_project" and want is not None
-                    and folder_number(attrs.get("folder_id")) == want and attrs.get("number")):
-                out.add((str(attrs.get("project_id")), str(attrs["number"])))
-    return out
+def valid_project(project_id, project_number):
+    return (re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project_id or "") is not None
+            and re.fullmatch(r"[0-9]+", project_number or "") is not None)
 
 
 def main(argv=None):
     here = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(description="Recursos de Cloud Asset Inventory que no están en los estados de Terraform.")
-    parser.add_argument("--folder", required=True, help="folders/<N> o <N>: la carpeta listada")
+    parser.add_argument("--project", required=True, help="ID del proyecto listado")
+    parser.add_argument("--project-number", required=True, help="número del proyecto listado")
     parser.add_argument("--assets", required=True)
     parser.add_argument("--state", action="append", default=[], required=True)
     parser.add_argument("--allowlist", default=os.path.join(here, "unmanaged-allowlist.txt"))
     parser.add_argument("--summary")
     parser.add_argument("--report-only", action="store_true")
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
+    if not valid_project(args.project, args.project_number):
+        sys.stderr.write("ERROR: --project o --project-number no válidos: %r, %r\n" % (args.project, args.project_number))
+        return 2
     assets, error = read_assets(args.assets)
     if error:
         sys.stderr.write("ERROR: %s: %s\n" % (args.assets, error))
         return 2
     states = [load_json(p) for p in args.state]
-    managed, parents, mig_patterns, aliases = build_managed(states)
-    result = classify(assets, managed, parents, mig_patterns, aliases, load_allowlist(args.allowlist))
+    managed, parents, mig_patterns, aliases = build_managed(states, {args.project: args.project_number})
 
-    # Cobertura: todos los proyectos del entorno (los de los estados en --folder) tienen que
-    # estar en el listado. Un listado de otra carpeta, truncado o hecho sin permisos sobre algún
-    # proyecto daría si no "0 no administrados".
-    expected = env_projects(states, args.folder)
-    if not expected:
-        sys.stderr.write(
-            "ERROR: ningún proyecto de los estados está en %s: ¿carpeta equivocada o faltan los "
-            "estados de 4-projects?\n" % args.folder)
+    # Cobertura: el listado es del proyecto pedido, completo. Un listado de otro alcance,
+    # truncado o hecho sin permisos daría si no "0 no administrados".
+    error = coverage_error(assets, args.project, args.project_number, aliases)
+    if error:
+        sys.stderr.write("ERROR: %s: %s\n" % (args.assets, error))
         return 2
-    listed = {canonical(normalize(a.get("name")), aliases)
-              for a in assets if a.get("assetType") == PROJECT_ASSET_TYPE}
-    missing = sorted(pid for pid, number in expected if "projects/" + number not in listed)
-    if missing:
-        sys.stderr.write(
-            "ERROR: %s: faltan en el listado %d de %d proyectos de %s según los estados: %s "
-            "(¿listado de otra carpeta, truncado o sin permisos?)\n"
-            % (args.assets, len(missing), len(expected), args.folder, ", ".join(missing)))
-        return 2
+    result = classify(assets, managed, parents, mig_patterns, aliases, load_allowlist(args.allowlist),
+                      args.project_number)
 
     counts = {k: len(v) for k, v in result.items()}
     print("recursos en Cloud Asset: %d" % len(assets))
+    print("  el proyecto: %(project)d" % counts)
     print("  administrados por Terraform: %(managed)d" % counts)
     print("  hijos de un recurso administrado: %(child)d" % counts)
     print("  VM o discos de un MIG administrado: %(mig)d" % counts)

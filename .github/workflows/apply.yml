@@ -1,23 +1,27 @@
-# Despliegue de las etapas 1 → 5 al integrar en main (CONTRATO §9.3). Ver docs/pipeline.md.
+# Despliegue de las etapas 1 → 3 al integrar en main (CONTRATO §9.3, ADR 0029 §2). Ver
+# docs/pipeline.md.
 #
-# Orden (cada flecha espera a que el trabajo anterior termine con éxito):
-#   común:  1-org → 2-security → 3-networks (hub)                   entorno `common`
-#   dev:    3-networks/envs/dev → 4-projects/envs/dev → 5-workloads/envs/dev   entorno `dev`
-#           → prueba de humo de dev
-#   qa:     mismo encadenado, después de la prueba de humo de dev     entorno `qa`
-#   prod:   mismo encadenado, después de qa                           entorno `prod`
+# Orden (ADR 0029 §2; cada flecha espera a que el trabajo anterior termine con éxito):
+#   común:  1-base → 2-networks (hub)                                  entorno `common`
+#   dev:    2-networks/envs/dev → 3-workloads/envs/dev → prueba de humo   entorno `dev`
+#   qa:     2-networks/envs/qa → 3-workloads/envs/qa, después de la prueba de humo de dev
+#   prod:   2-networks/envs/prod → 3-workloads/envs/prod, después de qa  entorno `prod`
 #
-# Cada raíz llama a _terraform-root.yml: un trabajo `plan` sin entorno (plan, Conftest y
-# resumen del plan) y un trabajo `apply` en el entorno, solo si el plan tiene cambios. Las
-# reglas de protección del entorno (revisores) se cumplen antes del apply, con el resumen del
-# plan ya visible en la ejecución; el apply aplica exactamente el plan revisado (huella).
-# Sin cambios no hay apply ni pedido de aprobación.
+# Cada raíz llama a _terraform-root.yml: un trabajo `plan` sin entorno, con la cuenta de lectura
+# (GCP_AUDIT_SERVICE_ACCOUNT) y sin candado (plan, Conftest y resumen del plan), y un trabajo
+# `apply` en el entorno, con la cuenta de la raíz, solo si el plan tiene cambios. Las reglas de
+# protección del entorno (revisores) se cumplen antes del apply, con el resumen del plan ya
+# visible en la ejecución; el apply aplica exactamente el plan revisado (huella, ADR 0025). Sin
+# cambios no hay apply ni pedido de aprobación.
 #
-# Los spokes (3-networks/envs/<env>) quedan en serie por el encadenado entre entornos: GCP no
+# Llaves de GCP_STAGE_SERVICE_ACCOUNTS (salida stage_service_accounts de 0-bootstrap): 1-base,
+# 2-networks, 2-networks/<env> y 3-workloads/<env>. Cada cuenta de entorno solo acepta tokens
+# de su entorno de GitHub, y tf-base y tf-net solo de `common` (ADR 0029 §3).
+#
+# Los spokes (2-networks/envs/<env>) quedan en serie por el encadenado entre entornos: GCP no
 # admite dos operaciones de peering a la vez sobre la VPC hub.
 #
-# 0-bootstrap no está aquí: la aplica una persona administradora, una sola vez y a mano
-# (no tiene cuenta de servicio de pipeline, CONTRATO §6.1).
+# 0-bootstrap no está aquí: la aplica una persona, una sola vez y a mano (ADR 0029 §2).
 #
 # Entornos `common` y `prod`: el equipo debe configurar en GitHub (Settings → Environments) la
 # regla "Required reviewers". Eso no se puede declarar en YAML; sin esa regla se aplicarían sin
@@ -54,7 +58,7 @@ permissions:
 # queda en espera (GitHub conserva solo el más reciente en espera). Una ejecución que espera
 # una aprobación también retiene el grupo: los push siguientes quedan en espera detrás de ella
 # y solo el último sobrevive. Por eso conviene aprobar o rechazar pronto; el trabajo apply
-# vuelve a planear y rechaza el plan si cambió desde la revisión.
+# vuelve a planear y rechaza el plan si cambió desde la revisión. destroy.yml usa el mismo grupo.
 concurrency:
   group: apply-gcp-datacenter
   cancel-in-progress: false
@@ -74,13 +78,13 @@ jobs:
           elif [ "${REF}" != "refs/heads/main" ]; then
             echo "::warning::apply solo corre desde main (ref actual: ${REF}): no se aplica nada."
           else
-            echo "GCP_ENABLED=true en main: se aplican las etapas 1 a 5."
+            echo "GCP_ENABLED=true en main: se aplican las etapas 1 a 3."
           fi
 
   # --- Raíces comunes (entorno protegido `common`, con revisores) ------------------------
 
-  org:
-    name: 1-org
+  base:
+    name: 1-base
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: gate
     permissions:
@@ -88,40 +92,27 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/1-org
-      stage: 1-org
-      environment: common
-
-  security:
-    name: 2-security
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: org
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/_terraform-root.yml
-    with:
-      root: stages/2-security
-      stage: 2-security
+      root: stages/1-base
+      stage: 1-base
       environment: common
 
   networks-hub:
-    name: 3-networks (hub)
+    name: 2-networks (hub)
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: security
+    needs: base
     permissions:
       contents: read
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/3-networks
-      stage: 3-networks
+      root: stages/2-networks
+      stage: 2-networks
       environment: common
 
   # --- dev (entorno `dev`, sin revisores) -----------------------------------------------
 
   dev-networks:
-    name: dev / 3-networks
+    name: dev / 2-networks
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: networks-hub
     permissions:
@@ -129,12 +120,12 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/3-networks/envs/dev
-      stage: 3-networks
+      root: stages/2-networks/envs/dev
+      stage: 2-networks/dev
       environment: dev
 
-  dev-projects:
-    name: dev / 4-projects
+  dev-workloads:
+    name: dev / 3-workloads
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: dev-networks
     permissions:
@@ -142,25 +133,14 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/4-projects/envs/dev
-      stage: 4-projects
+      root: stages/3-workloads/envs/dev
+      stage: 3-workloads/dev
       environment: dev
 
-  dev-workloads:
-    name: dev / 5-workloads
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: dev-projects
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/_terraform-root.yml
-    with:
-      root: stages/5-workloads/envs/dev
-      stage: 5-workloads
-      environment: dev
-
-  # Prueba de humo de dev: qa no empieza si falla. Lee las salidas de las raíces de dev ya
-  # aplicadas y corre las Connectivity Tests de dev (tests/e2e, TestDevSmoke). No aplica nada.
+  # Prueba de humo de dev: qa no empieza si falla. Lee las salidas del hub y de las raíces de
+  # dev ya aplicadas y corre las Connectivity Tests de dev en el proyecto (tests/e2e,
+  # TestDevSmoke). No aplica nada. Cuenta de lectura (GCP_AUDIT_SERVICE_ACCOUNT, tf-read, con
+  # roles/networkmanagement.admin para las Connectivity Tests, ADR 0029 §3).
   # Solo se omite a pedido, en una ejecución manual con omitir_prueba_de_humo = true.
   dev-smoke:
     name: dev / prueba de humo
@@ -224,7 +204,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: Autenticar con Workload Identity Federation (cuenta de auditoría)
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
         if: env.SKIP_SMOKE != 'true'
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
@@ -253,7 +233,7 @@ jobs:
   # --- qa (después de la prueba de humo de dev) -----------------------------------------
 
   qa-networks:
-    name: qa / 3-networks
+    name: qa / 2-networks
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: dev-smoke
     permissions:
@@ -261,12 +241,12 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/3-networks/envs/qa
-      stage: 3-networks
+      root: stages/2-networks/envs/qa
+      stage: 2-networks/qa
       environment: qa
 
-  qa-projects:
-    name: qa / 4-projects
+  qa-workloads:
+    name: qa / 3-workloads
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: qa-networks
     permissions:
@@ -274,27 +254,14 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/4-projects/envs/qa
-      stage: 4-projects
-      environment: qa
-
-  qa-workloads:
-    name: qa / 5-workloads
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: qa-projects
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/_terraform-root.yml
-    with:
-      root: stages/5-workloads/envs/qa
-      stage: 5-workloads
+      root: stages/3-workloads/envs/qa
+      stage: 3-workloads/qa
       environment: qa
 
   # --- prod (después de qa; entorno protegido `prod`, con revisores) --------------------
 
   prod-networks:
-    name: prod / 3-networks
+    name: prod / 2-networks
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: qa-workloads
     permissions:
@@ -302,12 +269,12 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/3-networks/envs/prod
-      stage: 3-networks
+      root: stages/2-networks/envs/prod
+      stage: 2-networks/prod
       environment: prod
 
-  prod-projects:
-    name: prod / 4-projects
+  prod-workloads:
+    name: prod / 3-workloads
     if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
     needs: prod-networks
     permissions:
@@ -315,19 +282,6 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_terraform-root.yml
     with:
-      root: stages/4-projects/envs/prod
-      stage: 4-projects
-      environment: prod
-
-  prod-workloads:
-    name: prod / 5-workloads
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: prod-projects
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/_terraform-root.yml
-    with:
-      root: stages/5-workloads/envs/prod
-      stage: 5-workloads
+      root: stages/3-workloads/envs/prod
+      stage: 3-workloads/prod
       environment: prod

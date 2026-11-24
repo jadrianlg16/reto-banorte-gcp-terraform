@@ -17,27 +17,36 @@ import (
 
 // stage es una raíz de stages/ tal como la recorre la prueba.
 type stage struct {
-	Key     string // ruta bajo stages/ con barras, p. ej. "4-projects/envs/dev"
+	Key     string // ruta bajo stages/ con barras, p. ej. "3-workloads/envs/dev"
 	Account string // llave de stage_service_accounts ("" para 0-bootstrap)
 	Env     string // dev, qa o prod; "" para las raíces compartidas
 }
 
-// stagesInOrder devuelve las raíces 1 → 5 en el orden del contrato (§6.1, ADR 0011): las
-// compartidas primero y, en cada etapa por entorno, los entornos en el orden pedido.
+// Raíces del ADR 0029 §2 (rutas bajo stages/).
+const (
+	keyBootstrap = "0-bootstrap"
+	keyBase      = "1-base"
+	keyHub       = "2-networks"
+)
+
+// spokeKey y workloadsKey dan la raíz del spoke y la de las cargas de un entorno.
+func spokeKey(env string) string     { return "2-networks/envs/" + env }
+func workloadsKey(env string) string { return "3-workloads/envs/" + env }
+
+// stagesInOrder devuelve las raíces 1 → 3 en el orden de apply.yml (ADR 0029 §2): 1-base, el
+// hub y, por cada entorno en el orden pedido, su spoke y sus cargas. La cuenta de cada raíz es
+// la llave de stage_service_accounts de 0-bootstrap (1-base, 2-networks, 2-networks/<env>,
+// 3-workloads/<env>).
 func stagesInOrder(envs []string) []stage {
 	out := []stage{
-		{Key: "1-org", Account: "1-org"},
-		{Key: "2-security", Account: "2-security"},
-		{Key: "3-networks", Account: "3-networks"},
+		{Key: keyBase, Account: "1-base"},
+		{Key: keyHub, Account: "2-networks"},
 	}
-	for _, layer := range []struct{ dir, account string }{
-		{"3-networks", "3-networks"},
-		{"4-projects", "4-projects"},
-		{"5-workloads", "5-workloads"},
-	} {
-		for _, e := range envs {
-			out = append(out, stage{Key: layer.dir + "/envs/" + e, Account: layer.account, Env: e})
-		}
+	for _, e := range envs {
+		out = append(out,
+			stage{Key: spokeKey(e), Account: "2-networks/" + e, Env: e},
+			stage{Key: workloadsKey(e), Account: "3-workloads/" + e, Env: e},
+		)
 	}
 	return out
 }
@@ -50,36 +59,29 @@ type stageRun struct {
 
 // e2eRun reúne el estado de la corrida.
 type e2eRun struct {
-	t        *testing.T
-	root     string // gcp-datacenter/
-	cfg      e2eConfig
-	runID    string
-	varDir   string
-	bucket   string
-	accounts map[string]string
+	t             *testing.T
+	root          string // gcp-datacenter/
+	cfg           e2eConfig
+	runID         string
+	varDir        string
+	bucket        string
+	accounts      map[string]string
+	projectID     string // salida project_id de 0-bootstrap: el proyecto único
+	projectNumber string // salida project_number de 0-bootstrap
 }
 
 func (r *e2eRun) dir(key string) string {
 	return filepath.Join(r.root, "stages", filepath.FromSlash(key))
 }
 
-// injected devuelve lo que la prueba agrega a las variables de una raíz: el bucket de estado,
-// la cuenta de la etapa 5 para la etapa 4 y, solo en dev, los ajustes que permiten el destroy
-// (en qa y prod se dejan los valores por defecto, que lo impiden).
+// injected devuelve lo que la prueba agrega a las variables de una raíz: el bucket de estado
+// y, solo en las cargas de dev, deletion_protection = false para poder destruirlas (en qa y
+// prod se deja el valor por defecto, que lo impide). Ninguna raíz crea ni borra proyectos
+// (ADR 0029 §1): ya no hay deletion_policy de proyectos.
 func (r *e2eRun) injected(s stage) map[string]any {
 	in := map[string]any{"state_bucket": r.bucket}
-	if strings.HasPrefix(s.Key, "4-projects/") {
-		in["workloads_service_account"] = r.accounts["5-workloads"]
-	}
-	if s.Env == "dev" {
-		switch {
-		case strings.HasPrefix(s.Key, "3-networks/"):
-			in["project_deletion_policy"] = "DELETE"
-		case strings.HasPrefix(s.Key, "4-projects/"):
-			in["deletion_policy"] = "DELETE"
-		case strings.HasPrefix(s.Key, "5-workloads/"):
-			in["deletion_protection"] = false
-		}
+	if s.Env == "dev" && s.Key == workloadsKey("dev") {
+		in["deletion_protection"] = false
 	}
 	return in
 }
@@ -124,7 +126,7 @@ func (r *e2eRun) apply(ctx context.Context, s stage) *stageRun {
 func (r *e2eRun) bootstrap(ctx context.Context) *stageRun {
 	t := r.t
 	t.Helper()
-	s := stage{Key: "0-bootstrap"}
+	s := stage{Key: keyBootstrap}
 	dir := r.dir(s.Key)
 	vars := r.cfg.varsFor(s.Key, r.runID, nil)
 

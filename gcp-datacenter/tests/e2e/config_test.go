@@ -15,23 +15,24 @@ const (
 	envE2E              = "TEST_E2E"                  // "true" habilita la prueba
 	envConfig           = "TEST_E2E_CONFIG"           // ruta al JSON de variables (ver config.example.json)
 	envEnvs             = "TEST_E2E_ENVS"             // entornos a aplicar, separados por coma (por defecto "dev")
-	envEnforceDuration  = "TEST_E2E_ENFORCE_DURATION" // "true": falla si 0 → 5 tarda más de 90 min
+	envEnforceDuration  = "TEST_E2E_ENFORCE_DURATION" // "true": falla si 0 → 3 tarda más de 90 min
 	envStateBucket      = "TEST_E2E_STATE_BUCKET"     // etapa 0 ya arrancada: se salta el estado local
-	envImpersonate      = "TEST_E2E_IMPERSONATE"      // "true": etapas 1 a 5 con su cuenta de servicio
+	envImpersonate      = "TEST_E2E_IMPERSONATE"      // "true": etapas 1 a 3 con la cuenta de su raíz
 	envSkipDestroy      = "TEST_E2E_SKIP_DESTROY"     // "true": no destruye dev al final
+	envDestroyNetwork   = "TEST_E2E_DESTROY_NETWORK"  // "true": destruye también el spoke de dev (incluir_red)
 	envRunID            = "TEST_E2E_RUN_ID"           // ID de la corrida (etiqueta e2e_run); por defecto aleatorio
 	envConnectivityTest = "TEST_E2E_CONNECTIVITY"     // "false" omite las pruebas de conectividad
 )
 
-// runLabelKey es la etiqueta que la prueba agrega a todas las raíces; la búsqueda de huérfanos
-// de Cloud Asset filtra por ella.
+// runLabelKey es la etiqueta que la prueba agrega a todas las raíces, para reconocer en el
+// proyecto lo que creó cada corrida.
 const runLabelKey = "e2e_run"
 
 // e2eConfig es el JSON de TEST_E2E_CONFIG. common se mezcla en el archivo de variables de cada
 // raíz (las variables que una raíz no declara solo producen una advertencia de Terraform);
-// stages tiene, por raíz (ruta bajo stages/, con barras: "3-networks/envs/dev"), sus variables
+// stages tiene, por raíz (ruta bajo stages/, con barras: "2-networks/envs/dev"), sus variables
 // propias, que pisan a common. Lo que la prueba conoce por las salidas de otras etapas
-// (state_bucket, workloads_service_account) y los ajustes de destroy de dev los agrega ella.
+// (state_bucket) y los ajustes de destroy de dev los agrega ella.
 type e2eConfig struct {
 	Common map[string]any            `json:"common"`
 	Stages map[string]map[string]any `json:"stages"`

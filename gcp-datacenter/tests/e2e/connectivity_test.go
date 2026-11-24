@@ -46,7 +46,20 @@ func hostInCIDR(cidr string, n int) (string, error) {
 	return a.String(), nil
 }
 
-// appSourceIP devuelve una IP de la subred app de un spoke (salida subnets de 3-networks/envs).
+// projectFromSelfLink devuelve el proyecto de un self_link o nombre de recurso
+// (".../projects/<proyecto>/global/networks/<red>"). Todo vive en el proyecto único (ADR 0029):
+// el spoke ya no tiene salida host_project_id y el proyecto sale de su network_self_link.
+func projectFromSelfLink(link string) (string, error) {
+	parts := strings.Split(link, "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == "projects" && parts[i+1] != "" {
+			return parts[i+1], nil
+		}
+	}
+	return "", fmt.Errorf("sin proyecto en %q", link)
+}
+
+// appSourceIP devuelve una IP de la subred app de un spoke (salida subnets de 2-networks/envs).
 func appSourceIP(t *testing.T, ctx context.Context, spoke *stageRun) (string, error) {
 	subnets := terraform.OutputMapOfObjectsContext(t, ctx, spoke.opts, "subnets")
 	app, ok := subnets["app"].(map[string]any)
@@ -78,8 +91,8 @@ func optionalOutput(t *testing.T, ctx context.Context, opts *terraform.Options, 
 // describe --format=json`) está detenida y nil si no. Una instancia detenida conserva state
 // RUNNABLE ("running, or has been stopped by owner" en la referencia v1 de DatabaseInstance);
 // lo que la distingue es settings.activationPolicy NEVER. En dev y qa la detiene el apagado
-// fuera de horario (ADR 0028) y la prueba de humo no la enciende: la cuenta de auditoría es de
-// solo lectura y encenderla fuera de horario la dejaría prendida hasta el siguiente apagado.
+// fuera de horario (ADR 0028) y la prueba de humo no la enciende: la cuenta de lectura
+// (read_service_account de 0-bootstrap) no puede y encenderla fuera de horario la dejaría prendida hasta el siguiente apagado.
 func sqlStoppedError(inst map[string]any) error {
 	if helpers.PathString(inst, "settings.activationPolicy") != "NEVER" {
 		return nil
@@ -88,7 +101,7 @@ func sqlStoppedError(inst map[string]any) error {
 		"normalmente por el apagado fuera de horario (ADR 0028), y no se puede probar la conexión; "+
 		"la prueba de humo no la enciende. Vuelve a correr el trabajo (Re-run failed jobs) "+
 		"después de la hora de encendido, o enciéndela antes con el trabajo de Cloud Scheduler "+
-		"sql-primary-start (salida off_hours_shutdown.job_ids de 5-workloads/envs/dev: "+
+		"sql-primary-start (salida off_hours_shutdown.job_ids de 3-workloads/envs/dev: "+
 		"gcloud scheduler jobs run <id>) y vuelve a correrlo; ver docs/pipeline.md §1.2",
 		helpers.PathString(inst, "name"))
 }
@@ -120,42 +133,52 @@ func sqlPrivateIP(t *testing.T, ctx context.Context, conn string) (string, error
 // buildConnectivityChecks arma las pruebas que la configuración desplegada permite expresar.
 // Lo que exige una VM, DNS público o tráfico real queda como paso manual (tests/README.md).
 // Una salida en null por un recurso deshabilitado omite su prueba (queda en el registro); un
-// error al leer una salida o al describir un recurso habilitado falla la prueba.
+// error al leer una salida o al describir un recurso habilitado falla la prueba. Todas las
+// pruebas se crean en el proyecto único (ADR 0029), el de la red de dev.
+//
+// Salidas que lee: del hub (2-networks) onprem_sim_network_name; del spoke de dev
+// (2-networks/envs/dev) network_self_link y subnets; de las cargas de dev
+// (3-workloads/envs/dev) sql_instance_connection_name y lb_ip_address; del spoke de prod, si se
+// aplicó, network_self_link y subnets.
 func buildConnectivityChecks(t *testing.T, ctx context.Context, runs map[string]*stageRun, runID string) []connectivityCheck {
 	t.Helper()
 	var checks []connectivityCheck
 
-	hub := runs["3-networks"]
-	devNet := runs["3-networks/envs/dev"]
-	devWork := runs["5-workloads/envs/dev"]
+	hub := runs[keyHub]
+	devNet := runs[spokeKey("dev")]
+	devWork := runs[workloadsKey("dev")]
 	if hub == nil || devNet == nil {
-		t.Errorf("faltan las raíces 3-networks o 3-networks/envs/dev: no hay pruebas de conectividad")
+		t.Errorf("faltan las raíces %s o %s: no hay pruebas de conectividad", keyHub, spokeKey("dev"))
 		return nil
 	}
-	devHost := terraform.OutputContext(t, ctx, devNet.opts, "host_project_id")
 	devNetwork := terraform.OutputContext(t, ctx, devNet.opts, "network_self_link")
+	project, err := projectFromSelfLink(devNetwork)
+	if err != nil {
+		t.Errorf("network_self_link de %s: %v", spokeKey("dev"), err)
+		return nil
+	}
 	src, err := appSourceIP(t, ctx, devNet)
 	if err != nil {
 		t.Errorf("no se pudo elegir IP de origen en dev: %v", err)
 		return nil
 	}
-	srcArgs := []string{"--source-ip-address=" + src, "--source-network=" + devNetwork, "--source-project=" + devHost}
+	srcArgs := []string{"--source-ip-address=" + src, "--source-network=" + devNetwork, "--source-project=" + project}
 
 	if devWork != nil {
-		// 1) dev → Cloud SQL por IP privada (PSA). 5-workloads siempre crea la instancia.
+		// 1) dev → Cloud SQL por IP privada (PSA). 3-workloads siempre crea la instancia.
 		conn, ok, err := optionalOutput(t, ctx, devWork.opts, "sql_instance_connection_name")
 		switch {
 		case err != nil:
 			t.Errorf("dev → Cloud SQL: %v", err)
 		case !ok:
-			t.Errorf("dev → Cloud SQL: sql_instance_connection_name es null y 5-workloads siempre crea la instancia")
+			t.Errorf("dev → Cloud SQL: sql_instance_connection_name es null y 3-workloads siempre crea la instancia")
 		default:
 			if ip, err := sqlPrivateIP(t, ctx, conn); err != nil {
 				t.Errorf("dev → Cloud SQL: %v", err)
 			} else {
 				checks = append(checks, connectivityCheck{
 					name:    "e2e-" + runID + "-dev-sql",
-					project: devHost,
+					project: project,
 					args: append(append([]string{}, srcArgs...),
 						"--destination-ip-address="+ip, "--destination-port=5432", "--protocol=TCP"),
 					expect:    expectReachable,
@@ -174,7 +197,7 @@ func buildConnectivityChecks(t *testing.T, ctx context.Context, runs map[string]
 		default:
 			checks = append(checks, connectivityCheck{
 				name:    "e2e-" + runID + "-internet-lb",
-				project: devHost,
+				project: project,
 				// Origen público de documentación (RFC 5737): el análisis no envía tráfico.
 				args:      []string{"--source-ip-address=203.0.113.10", "--destination-ip-address=" + ip, "--destination-port=443", "--protocol=TCP"},
 				expect:    expectReachable,
@@ -185,6 +208,7 @@ func buildConnectivityChecks(t *testing.T, ctx context.Context, runs map[string]
 
 	// 3) dev → on-premises (VPC onprem-sim por la HA VPN del hub). El firewall de onprem-sim
 	// puede descartar el paquete; lo que se exige es que la ruta exista (pendiente 6 de §12).
+	// La VPC onprem-sim vive en el mismo proyecto que todo lo demás (ADR 0029).
 	sim, ok, err := optionalOutput(t, ctx, hub.opts, "onprem_sim_network_name")
 	switch {
 	case err != nil:
@@ -192,33 +216,31 @@ func buildConnectivityChecks(t *testing.T, ctx context.Context, runs map[string]
 	case !ok:
 		t.Logf("dev → on-premises: omitida, onprem_sim_network_name es null (simulate_onprem = false)")
 	default:
-		hubProject := terraform.OutputContext(t, ctx, hub.opts, "hub_project_id")
 		onpremIP := helpers.Getenv("TEST_E2E_ONPREM_IP", "192.168.0.10")
 		checks = append(checks, connectivityCheck{
 			name:    "e2e-" + runID + "-dev-onprem",
-			project: devHost,
+			project: project,
 			args: append(append([]string{}, srcArgs...),
 				"--destination-ip-address="+onpremIP, "--destination-port=22", "--protocol=TCP",
-				"--destination-network=projects/"+hubProject+"/global/networks/"+sim,
-				"--destination-project="+hubProject),
+				"--destination-network=projects/"+project+"/global/networks/"+sim,
+				"--destination-project="+project),
 			expect:    expectRouted,
 			rationale: "las rutas BGP del hub llegan al spoke por el peering (sin descarte por ruta)",
 		})
 	}
 
 	// 4) dev → prod: sin peering entre spokes (ADR 0003), no debe ser alcanzable.
-	if prodNet := runs["3-networks/envs/prod"]; prodNet != nil {
+	if prodNet := runs[spokeKey("prod")]; prodNet != nil {
 		if dst, err := appSourceIP(t, ctx, prodNet); err != nil {
 			t.Errorf("dev → prod: no se pudo elegir IP de destino en prod: %v", err)
 		} else {
-			prodHost := terraform.OutputContext(t, ctx, prodNet.opts, "host_project_id")
 			checks = append(checks, connectivityCheck{
 				name:    "e2e-" + runID + "-dev-prod",
-				project: devHost,
+				project: project,
 				args: append(append([]string{}, srcArgs...),
 					"--destination-ip-address="+dst, "--destination-port=22", "--protocol=TCP",
 					"--destination-network="+terraform.OutputContext(t, ctx, prodNet.opts, "network_self_link"),
-					"--destination-project="+prodHost),
+					"--destination-project="+project),
 				expect:    expectNotReachable,
 				rationale: "los entornos están aislados por la red: no hay peering entre spokes (ADR 0003)",
 			})

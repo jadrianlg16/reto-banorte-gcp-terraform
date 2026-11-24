@@ -1,22 +1,26 @@
-# Detección diaria de drift (CONTRATO §9.3). Ver docs/pipeline.md.
+# Detección diaria de drift (CONTRATO §9.3, ADR 0029). Ver docs/pipeline.md.
 #
-# Por cada raíz de stages/ salvo 0-bootstrap: terraform plan -detailed-exitcode -lock=false
-# con la cuenta de servicio de la etapa (Workload Identity Federation, sin llaves).
+# Por cada raíz de stages/ salvo 0-bootstrap (scripts/affected-roots.sh --all):
+# terraform plan -detailed-exitcode -lock=false con la cuenta de lectura
+# (GCP_AUDIT_SERVICE_ACCOUNT, salida read_service_account de 0-bootstrap; Workload Identity
+# Federation, sin llaves). Las cuentas que escriben solo aceptan tokens de su entorno de GitHub y
+# estos trabajos no tienen entorno (ADR 0029 §3).
 #   código 0  sin cambios: no hace nada.
 #   código 2  drift: abre una incidencia con la etiqueta `drift` para esa raíz o, si ya hay
 #             una abierta, actualiza su cuerpo y agrega un comentario.
 #   código 1  error: el trabajo falla.
-# -lock=false: el plan no escribe estado, así que no bloquea ni espera a un apply en curso.
+# -lock=false: la cuenta de lectura no puede escribir el candado y el plan no escribe estado,
+# así que no bloquea ni espera a un apply en curso.
 #
 # La incidencia lleva solo las direcciones de los recursos y la línea "Plan:", no el plan
 # completo: las incidencias de un repositorio público las ve cualquiera.
 #
 # Recursos no administrados (objetivo "cero recursos manuales", verificado con Cloud Asset
-# Inventory): por cada carpeta de 1-org (common, dev, qa, prod), lista con Cloud Asset los recursos de su
-# carpeta y los compara con todos los estados del bucket (scripts/unmanaged-resources.py).
+# Inventory): lista con Cloud Asset los recursos del proyecto (salida project_id de
+# 0-bootstrap) y los compara con todos los estados del bucket (scripts/unmanaged-resources.py).
 # Falla si hay recursos que ningún estado administra y los lista en el resumen. El drift de
 # arriba no los ve: un recurso creado a mano fuera de Terraform no cambia ningún plan.
-# Identidad: GCP_AUDIT_SERVICE_ACCOUNT (solo lectura; docs/pipeline.md §2).
+# Identidad: la misma cuenta de lectura (docs/pipeline.md §2).
 #
 # Sin GCP: mientras GCP_ENABLED no sea "true", el flujo no hace nada y termina en verde.
 
@@ -55,19 +59,7 @@ jobs:
 
       - id: roots
         name: Listar raíces (sin 0-bootstrap)
-        run: |
-          # Misma definición de raíz que scripts/affected-roots.sh: directorio con versions.tf.
-          json="["
-          sep=""
-          while IFS= read -r r; do
-            stage="${r#stages/}"
-            stage="${stage%%/*}"
-            json="${json}${sep}{\"root\":\"${r}\",\"stage\":\"${stage}\"}"
-            sep=","
-          done < <(find stages -name versions.tf -type f -not -path '*/.terraform/*' |
-            sed 's#/versions\.tf$##' | LC_ALL=C sort | grep -v -E '^stages/0-bootstrap(/|$)')
-          json="${json}]"
-          echo "roots=${json}" | tee -a "${GITHUB_OUTPUT}"
+        run: bash scripts/affected-roots.sh --all | tee -a "${GITHUB_OUTPUT}"
 
   plan:
     name: drift ${{ matrix.root }}
@@ -87,16 +79,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "${GCP_AUDIT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Falta la variable de repositorio GCP_AUDIT_SERVICE_ACCOUNT (salida read_service_account de 0-bootstrap, docs/pipeline.md §2)."
+            exit 1
+          fi
+
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: Autenticar con Workload Identity Federation
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[matrix.stage] }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
 
       - name: Variables de la raíz
         env:
@@ -195,20 +196,14 @@ jobs:
             }
 
   unmanaged:
-    name: recursos no administrados (${{ matrix.env }})
+    name: recursos no administrados (proyecto)
     if: vars.GCP_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        # common: proyectos del hub de red, seguridad, registros y respaldo (1-org).
-        env: [common, dev, qa, prod]
     env:
-      ENV_NAME: ${{ matrix.env }}
       STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -228,7 +223,7 @@ jobs:
             exit 1
           fi
 
-      - name: Autenticar con Workload Identity Federation (cuenta de auditoría)
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -238,7 +233,8 @@ jobs:
 
       # Los estados crudos llevan valores sensibles: quedan en la carpeta temporal del runner y
       # no se suben como artefacto.
-      - name: Descargar los estados del bucket
+      - name: Descargar los estados del bucket y leer el proyecto (salidas de 0-bootstrap)
+        id: project
         run: |
           dir="${RUNNER_TEMP}/states"
           mkdir -p "${dir}"
@@ -248,34 +244,39 @@ jobs:
             gcloud storage cp --quiet "${url}" "${dir}/${name}"
           done < "${RUNNER_TEMP}/state-list.txt"
           ls "${dir}"
-          [ -f "${dir}/1-org_default.tfstate" ] || {
-            echo "::error::No está el estado de 1-org (gs://${STATE_BUCKET}/1-org/default.tfstate)."
-            exit 1
-          }
-
-      - name: Listar la carpeta del entorno con Cloud Asset
-        run: |
-          folder="$(jq -r --arg e "${ENV_NAME}" '.outputs.folder_ids.value[$e] // empty' "${RUNNER_TEMP}/states/1-org_default.tfstate")"
-          if [ -z "${folder}" ]; then
-            echo "::error::La salida folder_ids de 1-org no tiene la carpeta ${ENV_NAME}."
+          boot="${dir}/0-bootstrap_default.tfstate"
+          project="$(jq -r '.outputs.project_id.value // empty' "${boot}" 2>/dev/null || true)"
+          number="$(jq -r '.outputs.project_number.value // empty' "${boot}" 2>/dev/null || true)"
+          if [ -z "${project}" ] || [ -z "${number}" ]; then
+            echo "::error::El estado de 0-bootstrap (gs://${STATE_BUCKET}/0-bootstrap/default.tfstate) no está o no tiene las salidas project_id y project_number."
             exit 1
           fi
-          echo "Carpeta de ${ENV_NAME}: ${folder}"
-          # VERIFICAR-EN-APPLY: cuota de la API cloudasset con la cuenta de auditoría.
-          gcloud asset search-all-resources --scope="${folder}" --format=json > "${RUNNER_TEMP}/assets.json"
+          echo "Proyecto: ${project} (${number})"
+          echo "project=${project}" >> "${GITHUB_OUTPUT}"
+          echo "number=${number}" >> "${GITHUB_OUTPUT}"
+
+      - name: Listar el proyecto con Cloud Asset
+        env:
+          PROJECT_ID: ${{ steps.project.outputs.project }}
+        run: |
+          # VERIFICAR-EN-APPLY: cuota de la API cloudasset con la cuenta de lectura y que el
+          # listado traiga el proyecto mismo con --scope=projects/<ID>.
+          gcloud asset search-all-resources --scope="projects/${PROJECT_ID}" --format=json > "${RUNNER_TEMP}/assets.json"
 
       - name: Comparar con los estados
+        env:
+          PROJECT_ID: ${{ steps.project.outputs.project }}
+          PROJECT_NUMBER: ${{ steps.project.outputs.number }}
         run: |
-          # Con --folder, el script exige que todos los proyectos del entorno (los de los estados
-          # en esa carpeta) estén en el listado; si no, sale con 2 (docs/pipeline.md §1.3).
-          folder="$(jq -r --arg e "${ENV_NAME}" '.outputs.folder_ids.value[$e] // empty' "${RUNNER_TEMP}/states/1-org_default.tfstate")"
+          # El script exige que el listado sea del proyecto (lo trae y no trae recursos de otro
+          # proyecto); si no, sale con 2 (docs/pipeline.md §1.3).
           args=()
           for s in "${RUNNER_TEMP}"/states/*; do
             args+=(--state "${s}")
           done
           {
-            echo "### Recursos no administrados: ${ENV_NAME}"
+            echo "### Recursos no administrados del proyecto ${PROJECT_ID}"
             echo
           } >> "${GITHUB_STEP_SUMMARY}"
-          python3 scripts/unmanaged-resources.py --folder "${folder}" --assets "${RUNNER_TEMP}/assets.json" "${args[@]}" \
-            --summary "${GITHUB_STEP_SUMMARY}"
+          python3 scripts/unmanaged-resources.py --project "${PROJECT_ID}" --project-number "${PROJECT_NUMBER}" \
+            --assets "${RUNNER_TEMP}/assets.json" "${args[@]}" --summary "${GITHUB_STEP_SUMMARY}"

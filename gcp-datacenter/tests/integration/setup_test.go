@@ -1,7 +1,8 @@
 // Package integration contiene las pruebas de integración de los módulos (contrato §9.2):
-// cada prueba crea lo que necesita en un proyecto efímero, aplica un fixture de
-// tests/fixtures/<módulo>/ que llama al módulo con entradas de forma real, comprueba las
-// exigencias del módulo (§8) en las salidas y en la API de GCP, y destruye todo al final.
+// cada prueba crea lo que necesita en el proyecto único de pruebas (TERRATEST_PROJECT_ID, o en
+// uno efímero con TEST_EPHEMERAL_PROJECTS=true), aplica un fixture de tests/fixtures/<módulo>/
+// que llama al módulo con entradas de forma real, comprueba las exigencias del módulo (§8) en
+// las salidas y en la API de GCP, y destruye todo al final.
 //
 // Estado al 21 nov 2026: escritas y compiladas, nunca ejecutadas (no hay acceso a GCP).
 package integration
@@ -21,8 +22,9 @@ var baseAPIs = []string{
 }
 
 // moduleTest prepara una prueba de módulo: la marca como paralela, la omite si no hay con qué
-// obtener un proyecto, crea los identificadores de la ejecución y el proyecto con las APIs
-// dadas (más baseAPIs). El proyecto se destruye con t.Cleanup al final de la prueba.
+// obtener un proyecto, crea los identificadores de la ejecución y prepara el proyecto con las
+// APIs dadas (más baseAPIs). Un proyecto efímero se destruye con t.Cleanup al final de la
+// prueba; el proyecto único se conserva.
 func moduleTest(t *testing.T, module string, apis ...string) (helpers.Run, helpers.TestProject) {
 	t.Helper()
 	t.Parallel()
