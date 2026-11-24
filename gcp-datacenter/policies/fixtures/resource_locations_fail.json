@@ -1,0 +1,274 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "variables": {
+    "primary_region": {
+      "value": "europe-west1"
+    }
+  },
+  "planned_values": {
+    "root_module": {
+      "resources": [],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.storage.google_storage_bucket.this",
+              "mode": "managed",
+              "type": "google_storage_bucket",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "name": "bnt-dev-data-app-ase1",
+                "project": "example-project",
+                "location": "ASIA-EAST1",
+                "storage_class": "STANDARD",
+                "force_destroy": false,
+                "uniform_bucket_level_access": true,
+                "public_access_prevention": "enforced",
+                "labels": {
+                  "env": "dev",
+                  "app": "app",
+                  "owner": "plataforma",
+                  "cost_center": "ti-001",
+                  "managed_by": "terraform"
+                },
+                "terraform_labels": {
+                  "env": "dev",
+                  "app": "app",
+                  "owner": "plataforma",
+                  "cost_center": "ti-001",
+                  "managed_by": "terraform"
+                },
+                "versioning": [
+                  {
+                    "enabled": true
+                  }
+                ],
+                "custom_placement_config": []
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.storage"
+        },
+        {
+          "resources": [
+            {
+              "address": "module.spoke.google_compute_subnetwork.this[\"app\"]",
+              "mode": "managed",
+              "type": "google_compute_subnetwork",
+              "name": "this",
+              "index": "app",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "name": "bnt-dev-net-app-euw1",
+                "region": "europe-west1",
+                "ip_cidr_range": "10.10.0.0/24",
+                "private_ip_google_access": true
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.spoke.google_compute_router.this[\"primary\"]",
+              "mode": "managed",
+              "type": "google_compute_router",
+              "name": "this",
+              "index": "primary",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "name": "bnt-dev-net-spoke-router-euw1"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.spoke"
+        },
+        {
+          "resources": [
+            {
+              "address": "module.kms[\"dev/asia\"].google_kms_key_ring.this",
+              "mode": "managed",
+              "type": "google_kms_key_ring",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "name": "bnt-dev-sec-kr-asia",
+                "location": "asia"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.kms[\"dev/asia\"]"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "module.storage.google_storage_bucket.this",
+      "module_address": "module.storage",
+      "mode": "managed",
+      "type": "google_storage_bucket",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-data-app-ase1",
+          "project": "example-project",
+          "location": "ASIA-EAST1",
+          "storage_class": "STANDARD",
+          "force_destroy": false,
+          "uniform_bucket_level_access": true,
+          "public_access_prevention": "enforced",
+          "labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "terraform_labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "versioning": [
+            {
+              "enabled": true
+            }
+          ],
+          "custom_placement_config": []
+        },
+        "after_unknown": {
+          "id": true,
+          "self_link": true,
+          "url": true,
+          "effective_labels": true,
+          "project_number": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.spoke.google_compute_subnetwork.this[\"app\"]",
+      "module_address": "module.spoke",
+      "mode": "managed",
+      "type": "google_compute_subnetwork",
+      "name": "this",
+      "index": "app",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "name": "bnt-dev-net-app-euw1",
+          "region": "europe-west1",
+          "ip_cidr_range": "10.10.0.0/24",
+          "private_ip_google_access": true
+        },
+        "after_unknown": {
+          "id": true,
+          "network": true,
+          "self_link": true,
+          "gateway_address": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.kms[\"dev/asia\"].google_kms_key_ring.this",
+      "module_address": "module.kms[\"dev/asia\"]",
+      "mode": "managed",
+      "type": "google_kms_key_ring",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "name": "bnt-dev-sec-kr-asia",
+          "location": "asia"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.spoke.google_compute_router.this[\"primary\"]",
+      "module_address": "module.spoke",
+      "mode": "managed",
+      "type": "google_compute_router",
+      "name": "this",
+      "index": "primary",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "name": "bnt-dev-net-spoke-router-euw1"
+        },
+        "after_unknown": {
+          "id": true,
+          "network": true,
+          "region": true,
+          "self_link": true,
+          "creation_timestamp": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0",
+        "expressions": {
+          "project": {
+            "constant_value": "example-project"
+          },
+          "region": {
+            "references": [
+              "var.primary_region"
+            ]
+          }
+        }
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-24T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

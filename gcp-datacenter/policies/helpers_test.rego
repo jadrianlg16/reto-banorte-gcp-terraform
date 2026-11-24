@@ -8,6 +8,9 @@ mk_plan(changes) := {
 	"resource_changes": changes,
 }
 
+# Plan con variables de la raíz, en la forma de `terraform show -json`: {nombre: {"value": v}}.
+mk_plan_vars(changes, vars) := object.union(mk_plan(changes), {"variables": {name: {"value": value} | some name, value in vars}})
+
 mk_change(address, type, actions, after, unknown) := {
 	"address": address,
 	"mode": "managed",
