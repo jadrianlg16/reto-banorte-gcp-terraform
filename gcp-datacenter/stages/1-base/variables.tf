@@ -139,10 +139,20 @@ variable "artifact_registry_publishers" {
 }
 
 variable "binary_authorization_allowlist_patterns" {
-  description = "Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado). Globales: valen para todos los clústeres y Cloud Run."
+  description = "Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado), con la forma <registro>/<ruta>[/*|/**|*]: comodines solo al final, * al final del nombre o después de una /, ** solo después de una /. Globales: valen para todos los clústeres y Cloud Run."
   type        = list(string)
   default     = []
   nullable    = false
+
+  validation {
+    # Registro con al menos un segmento de ruta antes de cualquier comodín: nada de "*" solo ni
+    # de un registro entero (gcr.io/*), y ** solo después de / para no cubrir otros proyectos.
+    condition = alltrue([
+      for p in var.binary_authorization_allowlist_patterns :
+      can(regex("^[a-z0-9.-]+\\.[a-z]{2,}(:[0-9]+)?/[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*(/\\*\\*|/\\*|\\*)?$", p))
+    ])
+    error_message = "Cada patrón debe ser <registro>/<ruta>[/*|/**|*]: con al menos un segmento de ruta, sin comodines en medio, * al final del nombre o después de / y ** solo después de /."
+  }
 }
 
 variable "binary_authorization_attestors" {
