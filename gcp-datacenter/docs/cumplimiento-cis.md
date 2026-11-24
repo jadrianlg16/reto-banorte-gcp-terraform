@@ -42,7 +42,9 @@ el 23 nov 2026 con el diseño de varios proyectos y se rehízo el 24 nov 2026 co
 proyecto único (commit `61b01b9`): cambian las rutas, lo que dependía de la organización y los
 controles de auditoría. El mismo día se actualizó con el código de `6d27623` (arreglos de R2):
 las cuentas de ejecución pasan a `1-base`, y las políticas de organización y el perímetro de
-VPC-SC a `0-bootstrap`, que aplica la persona. Para el mapa no se corrieron checkov, Conftest ni
+VPC-SC a `0-bootstrap`, que aplica la persona. Después, con el código de `a3d1f62` (re-revisión
+de seguridad, r2/seg2, y r3/cierre), cambian las filas 1.5 y 1.8 (regla 4 de la denegación) y
+1.6 (rol del apagado condicionado). Para el mapa no se corrieron checkov, Conftest ni
 `terraform`. Lo que
 solo se comprueba en GCP está en los pendientes de §5.6. Los conteos de §4 salen de un script
 sobre las tablas de §3, no a mano.
@@ -84,10 +86,10 @@ organización, no se cumplen.
 | 1.2 | 1.1 · `NON_ORG_IAM_MEMBER` | Credenciales corporativas | Con organización, `iam.allowedPolicyMemberDomains` = `directory_customer_id`. Sin ella no hay dominio corporativo que exigir. Refuerzos que valen siempre: `modules/iam/variables.tf` rechaza `user:`, `domain:`, `allUsers` y `allAuthenticatedUsers`; Conftest `policies/iam_user_principal.rego`. | **Solo con organización** |
 | 1.3 | 1.2 · `MFA_NOT_ENFORCED` | MFA en cuentas que no son de servicio | Fuera de Terraform (Cloud Identity). Runbook 01, punto B: 2SV obligatoria en la unidad organizativa raíz. | **Solo con organización** |
 | 1.4 | 1.3 · — | Llaves de seguridad para administradores | Runbook 01, punto B: método "Only security key" para las cuentas administradoras. | **Solo con organización** |
-| 1.5 | 1.4 · `USER_MANAGED_SERVICE_ACCOUNT_KEY` | Solo llaves administradas por GCP | El pipeline entra por WIF (`stages/0-bootstrap/wif.tf`); ningún `google_service_account_key` en el repositorio; la política de denegación del proyecto niega `serviceAccountKeys.create` a las nueve cuentas del pipeline (`stages/0-bootstrap/deny_policy.tf`, `untagged_denied_permissions`). Con organización, además `iam.disableServiceAccountKeyCreation`. Sin ella, la persona dueña del proyecto sí puede crear llaves. | **Código** (parcial) |
-| 1.6 | 1.5 · `ADMIN_SERVICE_ACCOUNT` | Cuentas de servicio sin privilegios de administrador | Las cuentas `<prefix>-tf-*` reciben roles cuyo ID contiene "admin" (`stages/0-bootstrap/service_accounts.tf`, `base_roles`, `hub_roles`, `net_env_roles` y `workloads_roles`), algunos con condición. Las cuentas de ejecución que crea `1-base` solo tienen roles de telemetría, Cloud SQL condicionado y el rol del apagado (`stages/1-base/runtime_accounts.tf`). Ya no quedan como owner de ningún proyecto: no crean proyectos. `modules/iam/variables.tf` prohíbe asignar `roles/owner` y `roles/editor`. Desviación aceptada en el ADR 0027. | **Desviación** |
-| 1.7 | 1.6 · `OVER_PRIVILEGED_SERVICE_ACCOUNT_USER` | Sin Service Account User ni Token Creator en el proyecto | Ninguna raíz asigna `roles/iam.serviceAccountUser` ni `roles/iam.serviceAccountTokenCreator` en el proyecto (búsqueda en `stages/` y `modules/`, 24 nov 2026). Desde el 24 nov 2026 (r2/identidad) `1-base` crea las cuentas de ejecución y le da a `tf-wl-<env>` `serviceAccountUser` solo sobre las de su entorno que adjunta (`google_service_account_iam_member`, `stages/1-base/runtime_accounts.tf:217`); `tf-net` lo recibe solo sobre la cuenta de la VM DNS opcional (`stages/1-base/onprem_dns.tf`). La concesión delegada de `tf-base` no admite esos roles (`runtime_grantable_roles`, `stages/0-bootstrap/service_accounts.tf:111`) y `tf-wl-<env>` ya no tiene `projectIamAdmin`. Pendientes 131 a 135. | **Código** |
-| 1.8 | 1.7 · `SERVICE_ACCOUNT_KEY_NOT_ROTATED` | Rotación de llaves de usuario ≤ 90 días | Igual que 1.5: las cuentas del pipeline no pueden crear llaves; con organización, ninguna cuenta. | **Código** (parcial) |
+| 1.5 | 1.4 · `USER_MANAGED_SERVICE_ACCOUNT_KEY` | Solo llaves administradas por GCP | El pipeline entra por WIF (`stages/0-bootstrap/wif.tf`); ningún `google_service_account_key` en el repositorio. Desde la re-revisión de seguridad (r2/seg2), la regla 4 de la política de denegación del proyecto niega `iam.googleapis.com/serviceAccountKeys.create` a `principalSet://goog/public:all`, sin excepción: nadie crea llaves de cuentas de servicio, tampoco la persona dueña ni `tf-base` (`stages/0-bootstrap/deny_policy.tf`, `key_denied_permissions`; ADR 0029 §5; pendiente 155). La regla no usa la etiqueta, pero solo existe con `enable_deny_policy = true` (por defecto). La persona con `roles/iam.denyAdmin` puede quitarla si alguna vez necesita una llave. Con organización, además `iam.disableServiceAccountKeyCreation`. Que la regla impida también subir una llave pública propia es HYPOTHESIS: la [página de subida de llaves](https://docs.cloud.google.com/iam/docs/keys-upload) pide `roles/iam.serviceAccountKeyAdmin` sin nombrar el permiso, y con organización lo bloquea `iam.disableServiceAccountKeyUpload`, que `modules/org` no aplica. | **Código** (parcial) |
+| 1.6 | 1.5 · `ADMIN_SERVICE_ACCOUNT` | Cuentas de servicio sin privilegios de administrador | Las cuentas `<prefix>-tf-*` reciben roles cuyo ID contiene "admin" (`stages/0-bootstrap/service_accounts.tf`, `base_roles`, `hub_roles`, `net_env_roles` y `workloads_roles`), algunos con condición. Las cuentas de ejecución que crea `1-base` solo tienen roles de telemetría, y Cloud SQL y el rol del apagado condicionados a su entorno (`stages/1-base/runtime_accounts.tf`). Ya no quedan como owner de ningún proyecto: no crean proyectos. `modules/iam/variables.tf` prohíbe asignar `roles/owner` y `roles/editor`. Desviación aceptada en el ADR 0027. | **Desviación** |
+| 1.7 | 1.6 · `OVER_PRIVILEGED_SERVICE_ACCOUNT_USER` | Sin Service Account User ni Token Creator en el proyecto | Ninguna raíz asigna `roles/iam.serviceAccountUser` ni `roles/iam.serviceAccountTokenCreator` en el proyecto (búsqueda en `stages/` y `modules/`, 24 nov 2026). Desde el 24 nov 2026 (r2/identidad) `1-base` crea las cuentas de ejecución y le da a `tf-wl-<env>` `serviceAccountUser` solo sobre las de su entorno que adjunta (`google_service_account_iam_member`, `stages/1-base/runtime_accounts.tf:266`); `tf-net` lo recibe solo sobre la cuenta de la VM DNS opcional (`stages/1-base/onprem_dns.tf`). La concesión delegada de `tf-base` no admite esos roles (`runtime_grantable_roles`, `stages/0-bootstrap/service_accounts.tf:168`) y `tf-wl-<env>` ya no tiene `projectIamAdmin`. Pendientes 131 a 135. | **Código** |
+| 1.8 | 1.7 · `SERVICE_ACCOUNT_KEY_NOT_ROTATED` | Rotación de llaves de usuario ≤ 90 días | Igual que 1.5: con la regla 4 de la denegación nadie crea llaves de cuentas de servicio en el proyecto, así que no hay llaves que rotar; queda la HYPOTHESIS de las llaves subidas. | **Código** (parcial) |
 | 1.9 | 1.8 · `SERVICE_ACCOUNT_ROLE_SEPARATION` | Separación de funciones en roles de cuentas de servicio | Ninguna persona recibe `serviceAccountAdmin` ni `serviceAccountUser` (los grupos solo tienen lectura, `stages/1-base/iam.tf`). Desde el 24 nov 2026 ninguna cuenta junta los dos en el proyecto: `tf-base` administra las cuentas (`<prefix>TfServiceAccountManager`, sin condición) y `tf-wl-<env>` solo las usa (`serviceAccountUser` sobre las de su entorno, 1.7). Con `iam.serviceAccounts.setIamPolicy`, `tf-base` podría darse `serviceAccountUser` sobre una cuenta de ejecución. | **Código** (parcial) |
 | 1.10 | 1.9 · `KMS_PUBLIC_KEY` | Llaves KMS no públicas | Las validaciones de `modules/kms/variables.tf` (`encrypter_decrypters`) y `modules/iam/variables.tf` rechazan `allUsers` y `allAuthenticatedUsers`; checkov CKV_GCP_112. Con organización, además `iam.allowedPolicyMemberDomains`. | **Código** |
 | 1.11 | 1.10 · `KMS_KEY_NOT_ROTATED` | Rotación de llaves KMS ≤ 90 días | Todas las llaves salen de `modules/kms` (`google_kms_crypto_key.this`, `rotation_period` validado entre 1 y 90 días en `modules/kms/variables.tf`; `key_rotation_period = "7776000s"` por defecto en `stages/1-base/variables.tf`); Conftest `policies/kms_rotation.rego`; checkov CKV_GCP_43. | **Código** |
@@ -220,7 +222,7 @@ Las banderas están en bloques `database_flags` fijos de la primaria y la répli
 | 8 Dataproc | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
 | **Total** | **49** | **0** | **1** | **10** | **24** | **9** | **0** | **93** |
 
-Conteo del 24 nov 2026 (código de `6d27623`) con un script de Python (fuera del repositorio) que
+Conteo del 24 nov 2026 (código de `a3d1f62`; sin cambios de estado respecto del de `6d27623`) con un script de Python (fuera del repositorio) que
 toma la última columna de cada fila de §3 cuyo primer campo es un ID, le quita `**` y
 "(parcial)" y suma por sección; no se contó a mano.
 
@@ -289,9 +291,13 @@ Las mismas políticas refuerzan filas que ya tienen control en el código (1.5, 
 
 ### 5.3 Otros límites de filas cubiertas
 
-- **1.5 y 1.8** (Código, parcial): la denegación de `serviceAccountKeys.create` solo alcanza a
-  las nueve cuentas del pipeline; la persona dueña del proyecto puede crear llaves. Con
-  organización lo cierra `iam.disableServiceAccountKeyCreation`.
+- **1.5 y 1.8** (Código, parcial): desde la re-revisión de seguridad la regla 4 de la
+  denegación niega `serviceAccountKeys.create` a todos (`principalSet://goog/public:all`),
+  también a la persona dueña del proyecto (pendiente 155). Quedan parciales por dos razones: la
+  regla solo existe con `enable_deny_policy = true`, y que también impida subir una llave
+  pública es HYPOTHESIS (la documentación no nombra el permiso de la subida). Con organización,
+  `iam.disableServiceAccountKeyCreation` refuerza la creación; la subida la bloquearía
+  `iam.disableServiceAccountKeyUpload`, que `modules/org` no aplica.
 - **1.9** (Código, parcial): ninguna cuenta junta administración y uso de cuentas de servicio en
   el proyecto, pero `tf-base` administra el IAM de las cuentas de ejecución sin condición y
   podría darse `serviceAccountUser` sobre una de ellas. Lo frena la revisión del plan (ADR 0025).
@@ -309,7 +315,7 @@ Ninguno desde el 24 nov 2026. El único era **1.7**: `roles/iam.serviceAccountUs
 `tf-wl-<env>` en el proyecto, sin condición. Lo cerró r2/identidad con la segunda salida que
 proponía este mapa: `1-base` crea las cuentas de ejecución y `tf-wl-<env>` recibe
 `serviceAccountUser` solo sobre las de su entorno que adjunta
-(`stages/1-base/runtime_accounts.tf:217`). Que SCC no lo marque y que esas cuentas funcionen es
+(`stages/1-base/runtime_accounts.tf:266`). Que SCC no lo marque y que esas cuentas funcionen es
 el pendiente 56 y los pendientes 131 a 135.
 
 ### 5.5 Pasos manuales por hacer
@@ -336,7 +342,8 @@ En [`pendientes-apply.md`](pendientes-apply.md):
 - 62: flow logs al 100 % en prod, hub y `onprem-sim` (3.10).
 - 28: la configuración de auditoría la escribe `tf-base` con su `projectIamAdmin` condicionado
   (2.1).
-- 90 a 93: etiqueta de protección y política de denegación del proyecto (1.5 y 1.8).
+- 90 a 93 y 155: etiqueta de protección y política de denegación del proyecto, con la regla 4
+  contra la creación de llaves (1.5 y 1.8).
 - 95: cuenta de Compute por defecto sin `roles/editor` (4.1).
 - 108: exclusión del sink y escritura con CMEK (2.3).
 - 131 a 135: cuentas de ejecución que crea `1-base` y sus permisos (1.7 y 1.9).
