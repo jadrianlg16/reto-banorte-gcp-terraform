@@ -1,7 +1,8 @@
 # Módulo `cloud-armor`
 
 Crea la política de seguridad de Cloud Armor (`google_compute_security_policy`) que protege al
-balanceador HTTPS global externo de cada entorno, en el proyecto de servicio (ADR 0005). La
+balanceador HTTPS global externo de cada entorno, en la raíz de cargas del entorno dentro del
+proyecto único (ADR 0005, ajustado por el ADR 0029). La
 especificación, en su sección "Componentes del datacenter", pide reglas OWASP preconfiguradas
 (como mínimo inyección SQL y XSS) y un límite de tasa. El módulo lo cumple así: los conjuntos
 WAF llegan por `owasp_rules` y una validación impide quitar el de SQLi (`sqli-*`) o el de XSS

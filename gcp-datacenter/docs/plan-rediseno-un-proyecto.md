@@ -4,6 +4,12 @@
 mismo día. El diseño detallado está en el
 [ADR 0029](adr/0029-un-solo-proyecto.md), que es lo que siguen los constructores.
 
+**Avance al 24 nov 2026:** R0 a R3 hechos el mismo día, todo sin GCP. R1 se construyó en cuatro
+ramas; R2 integró, pasó por una revisión de seguridad y una de integración, y corrigió sus
+hallazgos en las ramas `r2/integracion`, `r2/politicas`, `r2/pipeline` y `r2/identidad`; R3
+concilió la documentación con ese código. Lo que sigue es R4, que espera al proyecto de GCP. Lo
+que solo un apply confirma está en [`pendientes-apply.md`](pendientes-apply.md).
+
 **Origen:** en la junta del 23 nov 2026, Banorte confirmó que todo el despliegue va dentro de
 **un solo proyecto de GCP**.
 
@@ -52,7 +58,7 @@ Lo que cambió por la revisión independiente:
 | Sin borrar proyectos no hay "empezar de cero" | Alto | El destroy de un entorno quita sus cargas, y el spoke solo con `incluir_red`. Lo persistente del entorno vive en `1-base`. Huérfanos por la etiqueta `env` y el prefijo. ADR 0029 §8 |
 | El calendario no era creíble | Alto | Calendario nuevo (§3): rebanada vertical primero y grabación de una ejecución ensayada, no de la primera |
 | La etiqueta es `env`, no `environment` | Medio | Corregido en todo el plan |
-| La red `default` y la cuenta de Compute por defecto en un proyecto creado a mano | Medio | Borrar `default` en el runbook 01. `DEPRIVILEGE` de la cuenta por defecto en `1-base` |
+| La red `default` y la cuenta de Compute por defecto en un proyecto creado a mano | Medio | Borrar `default` en el runbook 01. `DEPRIVILEGE` de la cuenta por defecto en `0-bootstrap` (al construirlo se movió de `1-base`: quitar un rol básico necesita `setIamPolicy` sin condición en el proyecto, que ninguna cuenta del pipeline tiene) |
 | Registros de acceso a datos: todo o nada | Medio | Decidido en el ADR 0029 §7; el costo se recalcula |
 | Fuentes mal marcadas (SCC sin organización, presupuestos) | Medio | Corregidas en la tabla de §1 |
 | Cuotas compartidas | Medio | Revisarlas el primer día con la cuenta, antes de `0-bootstrap` |
@@ -60,7 +66,11 @@ Lo que cambió por la revisión independiente:
 
 ### Impacto en el código
 
-El inventario se sacó con `grep` el 24 nov 2026; los conteos de líneas los confirmó la revisión.
+El inventario se sacó con `grep` el 24 nov 2026, antes de R1; los conteos de líneas los confirmó
+la revisión. El resultado de R1 y R2 cambió dos filas: quedan 24 módulos (se retiraron `folders`
+y `project-factory`; `ls modules | wc -l` → 24) y 12 reglas de Conftest (las 7 de antes más
+`bucket_uniform_access`, `env_root_scope`, `iam_public_principal`, `resource_locations` y
+`service_account_key`), contadas el 24 nov 2026 con `ls policies/*.rego`.
 
 | Parte | Qué pasa |
 |---|---|
@@ -82,9 +92,9 @@ alguien del equipo tenga el proyecto.
 | Paso | Cuándo | Qué | Listo cuando |
 |---|---|---|---|
 | R0 | 24 nov | ADR 0029 y nota en el contrato | Hecho |
-| R1 | 24 a 25 nov | Construcción en paralelo, un constructor Opus por bloque y cada uno en su rama: (a) `0-bootstrap` y `1-base` con sus módulos; (b) `2-networks` con `firewall` y `network-spoke`; (c) `3-workloads`; (d) pipeline, scripts y `tests/` | Cada bloque con `check.sh` y sus pruebas en verde |
-| R2 | 25 a 26 nov | Integrar, suite completa con 1.16.5 y 1.9.8, revisión independiente y correcciones | Suite en verde y hallazgos corregidos |
-| R3 | 26 a 27 nov | Documentación, diagramas con íconos oficiales, guía nueva del colaborador, mapa CIS y costos | `docs.sh --check` en verde y enlaces sin romper |
+| R1 | 24 a 25 nov | Construcción en paralelo, un constructor Opus por bloque y cada uno en su rama: (a) `0-bootstrap` y `1-base` con sus módulos; (b) `2-networks` con `firewall` y `network-spoke`; (c) `3-workloads`; (d) pipeline, scripts y `tests/` | Cada bloque con `check.sh` y sus pruebas en verde. Hecho el 24 nov |
+| R2 | 25 a 26 nov | Integrar, suite completa con 1.16.5 y 1.9.8, revisión independiente y correcciones | Suite en verde y hallazgos corregidos. Hecho el 24 nov |
+| R3 | 26 a 27 nov | Documentación, diagramas con íconos oficiales, guía nueva del colaborador, mapa CIS y costos | `docs.sh --check` en verde y enlaces sin romper. Hecho el 24 nov |
 | R4 | Cuando haya proyecto (ideal 27 a 28 nov) | **Rebanada vertical real:** `0-bootstrap`, `1-base`, hub, spoke dev y Cloud Run con Cloud SQL. Se corrige lo que falle | Primer `apply.yml` en verde |
 | R5 | 28 a 29 nov | Desplegar el resto en modo mínimo y **ensayar la grabación**; grabar una ejecución ya probada | Video en bruto ([plan de la presentación](plan-presentacion-final.md)) |
 | R6 | 30 nov a 1 dic | Presentación y documentos de la Fase 4 con datos reales | Archivos listos |
@@ -110,7 +120,7 @@ recalcula con los registros de acceso a datos en los tres entornos.
 | Riesgo | Mitigación |
 |---|---|
 | Nadie tiene el proyecto a tiempo | Sin organización, cualquier integrante lo crea en minutos con su cuenta y facturación de pago |
-| El primer apply de la historia del repositorio encuentra muchas fallas (130 marcadores `VERIFICAR-EN-APPLY`) | Rebanada vertical primero (R4) y recortes (§3) |
+| El primer apply de la historia del repositorio encuentra muchas fallas (131 marcadores `VERIFICAR-EN-APPLY` en 53 archivos `.tf` de `modules/` y `stages/`, sin pruebas ni ejemplos, según `git grep -c` del 24 nov 2026; hay más en scripts, pruebas de Go y flujos) | Rebanada vertical primero (R4) y recortes (§3) |
 | Una cuenta de dev puede tocar Compute, GKE, Cloud Run o Cloud SQL de prod | Riesgo aceptado (ADR 0029 §9): la cuenta solo la obtiene el entorno `dev` de GitHub y los cambios pasan por PR |
 | El destroy de un entorno borra algo compartido | Regla de recursos únicos y `destroy-plan-check.py` que rechaza nombres sin `<prefix>-<env>-` |
 | Cuotas del proyecto | Revisarlas el primer día; pedir aumentos de inmediato |

@@ -51,7 +51,10 @@ el video muestran el diseño nuevo.
 
 **Diagramas.** Hechos el 24 nov 2026: cinco diagramas con íconos oficiales y el estilo de la
 referencia, en [`diagramas/img/`](diagramas/img/). Los genera
-[`diagramas/fuente/generar.py`](diagramas/fuente/LEEME.md).
+[`diagramas/fuente/generar.py`](diagramas/fuente/LEEME.md). El mismo día se regeneraron el 2,
+el 4 y el 5 para que coincidan con el código final: VM DNS de prueba de `onprem-sim`, cuentas
+de ejecución creadas por `1-base`, cuentas que escriben solo desde `main` y
+`GCP_DISABLED_ENVS`.
 
 - Contenedores de color: el recuadro de Google Cloud, el proyecto, las regiones `us-central1` y
   `us-east4`, las zonas, las VPC y las subredes.
@@ -70,9 +73,9 @@ cortes y cámara rápida. Escenas:
 | 2 | Un cambio por PR | PR con el plan en un comentario; un PR que viola una política y queda bloqueado | 45 s |
 | 3 | Despliegue | `apply.yml` en GitHub Actions, etapa por etapa (cámara rápida) | 60 s |
 | 4 | La consola | VPC y peerings, túneles de VPN arriba, Cloud Run respondiendo, Cloud SQL con IP privada, KMS, logs y alertas | 90 s |
-| 5 | Conectividad | La prueba de humo, o una Connectivity Test hacia on-premises | 30 s |
+| 5 | Conectividad | La prueba de humo, una Connectivity Test hacia on-premises o, con la VM DNS de prueba (`onprem_dns_vm = true`), `dig dns.<dominio>` desde una VM de un spoke | 30 s |
 | 6 | Sin cambios | `drift.yml` en verde: el segundo plan no cambia nada | 20 s |
-| 7 | Destroy de dev | `destroy.yml` y la búsqueda de huérfanos en verde | 30 s |
+| 7 | Destroy de dev | `destroy.yml` y la búsqueda de huérfanos en verde; antes del siguiente merge, `dev` en `GCP_DISABLED_ENVS` para que `apply.yml` no lo vuelva a crear | 30 s |
 
 **Antes de grabar:**
 
@@ -107,7 +110,7 @@ cortes y cámara rápida. Escenas:
 | Necesidad | Propuesta |
 |---|---|
 | Íconos | Los oficiales de <https://cloud.google.com/icons>. Descargados el 24 nov 2026, con permiso: `core-products-icons.zip` (19 productos principales: Cloud Run, Cloud SQL, Cloud Storage, Compute Engine, GKE, SCC, …) y `category-icons.zip` (26 categorías: Networking, Security & Identity, Databases, Storage, DevOps, Observability, …). Desde 2025, Google solo publica ícono propio para los productos principales. VPC, VPN, NAT, DNS, Cloud Armor, KMS, Secret Manager, Memorystore, Filestore y Artifact Registry van con el ícono de su categoría y el nombre del producto en la tarjeta. Que eso sea lo que Google recomienda es HYPOTHESIS; su guía en PDF no se descargó. Los íconos se insertan como PNG rasterizados: no se probó que el generador del `.pptx` inserte SVG |
-| Diagramas | En la misma presentación, con los SVG oficiales, para que todo quede en un archivo editable. Alternativa: la herramienta oficial de diagramas, exportando imágenes |
+| Diagramas | Los cinco PNG de [`diagramas/img/`](diagramas/img/), que `generar.py` arma con los íconos oficiales rasterizados; para editarlos se cambia `generar.py` y se regeneran. Alternativa: la herramienta oficial de diagramas, exportando imágenes |
 | Presentación | Generar el `.pptx` con código, como en la Fase 4, y subirlo a Google Slides si el equipo quiere editarlo junto |
 | Video | OBS Studio para grabar; Clipchamp o DaVinci Resolve para editar |
 
@@ -119,8 +122,8 @@ página oficial antes de usarlos.
 
 | Cuándo | Qué | Quién (el equipo lo confirma) |
 |---|---|---|
-| 24 a 26 nov | Rediseño en código ([plan](plan-rediseno-un-proyecto.md), R1 y R2) | Claude y constructores |
-| 26 a 27 nov | Diagramas con íconos oficiales, guion final y borrador de la presentación (R3) | Claude; el equipo revisa |
+| 24 nov (hecho) | Rediseño en código ([plan](plan-rediseno-un-proyecto.md), R1 y R2) y documentación y diagramas conciliados con él (R3), todo sin GCP | Claude y constructores |
+| Antes de R5 | Guion final y borrador de la presentación | Claude; el equipo revisa |
 | Cuando haya proyecto (ideal 27 a 28 nov) | Rebanada vertical real (R4) | Quien tenga la cuenta, con Claude Code |
 | 28 a 29 nov | Despliegue mínimo, ensayo y grabación de las escenas 0 a 7 (R5) | Quien tenga la cuenta, más la persona que revisa el video |
 | 30 nov | Edición del video y voz | [[integrante]] |

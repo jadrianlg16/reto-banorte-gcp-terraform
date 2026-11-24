@@ -1,14 +1,14 @@
 # Módulo `filestore`
 
 Crea una instancia de Filestore con un recurso compartido NFS, conectada por Private Service
-Access a la VPC del host de Shared VPC. La sección "Componentes del datacenter" de la
-especificación pide para el almacenamiento de archivos CMEK y red por PSA; el módulo lo fija así:
+Access a la VPC del spoke de su entorno (proyecto único, sin Shared VPC; ADR 0029). La
+sección "Componentes del datacenter" de la especificación pide para el almacenamiento de archivos CMEK y red por PSA; el módulo lo fija así:
 
 - CMEK obligatorio (`kms_key_name`), en la misma región que la instancia.
 - `tier` limitado a los niveles que admiten CMEK: `ZONAL`, `REGIONAL` y `ENTERPRISE` (los
   niveles básicos no lo admiten, según la documentación de Filestore consultada el 21 nov 2026).
 - `connect_mode = "PRIVATE_SERVICE_ACCESS"` fijo, solo IPv4 privada, rango de PSA opcional
-  (`reserved_ip_range`). Con Shared VPC, `network` es la ruta completa de la red del host.
+  (`reserved_ip_range`). `network` es la ruta completa de la red del spoke.
 - `capacity_gb` validada por tier, con los rangos y pasos de la documentación de niveles de
   servicio.
 - Reglas de exportación NFS opcionales (`ROOT_SQUASH` por defecto en cada regla), protección
@@ -16,7 +16,7 @@ especificación pide para el almacenamiento de archivos CMEK y red por PSA; el m
 
 `location` es una zona con `ZONAL` y una región con `REGIONAL` o `ENTERPRISE`. El módulo no
 obliga a `REGIONAL` en prod porque la especificación no exige alta disponibilidad para
-Filestore; la etapa 5 elige el tier.
+Filestore; `3-workloads` elige el tier.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements

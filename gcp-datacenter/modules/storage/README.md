@@ -5,15 +5,15 @@ datacenter" de la especificación pide para el almacenamiento de objetos CMEK, v
 reglas de ciclo de vida, acceso uniforme y ningún acceso público; el módulo lo fija así:
 
 - CMEK obligatorio (`kms_key`); una validación exige que la llave esté en la misma ubicación
-  que el bucket. Para doble región, la llave vive en la multirregión (`us`), donde la etapa 2
-  crea un llavero para este caso.
+  que el bucket. Para doble región, la llave vive en la multirregión (`us`), donde `1-base`
+  crea la llave `storage` solo para los entornos de `dr_environments`.
 - Versionado, `uniform_bucket_level_access = true` y `public_access_prevention = "enforced"`
   fijos.
 - `lifecycle_rules` exige al menos una regla. Por defecto borra versiones no actuales a los
   30 días y aborta cargas multiparte incompletas a los 7 días.
 - `dual_region` (opcional): dos regiones en `custom_placement_config` dentro de la multirregión
   `location`, con turbo replication (`rpo = "ASYNC_TURBO"`) por defecto. Es el bucket de DR de
-  prod de la etapa 5.
+  prod de `3-workloads`.
 - `retention_policy` opcional (bloquearla con `is_locked` es irreversible), borrado suave
   configurable, `force_destroy` false por defecto y prohibido en prod, y etiquetas.
 

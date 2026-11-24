@@ -55,8 +55,10 @@ python generar.py --sin-png              # solo HTML y revisión automática
 - **Revisión automática:** cada página trae un script que busca textos que no caben, tarjetas
   encimadas o fuera de su contenedor, flechas que cruzan tarjetas o textos, flechas que se cruzan y
   rótulos encimados. El resultado queda en `qa.txt`. No sustituye mirar los PNG.
-- **Última corrida:** 0 hallazgos en los cinco y 14.7 s (n = 1, 24 de noviembre de 2026, Windows,
-  `time python generar.py --iconos ...`).
+- **Última corrida de los cinco:** 0 hallazgos y 14.7 s (n = 1, 24 de noviembre de 2026, Windows,
+  `time python generar.py --iconos ...`). Después, el mismo día, se regeneraron solo el 2, el 4 y
+  el 5 con la conciliación de R3 (`python generar.py --iconos ... --solo 2 4 5 --img`): 0
+  hallazgos en los tres y 4.3 s (n = 1).
 
 **Para cambiar un diagrama:** edita su función en `generar.py`. `caja(...)` dibuja un contenedor,
 `tarjeta(...)` una tarjeta, `flecha([...puntos])` una flecha (con `etiqueta`, `punteada` o
@@ -67,10 +69,10 @@ python generar.py --sin-png              # solo HTML y revisión automática
 | Diagrama | Fuente en el código |
 |---|---|
 | 1 | `stages/0-bootstrap`, `stages/1-base`, `stages/2-networks` y los `terraform.tfvars.example` de `stages/3-workloads/envs/<env>` (qué pieza enciende cada entorno) |
-| 2 | `stages/2-networks/terraform.tfvars.example` y `stages/2-networks/envs/<env>/terraform.tfvars.example` (rangos y subredes), módulos de VPN, NAT, DNS y firewall |
+| 2 | `stages/2-networks/terraform.tfvars.example` y `stages/2-networks/envs/<env>/terraform.tfvars.example` (rangos y subredes), `stages/2-networks/onprem_dns.tf` (VM DNS de prueba), módulos de VPN, NAT, DNS y firewall |
 | 3 | `stages/3-workloads/envs/prod` y los módulos de cómputo y datos |
-| 4 | `stages/0-bootstrap` (WIF, cuentas, IAM Deny), `stages/1-base` (auditoría, logs, alertas, SCC) y el apagado fuera de horario de `3-workloads` |
-| 5 | `.github/workflows/pr.yml`, `apply.yml`, `drift.yml` y `destroy.yml` |
+| 4 | `stages/0-bootstrap` (WIF con `attribute.deploy`, las nueve cuentas, IAM Deny), `stages/1-base` (auditoría, logs, alertas, SCC y cuentas de ejecución de `runtime_accounts.tf`) y el apagado fuera de horario de `3-workloads` |
+| 5 | `.github/workflows/pr.yml`, `apply.yml`, `drift.yml` y `destroy.yml` (con `GCP_DISABLED_ENVS`) |
 
 Si cambia alguno de esos archivos, revisa que el diagrama siga diciendo lo mismo.
 

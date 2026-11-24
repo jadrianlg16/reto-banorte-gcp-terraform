@@ -1,6 +1,6 @@
 # Módulo `off-hours-shutdown`
 
-Crea, en el proyecto de servicio de dev o qa, los trabajos de Cloud Scheduler que apagan fuera
+Crea, en el proyecto único y para dev o qa, los trabajos de Cloud Scheduler que apagan fuera
 de horario lo que cobra por hora encendido (ADR 0028): cada instancia de `sql_instances` se
 detiene a la hora de `stop_schedule` y se enciende a la de `start_schedule` con
 `instances.patch` de la API de Cloud SQL Admin (`settings.activationPolicy` en `NEVER` o
@@ -8,12 +8,13 @@ detiene a la hora de `stop_schedule` y se enciende a la de `start_schedule` con
 autoescalado desactivado y, `gke_step_minutes` después, `setSize` a 0) y se enciende en dos
 (`setSize` al mínimo y `setAutoscaling` con sus límites). Los trabajos llaman directo a las
 APIs de Google con destino HTTP y el token OAuth de `service_account_email`, una cuenta
-dedicada que crea la etapa 4 con un rol personalizado que solo tiene
+dedicada (`<prefix>-<env>-<app>-sched`) que crea `1-base` con el rol personalizado de
+`0-bootstrap`, que solo tiene
 `cloudsql.instances.get`, `cloudsql.instances.update` y `container.clusters.update`. No hay
 funciones ni código propio que mantener.
 
-El MIG no pasa por este módulo: su autoescalador tiene programas de escalado nativos y la
-etapa 5 le pasa la ventana de la salida `window` (variable `business_hours` del módulo
+El MIG no pasa por este módulo: su autoescalador tiene programas de escalado nativos y
+`3-workloads` le pasa la ventana de la salida `window` (variable `business_hours` del módulo
 `compute-mig`). La especificación no pide este apagado: es la mitigación de costo de dev y qa
 (contrato §8). prod se rechaza en `environment`. Para que el apagado no aparezca como deriva,
 el módulo `cloud-sql` ignora `activation_policy` (y solo con `allow_scheduled_stop` admite una

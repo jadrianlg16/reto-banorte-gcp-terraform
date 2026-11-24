@@ -38,7 +38,9 @@ principales de IAM en sus tres formas y formato de mensajes).
 ### Políticas de organización (reglas 8 a 11)
 
 El ADR 0029 §1 deja las políticas de organización solo para cuando hay organización
-(`modules/org`, desde `1-base`). Sin ella, cada una tiene su regla aquí:
+(`modules/org`, que aplica la persona de `0-bootstrap` en `stages/0-bootstrap/org.tf`; ninguna
+cuenta del pipeline tiene roles de organización). Sin ella, cada una tiene su regla aquí. Las
+reglas corren también con organización: revisan el plan antes de que la API lo rechace.
 
 | Política de `modules/org` | Regla | Qué no cubre |
 |---|---|---|
@@ -58,13 +60,14 @@ Regla 8: no hay excepción legítima en el código. Cloud Run público va detrá
 la verificación del invocador desactivada y sin `allUsers` (ADR 0020), y los módulos `iam`, `kms`,
 `secrets` y `cloud-run` ya rechazan los dos principales por validación.
 
-Regla 11: la lista sale de lo que `1-base` le pasa a `modules/org`: `primary_region` y `dr_region`
-(grupos `in:<región>-locations`, que incluyen sus zonas) y `additional_allowed_locations`, que
-por defecto es `us` (bucket de estado, llaveros y repositorios multirregionales). Se agrega
-`global` (notificación de SCC, Certificate Manager), que no es una región. Un bucket de doble
-región configurable tiene `location = "US"`, y sus dos regiones se revisan aparte. Para cambiar de
-región (por ejemplo, `northamerica-south1`, ADR 0002) se cambia la lista de la regla junto con
-esas variables.
+Regla 11: la lista sale de lo que `0-bootstrap` le pasa a `modules/org`: `primary_region` y
+`dr_region` (grupos `in:<región>-locations`, que incluyen sus zonas) y
+`additional_allowed_locations`, que por defecto es `us` (bucket de estado, llaveros y
+repositorios multirregionales). Se agrega `global` (notificación de SCC, Certificate Manager),
+que no es una región. Un bucket de doble región configurable tiene `location = "US"`, y sus dos
+regiones se revisan aparte. Las regiones están escritas en la regla, no salen de las variables:
+para cambiar de región (por ejemplo, `northamerica-south1`, ADR 0002) se edita
+`resource_locations.rego` junto con esas variables (pendiente en `docs/backlog.md`).
 
 ### Recursos únicos en las raíces de entorno (regla 12)
 
@@ -75,7 +78,8 @@ declaran esa variable. Rechaza:
 1. Los tipos que existen una vez por proyecto (ADR 0029 §2 y §4.1): los de `PROJECT_SINGLETONS` en
    `scripts/destroy-plan-check.py`, más `google_project` y las familias
    `google_compute_project_metadata*` y `google_scc_*notification*`. Si se agrega un tipo a una
-   lista, se agrega a la otra.
+   lista, se agrega a la otra: `scripts/selftest.sh` comprueba que coinciden (25 tipos el 24 nov
+   2026, línea "PROJECT_SINGLETONS coincide con los tipos únicos de env_root_scope.rego").
 2. Lo que el §4 pasa a `1-base` aunque sea por entorno: `google_kms_key_ring`,
    `google_kms_crypto_key`, `google_secret_manager_secret` y
    `google_artifact_registry_repository`. La raíz del entorno solo da permisos sobre ellos.
@@ -187,8 +191,10 @@ la sección `configuration` del plan siguiendo `module_calls` con los nombres de
   `terraform show -json` (los de la regla 12 llevan la sección `variables`). Los `*_real_*.json`
   se recortaron de planes reales del proveedor google 6.50.0 hechos sin GCP (ver abajo). Ninguno
   salió del plan de una raíz de etapa: esas leen el estado remoto de las anteriores y necesitan
-  GCP. `scripts/cut-plan.py` descarta `variables`, así que la regla 12 no tiene planes `_real_`;
-  su prueba con recursos reales está en la sección de la regla 12.
+  GCP. `scripts/cut-plan.py` conserva de `variables` solo `environment` y `prefix`, lo que la
+  regla 12 necesita; `selftest.sh` comprueba con un recorte que así se activa. Todavía no hay
+  planes `_real_` de la regla 12 en `fixtures/`: su prueba con recursos reales está en la sección
+  de la regla 12.
 
 ## Cómo se corre
 
@@ -237,8 +243,11 @@ conftest test tfplan.json --policy policies
 
 `scripts/policy-check.sh` corre `conftest verify` y luego cada plan de ejemplo: un `_pass` debe
 pasar, y un `_fail` debe ser rechazado únicamente por mensajes de su regla. Un `_fail` que pasa,
-o que rechaza otra regla, es un error y el script sale con código distinto de cero. Hoy: 134
-pruebas de Rego y 42 planes de ejemplo.
+o que rechaza otra regla, es un error y el script sale con código distinto de cero. El 24 nov
+2026, `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` desde `gcp-datacenter/` dio
+"134 tests, 134 passed, 0 warnings, 0 failures" y "RESULTADO: 42 planes con el resultado
+esperado." (21 con resultado `pasa` y 21 con `rechaza`); 18 de los 42 son recortes de planes
+reales (`ls policies/fixtures | grep -c _real_` → 18).
 
 ### Sacar un plan de ejemplo de un plan real
 
@@ -279,4 +288,7 @@ Después del merge, `apply.yml` vuelve a correr Conftest sobre el plan de cada r
 pedir aprobación y otra vez sobre el plan que aplica.
 
 Lo que no se puede comprobar sin GCP: el plan de las raíces de etapa (leen el estado remoto) y
-de los ejemplos que leen fuentes de datos con la API. Se revisa en el primer plan real.
+de los ejemplos que leen fuentes de datos con la API. Se revisa en el primer plan real: que las
+raíces de entorno no tengan rechazos de las reglas 11 y 12 (punto 146 de
+`docs/pendientes-apply.md`) y que `0-bootstrap` y `1-base` pasen la regla 11 con sus llaveros
+`us`, la notificación de SCC `global` y el bucket de estado `US` (punto 147).

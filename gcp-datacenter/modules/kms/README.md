@@ -21,9 +21,10 @@ Nombres (§4.2 del contrato): llavero `<prefix>-<environment>-sec-keyring-<códi
 (`bnt-prod-sec-keyring-usc1`, `bnt-dev-sec-keyring-us`) y llave
 `<prefix>-<environment>-sec-<uso>`. Los códigos cortos salen de `location_short_codes`.
 
-Lo consumen la etapa 0 (llave del bucket de estado, `environment = "bootstrap"`) y la etapa 2
-(un llavero por entorno y ubicación). Los permisos de las llaves para los agentes de servicio
-de cada proyecto los da la etapa 4 o la etapa que conozca esos agentes, por `key_ids`.
+Lo consumen `0-bootstrap` (llave del bucket de estado, `environment = "bootstrap"`) y `1-base`
+(un llavero por entorno y ubicación, solo con las llaves que se usan). Los permisos de las
+llaves para los agentes de servicio del proyecto los da `1-base` (`kms.tf`) con
+`encrypter_decrypters`.
 
 Pruebas: `tests/kms.tftest.hcl` usa `mock_provider` y `command = plan`. Con `prevent_destroy`
 una prueba con `command = apply` fallaría al limpiar el estado al final, por eso no se usa.
