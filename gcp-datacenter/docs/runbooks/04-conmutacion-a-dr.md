@@ -57,9 +57,10 @@ No conmutar ante:
 
   Esperado: `ACTIVE`. Si no lo está, el paso 7 suma la emisión del certificado al RTO.
 - **Identidad.** Este runbook usa `-target` y `gcloud`, que el pipeline no admite: se corre fuera
-  de él. La cuenta `<prefix>-tf-wl-prod` solo la obtiene un trabajo de `main`, de un flujo del
-  repositorio, en el entorno `prod` de GitHub (`attribute.deploy`,
-  [`pipeline.md`](../pipeline.md) §5): no sirve para un apply a mano.
+  de él. La cuenta `<prefix>-tf-wl-prod` solo la obtiene el trabajo `apply` de
+  `_terraform-root.yml` en `main`, disparado por `push` o `workflow_dispatch`, en el entorno
+  `prod` de GitHub (`attribute.deploy`, [`pipeline.md`](../pipeline.md) §5): no sirve para un
+  apply a mano.
   La única identidad humana con permisos suficientes es hoy la persona dueña del proyecto
   (`owner`), que además puede leer el estado del hub y ver sus túneles (paso 1). El acceso de
   emergencia formal **no está construido** ([pendientes](../pendientes-apply.md), §5): definirlo
@@ -183,16 +184,18 @@ Anotar la hora UTC de cada paso en la tabla del simulacro.
    `-refresh=false` (pendiente de verificar en el simulacro).
 
    El enlace de Workload Identity ya no está en esta raíz: lo crea `1-base`
-   (`gke_workload_identity_bindings`) sobre el pool del proyecto `<ID>.svc.id.goog`, que no es de
-   un clúster ni de una región (documentación citada en `stages/1-base/runtime_accounts.tf`). El
-   clúster de DR no necesita un enlace nuevo; que un pod del namespace `<application>-prod` en el
-   clúster de DR obtenga el token de la cuenta `workload` se comprueba en el simulacro
-   (pendiente 135).
+   (`gke_workload_identity_bindings`), uno por clúster, para todos los pods de
+   `<prefix>-prod-<application>-gke` y, porque prod está en `dr_environments` por defecto, de
+   `<prefix>-prod-<application>-gke-dr` (`principalSet` `…/kubernetes.cluster/…`; documentación
+   citada en `stages/1-base/runtime_accounts.tf`). El enlace del clúster de DR existe antes de
+   la conmutación, aunque el clúster todavía no; si prod no estuviera en `dr_environments`, el
+   `check "workload_identity_enlazada"` lo avisa en el plan. Que IAM acepte el enlace de un
+   clúster que no existe y que un pod del clúster de DR obtenga el token de la cuenta `workload`
+   se comprueba en el simulacro (pendientes 135 y 158).
 
 6. **GKE** (si `enable_gke`). El clúster de DR nace vacío. Desplegar la carga con el proceso de la
-   aplicación (fuera de este repositorio), con la cuenta de Kubernetes `gke_workload_ksa_name`
-   de `1-base` (`app` por defecto) del namespace `<application>-prod` anotada para Workload
-   Identity
+   aplicación (fuera de este repositorio), con su cuenta de Kubernetes (por convención `app`, en
+   el namespace `<application>-prod`) anotada con la cuenta `workload` para Workload Identity
    ([runbook 02](02-alta-proyecto-aplicacion.md), paso A.4) y la imagen del repositorio de prod.
    Si hace falta estado del clúster, restaurar el último respaldo de Backup for GKE (el plan
    existe; la restauración no está construida en Terraform). Después, poner los NEG zonales del

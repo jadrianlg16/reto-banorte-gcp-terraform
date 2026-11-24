@@ -56,7 +56,7 @@ sepan responder a un drift.
 
 | Tiempo | Tema | Material |
 |---|---|---|
-| 0:00 – 0:20 | Identidad del pipeline: WIF, una cuenta por raíz y por entorno que solo se entrega a un trabajo de `main` (`attribute.deploy`), la cuenta de lectura `tf-read`, la política de denegación y su etiqueta; las cuentas de ejecución que crea `1-base`; por qué las personas solo leen | ADR 0029 §3 y §5, ADR 0023, [`pipeline.md`](pipeline.md) §5, [`diagramas/05-pipeline.md`](diagramas/05-pipeline.md) |
+| 0:00 – 0:20 | Identidad del pipeline: WIF, una cuenta por raíz y por entorno que solo se entrega al trabajo `apply` de `_terraform-root.yml` en `main`, con `push` o `workflow_dispatch` (`attribute.deploy`), la cuenta de lectura `tf-read`, la política de denegación y su etiqueta; las cuentas de ejecución que crea `1-base`; por qué las personas solo leen | ADR 0029 §3 y §5, ADR 0023, [`pipeline.md`](pipeline.md) §5, [`diagramas/05-pipeline.md`](diagramas/05-pipeline.md) |
 | 0:20 – 0:45 | Flujo de un cambio: PR, comprobaciones, plan con huella, aprobación del entorno, apply; qué bloquea un PR; por qué un merge a `main` lanza `apply.yml` (y uno de solo documentación no); cómo se apaga dev o qa con `GCP_DISABLED_ENVS` | `diagramas/05-pipeline.md`, ADR 0025, [`pipeline.md`](pipeline.md) §1.2, `.github/workflows/` |
 | 0:45 – 1:20 | Ejercicio guiado: alta de una aplicación en dev | [Runbook 02](runbooks/02-alta-proyecto-aplicacion.md), sección A |
 | 1:20 – 1:45 | Drift: cómo se detecta (un plan por raíz y un trabajo de recursos no administrados para todo el proyecto), cómo se lee la incidencia, importar o revertir | [Runbook 05](runbooks/05-respuesta-a-drift.md), `drift.yml` |

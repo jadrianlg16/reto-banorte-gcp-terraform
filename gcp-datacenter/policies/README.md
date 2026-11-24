@@ -30,7 +30,7 @@ e índice: `[kms_rotation] module.kms.google_kms_crypto_key.this["sql"]: ...`.
 | 9 | `service_account_key.rego` | Cualquier `google_service_account_key` (llave generada o subida), también uno que ya existe |
 | 10 | `bucket_uniform_access.rego` | `google_storage_bucket` sin `uniform_bucket_level_access = true` |
 | 11 | `resource_locations.rego` | `location`, `region` o `zone` de un recurso `google_*`, regiones de un bucket de doble región, réplicas de un secreto, o región o zona del bloque `provider "google"` de la raíz, fuera de `us-central1`, `us-east4` (y sus zonas), `us` y `global` |
-| 12 | `env_root_scope.rego` | En una raíz de entorno (variable `environment` = `dev`, `qa` o `prod`): tipos únicos del proyecto, llaves, secretos y repositorios (los crea `1-base`), roles de proyecto para principales que la raíz no crea y nombres sin `<prefix>-<env>-` |
+| 12 | `env_root_scope.rego` | En una raíz de entorno (variable `environment` = `dev`, `qa` o `prod`): tipos únicos del proyecto; llaves, secretos y repositorios (los crea `1-base`); todo IAM de proyecto (`google_project_iam_member` y `_member_remove`, sea cual sea el principal) y de cuentas de servicio (`google_service_account_iam_*`); y nombres sin `<prefix>-<env>-`. El IAM de un recurso sí se permite |
 
 `lib.rego` tiene las funciones comunes (recursos a revisar, valores desconocidos, lectura de
 principales de IAM en sus tres formas y formato de mensajes).
@@ -83,12 +83,15 @@ declaran esa variable. Rechaza:
 2. Lo que el §4 pasa a `1-base` aunque sea por entorno: `google_kms_key_ring`,
    `google_kms_crypto_key`, `google_secret_manager_secret` y
    `google_artifact_registry_repository`. La raíz del entorno solo da permisos sobre ellos.
-3. `google_project_iam_member` (y `_member_remove`) para un principal que no sea
-   `serviceAccount:<prefix>-<env>-...` (cuentas del pipeline, grupos, agentes de servicio, la
-   cuenta de Compute por defecto, cuentas de otro entorno). El ADR 0029 enmendado (§4, punto 2)
-   ya no admite ningún permiso de proyecto en una raíz de entorno, porque las cuentas de ejecución
-   las crea `1-base`; la regla todavía deja pasar las `<prefix>-<env>-...`. En la práctica no
-   cambia nada: `tf-wl-<env>` no tiene `projectIamAdmin` y el apply fallaría.
+3. Todo IAM de proyecto y de cuentas de servicio, sea cual sea el principal (ADR 0029 §4, punto
+   2; hallazgo N5 de la re-revisión de seguridad): `google_project_iam_member` y
+   `google_project_iam_member_remove`, también para las cuentas `<prefix>-<env>-...`, y todo
+   `google_service_account_iam_*` (`_member`, `_binding`, `_policy`). Los roles de proyecto de
+   las cuentas de ejecución, Cloud SQL por IAM y el enlace de Workload Identity los da `1-base`;
+   los de las cuentas del pipeline, `0-bootstrap`. `google_project_iam_binding` y `_policy` ya
+   los rechaza el punto 1. El IAM de un recurso (secretos, repositorios, valores de etiqueta,
+   servicios de Cloud Run, buckets...) sí se permite: no da permisos sobre otros recursos del
+   proyecto.
 4. Nombres sin `<prefix>-<env>-` (§4.3), solo en `google_compute_network`,
    `google_compute_subnetwork`, `google_compute_router`, las políticas de firewall de red (global
    y regional), `google_service_account` (`account_id`) y `google_storage_bucket`. Son los que el
@@ -97,10 +100,16 @@ declaran esa variable. Rechaza:
    claves de etiqueta), son hijos con el nombre del padre (bases de datos de Cloud SQL, registros
    DNS) o se reconocen por la etiqueta `env`.
 
-3 y 4 toman el prefijo de la variable `prefix` del plan; sin ella no se revisan. Con los
-recursos reales de los planes de destroy del spoke y de cargas de `dev`
-(`scripts/testdata/destroy/plan-real-*.json`, 130 recursos pasados a `create`), la regla no
-rechaza nada con `environment = "dev"` y rechaza 32 nombres y permisos con `environment = "prod"`.
+1, 2 y 3 se revisan por tipo; 4 toma el prefijo de la variable `prefix` del plan y sin ella no
+se revisa. Medición del 24 nov 2026 con los recursos reales de los planes de destroy del spoke y
+de cargas de `dev` (`scripts/testdata/destroy/plan-real-spoke-dev.json` y
+`plan-real-workloads-dev.json`: 130 recursos `delete` pasados a `create`, con `prefix = "bnt"`,
+y `conftest test <plan> --policy policies` sobre cada uno): con `environment = "dev"` la regla
+rechaza 21 (20 `google_project_iam_member` y 1 `google_service_account_iam_member`), y con
+`environment = "prod"` 33 (esos 21 más 12 nombres sin `bnt-prod-`). Los 21 de `dev` son
+esperables: esos planes se sacaron del código anterior a la enmienda, cuando la raíz de cargas
+todavía creaba sus cuentas y les daba roles de proyecto; con el código de hoy esos recursos están
+en `1-base`.
 
 ### Etiquetas (regla 3)
 
@@ -186,10 +195,10 @@ la sección `configuration` del plan siguiendo `module_calls` con los nombres de
   quedan dentro de la región del recurso, que sí se revisa. Un bloque `provider` dentro de un
   módulo o con una región que no es constante ni `var.<nombre>` no se resuelve. Una doble región
   predefinida (por ejemplo, `NAM4`) se rechaza: su nombre no está en la lista.
-- Regla 12: solo ve la raíz que se planea; no compara con lo que declaran las demás raíces. Un
-  rol de proyecto para un
-  principal `principal://` o `principalSet://` se rechaza aunque sea del entorno: el ADR solo
-  permite las cuentas que la raíz crea.
+- Regla 12: solo ve la raíz que se planea; no compara con lo que declaran las demás raíces. No
+  revisa a quién da permisos el IAM de un recurso (por ejemplo, `secretAccessor` sobre un secreto
+  del entorno a una cuenta de otro entorno): eso lo frena que `tf-wl-<env>` solo tiene IAM sobre
+  sus propios recursos.
 - Los pares `<regla>_pass.json` y `<regla>_fail.json` se escribieron a mano con la forma de
   `terraform show -json` (los de la regla 12 llevan la sección `variables`). Los `*_real_*.json`
   se recortaron de planes reales del proveedor google 6.50.0 hechos sin GCP (ver abajo). Ninguno
@@ -247,10 +256,14 @@ conftest test tfplan.json --policy policies
 `scripts/policy-check.sh` corre `conftest verify` y luego cada plan de ejemplo: un `_pass` debe
 pasar, y un `_fail` debe ser rechazado únicamente por mensajes de su regla. Un `_fail` que pasa,
 o que rechaza otra regla, es un error y el script sale con código distinto de cero. El 24 nov
-2026, `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` desde `gcp-datacenter/` dio
-"134 tests, 134 passed, 0 warnings, 0 failures" y "RESULTADO: 42 planes con el resultado
-esperado." (21 con resultado `pasa` y 21 con `rechaza`); 18 de los 42 son recortes de planes
-reales (`ls policies/fixtures | grep -c _real_` → 18).
+2026 (código de la rama `r3/cierre`), `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh`
+desde `gcp-datacenter/` dio "138 tests, 138 passed, 0 warnings, 0 failures, 0 exceptions, 0
+skipped" y "RESULTADO: 43 planes con el resultado esperado." (21 con resultado `pasa` y 22 con
+`rechaza`, contados en la tabla que imprime el script); 18 de los 43 son recortes de planes
+reales (`ls policies/fixtures | grep -c _real_` → 18). La regla 12 tiene tres planes de ejemplo:
+`env_root_scope_pass`, `env_root_scope_fail` y `env_root_scope_fail_iam_cuentas` (un rol de
+proyecto para la cuenta `workload` del propio entorno y un enlace de Workload Identity sobre ella:
+los dos se rechazan).
 
 ### Sacar un plan de ejemplo de un plan real
 

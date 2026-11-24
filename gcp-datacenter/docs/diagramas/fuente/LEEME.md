@@ -58,7 +58,10 @@ python generar.py --sin-png              # solo HTML y revisión automática
 - **Última corrida de los cinco:** 0 hallazgos y 14.7 s (n = 1, 24 de noviembre de 2026, Windows,
   `time python generar.py --iconos ...`). Después, el mismo día, se regeneraron solo el 2, el 4 y
   el 5 con la conciliación de R3 (`python generar.py --iconos ... --solo 2 4 5 --img`): 0
-  hallazgos en los tres y 4.3 s (n = 1).
+  hallazgos en los tres y 4.3 s (n = 1). Con el cierre de la re-revisión de seguridad (rama
+  `r3/cierre`, mismo día) se corrieron los cinco con `python generar.py --iconos ... --img`: 0
+  hallazgos en los cinco; solo cambiaron los PNG del 4 y el 5 (`git status`), los únicos con
+  textos nuevos.
 
 **Para cambiar un diagrama:** edita su función en `generar.py`. `caja(...)` dibuja un contenedor,
 `tarjeta(...)` una tarjeta, `flecha([...puntos])` una flecha (con `etiqueta`, `punteada` o

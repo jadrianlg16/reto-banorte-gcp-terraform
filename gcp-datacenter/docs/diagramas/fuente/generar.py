@@ -367,7 +367,8 @@ def d4() -> Diagrama:
     D.tarjeta("estado", 366, 336, 264, 92, "cloud-storage", "Estado de Terraform", "Cloud Storage",
               "CMEK · un prefijo por raíz", dentro="ident")
     D.tarjeta("deny", 366, 470, 264, 112, "cat-security", "Protección del estado", "IAM Deny + etiqueta",
-              "nadie del pipeline borra el bucket, cambia WIF ni pide tokens", dentro="ident")
+              "el pipeline no borra el bucket, no cambia WIF ni pide tokens; nadie crea llaves",
+              dentro="ident")
     D.flecha([D.p("deny", "t"), D.p("estado", "b")], "protege", punteada=True, en=(498, 449))
     cuentas = [
         ("sa-common", "Cuentas de common", "tf-base · tf-net", "", 64),
@@ -416,7 +417,7 @@ def d4() -> Diagrama:
     D.tarjeta("sched", 366, 690, 264, 104, "cat-integration", "Programador", "Cloud Scheduler",
               "lun-vie 07:00 a 20:00, America/Monterrey", dentro="apagado")
     D.tarjeta("sa-sched", 366, 860, 264, 120, "cat-security", "Cuenta -sched", "la crea 1-base, una por entorno y app",
-              "rol OffHoursScheduler de 0-bootstrap", dentro="apagado")
+              "rol OffHoursScheduler, solo su entorno", dentro="apagado")
     D.flecha([D.p("sa-sched", "t"), D.p("sched", "b")], "firma con", punteada=True, en=(498, 827))
     obj = [
         ("off-sql", "cloud-sql", "Detener y encender", "Cloud SQL", "activation policy", 78),
@@ -444,10 +445,11 @@ def d4() -> Diagrama:
               "plan de respaldo en us-east4", dentro="dr4")
 
     # Fuera
-    # Centro a la altura de la flecha OIDC (y = 250). Las cuentas que escriben solo aceptan un
-    # trabajo de main con environment (attribute.deploy de stages/0-bootstrap/wif.tf).
+    # Centro a la altura de la flecha OIDC (y = 250). Las cuentas que escriben solo aceptan el
+    # trabajo apply de _terraform-root.yml en main, con push o workflow_dispatch y environment
+    # (attribute.deploy de stages/0-bootstrap/wif.tf).
     D.tarjeta("actions", 40, 200, 250, 100, "gen-flujo", "GitHub Actions", "trabajo con environment",
-              "para escribir: solo desde main")
+              "escribe solo _terraform-root.yml en main")
     D.flecha([D.p("actions", "r"), D.p("wif", "l", 0.4)], "OIDC", en=(328, 230))
     D.tarjeta("correo", 1660, 480, 220, 90, "gen-correo", "Correo de alertas", "canales y contactos esenciales")
     D.flecha([D.p("alertas", "r", 0.4), (1660, D.p("alertas", "r", 0.4)[1])])
@@ -534,7 +536,7 @@ def d5() -> Diagrama:
         ("g-read", 174, 104, "cat-security", "Cuenta de lectura", "tf-read, por WIF",
          "la usan plan, drift, humo y huérfanos"),
         ("g-write", 364, 104, "cat-security", "Cuentas que escriben", "tf-base · tf-net · tf-*-<env>",
-         "por WIF, solo main con su environment"),
+         "WIF: _terraform-root.yml en main, con environment"),
         ("g-state", 490, 96, "cloud-storage", "Estado de Terraform", "Cloud Storage",
          "el apply toma el candado; el plan no"),
         ("g-cai", 662, 104, "cat-management", "Inventario", "Cloud Asset Inventory", "alcance: el proyecto"),

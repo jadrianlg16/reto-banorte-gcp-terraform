@@ -54,7 +54,9 @@ referencia, en [`diagramas/img/`](diagramas/img/). Los genera
 [`diagramas/fuente/generar.py`](diagramas/fuente/LEEME.md). El mismo día se regeneraron el 2,
 el 4 y el 5 para que coincidan con el código final: VM DNS de prueba de `onprem-sim`, cuentas
 de ejecución creadas por `1-base`, cuentas que escriben solo desde `main` y
-`GCP_DISABLED_ENVS`.
+`GCP_DISABLED_ENVS`. Después de la re-revisión de seguridad se regeneraron el 4 y el 5 (cuentas
+que escriben solo desde `_terraform-root.yml` en `main`, la regla de la denegación que impide a
+todos crear llaves y el rol del apagado limitado a su entorno).
 
 - Contenedores de color: el recuadro de Google Cloud, el proyecto, las regiones `us-central1` y
   `us-east4`, las zonas, las VPC y las subredes.

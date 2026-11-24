@@ -115,8 +115,10 @@ al bucket que se crea, sacar las salidas y activar SCC en el proyecto.
 - **`enable_protection_tags` y `enable_deny_policy` en `true`.** El segundo exige que tengas
   `roles/iam.denyAdmin` en el proyecto (runbook 01, paso 1). Si un apply demuestra que las
   etiquetas no funcionan en el proyecto, pon `enable_protection_tags = false` y anótalo en
-  `pendientes-apply.md`: de la política de denegación queda solo la regla sin condición de
-  etiqueta (runbook 01, paso 5).
+  `pendientes-apply.md`: de la política de denegación quedan las tres reglas sin etiqueta
+  (tokens, WIF, roles, llaves, servicios y borrar el proyecto; valores de secretos; y llaves de
+  cuentas de servicio para todos; runbook 01, paso 5). La regla 4 te niega también a ti crear
+  llaves de cuentas de servicio; si alguna vez necesitas una, la quitas con `iam.denyAdmin`.
 - **Nivel de SCC:** Standard no tiene cargo según la
   [página de precios de SCC](https://cloud.google.com/security-command-center/pricing) (citada en
   [`estimacion-de-costos.md`](estimacion-de-costos.md)). Casi todos los detectores con mapeo CIS
@@ -129,9 +131,9 @@ al bucket que se crea, sacar las salidas y activar SCC en el proyecto.
 ### D.1 Entornos
 
 En Settings → Environments, crea `common`, `dev`, `qa` y `prod`. Los trabajos `apply` de
-`apply.yml` corren en ellos y cada cuenta que aplica solo acepta tokens de un trabajo de `main`,
-de un flujo del repositorio y de su entorno (`attribute.deploy`, ADR 0029 §3;
-[`pipeline.md`](pipeline.md) §5): `common` para `1-base` y el hub; `dev`, `qa` y `prod` para su
+`apply.yml` corren en ellos y cada cuenta que aplica solo acepta tokens del trabajo `apply` de
+`_terraform-root.yml` en `main`, disparado por `push` o `workflow_dispatch`, y de su entorno
+(`attribute.deploy`, ADR 0029 §3; [`pipeline.md`](pipeline.md) §5): `common` para `1-base` y el hub; `dev`, `qa` y `prod` para su
 spoke y sus cargas. La cuenta de lectura (`tf-read`) acepta cualquier trabajo del repositorio:
 los `plan` corren sin entorno.
 
@@ -372,7 +374,9 @@ Con la rebanada en verde ([plan de rediseño](plan-rediseno-un-proyecto.md), R5)
    - GKE (`enable_gke`) pide dos pasadas: el `apply` de `3-workloads` crea el primer clúster (y
      con él el pool de Workload Identity del proyecto) con un aviso de que falta el enlace;
      después `"gke_workload_identity_bindings": true` en la llave `stages/1-base` y `apply.yml`
-     otra vez (pendiente 135). El namespace de la aplicación es `<app>-<env>`.
+     otra vez (pendientes 135 y 158). El enlace es por clúster: todos los pods de
+     `<prefix>-<env>-<app>-gke[-dr]` con una cuenta de Kubernetes anotada obtienen la cuenta
+     `workload`; el namespace `<app>-<env>` queda como convención.
    - DR (`enable_vpn_dr = true` en el hub y `enable_dr = true` en las dos raíces de prod) con el
      simulacro del [runbook 04](runbooks/04-conmutacion-a-dr.md). prod tiene que estar en
      `dr_environments` de `1-base` (lo está por defecto): solo esos entornos tienen las llaves de

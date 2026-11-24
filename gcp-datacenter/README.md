@@ -43,16 +43,19 @@ entregar la operación: [`docs/transferencia-de-conocimiento.md`](docs/transfere
   prefijo por raíz e IAM condicionado
   ([0010](docs/adr/0010-bucket-de-estado-unico-con-iam-por-prefijo.md)); nueve cuentas del
   pipeline, una por raíz y entorno más `tf-read` de solo lectura; Workload Identity Federation
-  para GitHub por ID numérico del repositorio. Cada cuenta que escribe solo acepta tokens de un
-  trabajo de `main`, de un flujo de `.github/workflows/` de este repositorio y de su entorno de
-  GitHub (`attribute.deploy`); `tf-read`, de cualquier trabajo del repositorio
-  ([0007](docs/adr/0007-ci-cd-con-github-actions.md),
+  para GitHub por ID numérico del repositorio. Cada cuenta que escribe solo acepta tokens del
+  trabajo `apply` de `_terraform-root.yml` en `main` (`job_workflow_ref` exacto), disparado por
+  `push` o `workflow_dispatch` y en su entorno de GitHub (`attribute.deploy`); `tf-read`, de
+  cualquier trabajo del repositorio ([0007](docs/adr/0007-ci-cd-con-github-actions.md),
   [0023](docs/adr/0023-endurecimiento-de-la-identidad-del-pipeline.md)). Una política de
-  denegación en el proyecto protege el estado y las cuentas con la etiqueta `<prefix>-proteccion`
-  y niega a las nueve cuentas pedir tokens o firmas de cualquier cuenta de servicio (HYPOTHESIS
-  que la etiqueta funcione sin organización, ADR 0029 §5). Las cuentas de ejecución de las
-  cargas (`<prefix>-<env>-<app>-<uso>`) las crea `1-base` con sus permisos; la cuenta de cargas
-  de cada entorno solo puede adjuntar las de su entorno. Las personas tienen IAM de solo
+  denegación en el proyecto, con cuatro reglas, protege el estado y las cuentas con la etiqueta
+  `<prefix>-proteccion`, niega a las nueve cuentas pedir tokens o firmas de cualquier cuenta de
+  servicio y cambiar los servicios habilitados, y niega a todos crear llaves de cuentas de
+  servicio (HYPOTHESIS que la etiqueta y la denegación funcionen sin organización, ADR 0029 §5).
+  Las cuentas de ejecución de las cargas (`<prefix>-<env>-<app>-<uso>`) las crea `1-base` con
+  sus permisos; la cuenta de cargas de cada entorno solo puede adjuntar las de su entorno, y sus
+  roles de Cloud SQL, GKE (`container.clusterAdmin`) y Backup and DR van condicionados a los
+  recursos de su entorno. Las personas tienen IAM de solo
   lectura, por grupos; solo el pipeline despliega
   ([diagrama 1](docs/diagramas/01-organizacion-gobierno-acceso.md)).
 - **Red:** cinco VPC en el proyecto. El hub `<prefix>-common-net-hub` con dos HA VPN de dos
@@ -114,7 +117,7 @@ entregar la operación: [`docs/transferencia-de-conocimiento.md`](docs/transfere
 | `stages/2-networks` | Raíz del hub (ADR 0014): VPC hub, VPN primaria y de DR, DNS, políticas de firewall de red del hub y de `onprem-sim`, VM DNS de prueba de `onprem-sim` opcional |
 | `stages/2-networks/envs/{dev,qa,prod}` | Un spoke por entorno: VPC, Cloud NAT, PSA, peering con el hub, política de firewall de red con sus etiquetas seguras (y `tagUser` de la cuenta de cargas del entorno sobre sus valores) y zonas de las APIs de Google hacia el VIP |
 | `stages/3-workloads/envs/{dev,qa,prod}` | Cómputo, datos, balanceadores, observabilidad, respaldo y apagado fuera de horario, con las cuentas de ejecución que crea `1-base` |
-| `policies/` | Doce reglas de Conftest (Rego) más `lib.rego`, sus pruebas y 42 planes de ejemplo en `fixtures/` |
+| `policies/` | Doce reglas de Conftest (Rego) más `lib.rego`, sus pruebas y 43 planes de ejemplo en `fixtures/` (`ls policies/fixtures/*.json \| wc -l` → 43) |
 | `scripts/` | `check.sh`, `policy-check.sh`, `docs.sh`, `affected-roots.sh`, `root-tfvars.py`, `disabled-envs.py`, `selftest.sh`, `plan-fingerprint.py`, `destroy-plan-check.py`, `destroy-orphans.py`, `unmanaged-resources.py`, `terratest-project-check.py` y otros auxiliares del pipeline |
 | `tests/` | Terratest y prueba de extremo a extremo; las pruebas sin GCP corren en cada PR (`go vet` y `go test`), las demás se omiten y no se han ejecutado contra GCP |
 | `docs/` | Contrato, ADR, pipeline, runbooks, diagramas, `pendientes-apply.md`, `cumplimiento-cis.md`, `estimacion-de-costos.md`, la guía del colaborador, el plan del rediseño a un proyecto, el plan de transferencia de conocimiento y el `backlog.md` |
@@ -249,9 +252,10 @@ Pasos fuera de Terraform después de `3-workloads`: subir la imagen al repositor
 (antes de encender Cloud Run o GKE), registros DNS A de `domain_names` hacia la salida
 `lb_ip_address` (el certificado administrado se activa entonces), registros de
 `internal_lb_dns_authorization_records_by_region` en la zona pública del dominio interno, los
-valores de los secretos, la cuenta de Kubernetes anotada para Workload Identity en el namespace
-`<app>-<env>` (y, después del primer clúster, `gke_workload_identity_bindings = true` en
-`1-base`), y `CREATE EXTENSION pgaudit;` en cada base de Cloud SQL (README de
+valores de los secretos, la cuenta de Kubernetes anotada con la cuenta `workload` (por
+convención en el namespace `<app>-<env>`; el enlace de Workload Identity es por clúster) y,
+después del primer clúster, `gke_workload_identity_bindings = true` en `1-base`, y
+`CREATE EXTENSION pgaudit;` en cada base de Cloud SQL (README de
 `stages/3-workloads/envs/dev` y [runbook 02](docs/runbooks/02-alta-proyecto-aplicacion.md)).
 
 ## Revisiones sin GCP
@@ -263,29 +267,29 @@ bash scripts/check.sh                 # fmt, validate, tflint, checkov y terrafo
 bash scripts/check.sh --skip test     # lo mismo sin terraform test (lo que corre con Terraform 1.9)
 bash scripts/check.sh --list          # objetivos: 24 módulos, 24 ejemplos y 9 raíces (57)
 bash scripts/check.sh --skip checkov stages/3-workloads/envs/prod
-bash scripts/policy-check.sh          # conftest verify y los 42 planes de ejemplo (21 pasan, 21 se rechazan)
+bash scripts/policy-check.sh          # conftest verify y los 43 planes de ejemplo (21 pasan, 22 se rechazan)
 bash scripts/selftest.sh              # autopruebas de los scripts del pipeline
 bash scripts/docs.sh --check          # READMEs de terraform-docs al día (24 módulos y 9 raíces)
 bash scripts/docs.sh                  # regenerarlos
 ```
 
 Los números de los comentarios salen de correr estos comandos el 24 nov 2026 desde
-`gcp-datacenter/`, con Terraform 1.16.5 y `PATH="$HOME/go/bin:$PATH"` (Conftest instalado con
-Go):
+`gcp-datacenter/` (código de la rama `r3/cierre`, después de la re-revisión de seguridad), con
+Terraform 1.16.5 y `PATH="$HOME/go/bin:$PATH"` (Conftest instalado con Go):
 
 - `bash scripts/check.sh --list | wc -l` → 57: 24 `modules/<m>`, 24 `.../examples/basic` y 9
   `stages/...` (contados con `grep -c`).
 - `ls -d modules/*/ | wc -l` → 24 módulos.
-- `bash scripts/policy-check.sh` → "134 tests, 134 passed, 0 warnings, 0 failures" y
-  "RESULTADO: 42 planes con el resultado esperado." (21 con resultado `pasa` y 21 con
-  `rechaza`; 18 de los 42 son recortes de planes reales sin GCP,
-  `ls policies/fixtures | grep -c _real_` → 18).
+- `bash scripts/policy-check.sh` → "138 tests, 138 passed, 0 warnings, 0 failures, 0
+  exceptions, 0 skipped" y "RESULTADO: 43 planes con el resultado esperado." (21 con resultado
+  `pasa` y 22 con `rechaza`, en la tabla que imprime el script; 18 de los 43 son recortes de
+  planes reales sin GCP, `ls policies/fixtures | grep -c _real_` → 18).
 - `bash scripts/selftest.sh` → 218 líneas `OK` (`grep -c '^OK'`), 0 `FALLA` y "RESULTADO: todas
   las comprobaciones pasaron." (si no encuentra Conftest, una línea sale como `INFO`).
 - `bash scripts/docs.sh --check` → "Resultado: PASS (33)".
 - `ls modules/*/tests/*.tftest.hcl | wc -l` → 24.
-- `grep -rh '^run "' --include=*.tftest.hcl . | wc -l` → 493 bloques `run` de `terraform test`
-  (263 en `modules/` y 230 en `stages/`, con el mismo comando sobre `modules` y sobre `stages`).
+- `grep -rh '^run "' --include=*.tftest.hcl . | wc -l` → 499 bloques `run` de `terraform test`
+  (265 en `modules/` y 234 en `stages/`, con el mismo comando sobre `modules` y sobre `stages`).
 - En `tests/`, `go vet ./...` sale con 0 y `go test -count=1 -json ./...` (lo que corre el
   trabajo `go` de `pr.yml`, sin GCP) sale con 0: 47 eventos `pass`, 26 `skip` y 0 `fail`,
   contando pruebas y subpruebas (`"Action"` de cada línea con `"Test"`). Las 26 omitidas lo dicen
@@ -326,10 +330,12 @@ cargas de qa → spoke y cargas de prod. Por raíz separa un trabajo `plan` sin 
 que vuelve a planear con el candado y solo aplica si la huella del plan coincide con la
 revisada; `common` y `prod` piden aprobación
 (ADR [0025](docs/adr/0025-plan-aprobacion-y-apply-separados.md) y ADR 0029 §3). WIF solo da una
-cuenta que escribe a un trabajo de `main`, de un flujo reutilizable de `.github/workflows/` de
-este repositorio y con entorno de GitHub (`attribute.deploy` de `stages/0-bootstrap/wif.tf`);
-cualquier otro trabajo, como el plan de un PR, solo obtiene `tf-read` (pendientes 123 y 124,
-`VERIFICAR-EN-APPLY`). La variable de
+cuenta que escribe al trabajo `apply` de `_terraform-root.yml` de este repositorio leído de
+`main` (`job_workflow_ref` exacto), en una ejecución de `main` disparada por `push` o
+`workflow_dispatch` (`event_name`) y con entorno de GitHub (`attribute.deploy` de
+`stages/0-bootstrap/wif.tf`); cualquier otro trabajo, como el plan de un PR o un flujo nuevo,
+solo obtiene `tf-read` (pendientes 123, 124 y 156, `VERIFICAR-EN-APPLY`; qué hacer para un
+flujo nuevo que escriba: [`docs/pipeline.md`](docs/pipeline.md) §5). La variable de
 repositorio `GCP_DISABLED_ENVS` (solo `dev` y `qa`; prod nunca se apaga) deja apagado un
 entorno destruido: sus raíces no se planean ni se aplican y `drift.yml` no las revisa.
 `drift.yml` (diario: drift por raíz con `tf-read` y recursos no administrados del proyecto con
@@ -359,7 +365,7 @@ con qué comando; lo demás espera al primer apply. Los números de pendientes r
 | Despliegue limpio de las etapas 0 a 3 | Orden fijo; interfaces de la tabla del ADR 0029; `remote_state.tf` con postcondiciones; `apply.yml` encadenado con una cuenta por raíz y entorno | **Pendiente del primer apply.** Sin GCP solo se demuestra que cada raíz valida y planea con proveedores simulados (`bash scripts/check.sh`, 9 raíces en `--list`) |
 | Segundo `plan` sin cambios | `ignore_changes` donde hay altas externas (perímetro opcional, pool por defecto de GKE) y donde cambia el apagado fuera de horario de dev y qa (ADR 0028); `drift.yml` diario con `-detailed-exitcode`; huella del plan con `tf-read` igual a la del apply con la cuenta de la raíz (`VERIFICAR-EN-APPLY` en `_terraform-root.yml`) | **Pendiente del primer apply** (pendientes 11, 48 y 80) |
 | `destroy` de dev sin huérfanos | `destroy.yml` (dev o qa): siempre `3-workloads/envs/<env>` y el spoke solo con `incluir_red`, con plan guardado y huella; `scripts/destroy-plan-check.py` detiene una raíz con `deletion_protection` o `deletion_policy` que impidan borrar, con recursos únicos del proyecto o con nombres que no empiecen con `<prefix>-<env>-`; `scripts/destroy-orphans.py` falla si Cloud Asset Inventory muestra en el proyecto algo del entorno (etiqueta `env`, prefijo o restos de GKE con el namespace o la red del entorno) que no conserve `1-base` ni administre un estado. Queda a propósito lo del entorno que vive en `1-base`: llaves, repositorios y contenedores de secretos (ADR 0029 §8) y las cuentas de ejecución (`stages/1-base/runtime_accounts.tf`). Después, `GCP_DISABLED_ENVS` evita que el siguiente `apply.yml` lo vuelva a crear | **Construido y probado sin GCP** (`bash scripts/selftest.sh`, 24 nov 2026 → 218 OK, 0 FALLA: guardias, planes reales de destrucción del spoke y de las cargas de dev, de 40 y 90 recursos, y huérfanos y restos de GKE con datos de ejemplo); **pendiente** correrlo contra dev (pendientes 11 y 85; la bóveda con retención forzada, la conexión de PSA y el bucket con objetos pueden bloquearlo: 86, 87 y 89; restos de GKE en Cloud Asset: 140) |
-| El pipeline bloquea un PR que viola una política | Doce reglas Rego (más `lib.rego`); `pr.yml` corre `policy-check.sh` siempre y Conftest sobre el plan real con `GCP_ENABLED`; `plan-gate` falla si falla un plan | **Demostrado sin GCP para las reglas:** `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` (24 nov 2026) → `134 tests, 134 passed, 0 warnings, 0 failures` y 42 planes de ejemplo con el resultado esperado (21 pasan y 21 se rechazan); 18 están recortados de planes reales sin GCP (`ls policies/fixtures \| grep -c _real_` → 18). Que un PR real quede bloqueado depende de configurar en GitHub la protección de `main` con `plan-gate` y las demás comprobaciones como obligatorias, del plan de GitHub (pendiente 12) y de la primera corrida de `pr.yml` (pendiente 51) |
+| El pipeline bloquea un PR que viola una política | Doce reglas Rego (más `lib.rego`); `pr.yml` corre `policy-check.sh` siempre y Conftest sobre el plan real con `GCP_ENABLED`; `plan-gate` falla si falla un plan | **Demostrado sin GCP para las reglas:** `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` (24 nov 2026, rama `r3/cierre`) → `138 tests, 138 passed, 0 warnings, 0 failures` y 43 planes de ejemplo con el resultado esperado (21 pasan y 22 se rechazan); 18 están recortados de planes reales sin GCP (`ls policies/fixtures \| grep -c _real_` → 18). Que un PR real quede bloqueado depende de configurar en GitHub la protección de `main` con `plan-gate` y las demás comprobaciones como obligatorias, del plan de GitHub (pendiente 12) y de la primera corrida de `pr.yml` (pendiente 51) |
 | Una VM de prod alcanza on-premises y resuelve su DNS | Dos HA VPN con BGP, anuncios del hub, peering con exportación de rutas, zona de reenvío en el hub y de peering DNS en el spoke; en modo simulado, política de firewall de `onprem-sim`, delegación del rango de DNS y la VM DNS de prueba de `onprem-sim` como código (`stages/2-networks/onprem_dns.tf`, opcional con `onprem_dns_vm = true` en `0-bootstrap` y en el hub; su cuenta la crea `1-base`) | **Pendiente del primer apply** (pendientes 6, 7, 36 y 37; la VM DNS: 128, 129 y 130; y que la VPN y el DNS entrante funcionen con la política de red del hub, `VERIFICAR-EN-APPLY` en `stages/2-networks/firewall.tf`). Con la VPN real (`simulate_onprem = false`) el plan del hub falla en el pipeline: limitación conocida (punto 151) |
 | Sin hallazgos críticos ni altos en Security Command Center | checkov en cada PR; políticas de organización solo con organización; notificación opcional de hallazgos altos y críticos a Pub/Sub; mapa del CIS v5.0 ([`docs/cumplimiento-cis.md`](docs/cumplimiento-cis.md)) con las desviaciones aceptadas del ADR 0027 | **Pendiente del primer apply** y de activar SCC en el proyecto (pendiente 2; HYPOTHESIS que funcione sin organización, ADR 0029 §7); procedimiento de evaluación en el pendiente 56. checkov sin GCP no equivale a SCC |
 | Simulacro de DR dentro del RTO | Réplica de Cloud SQL, bucket de doble región, `dr_active`; estado multirregional, VPN de DR y balanceador interno por región (ADR 0022); [runbook 04](docs/runbooks/04-conmutacion-a-dr.md) con tabla de tiempos | **Pendiente del primer apply.** RTO ≤ 4 h y RPO ≤ 15 min son objetivos sin medir |

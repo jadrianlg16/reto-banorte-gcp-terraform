@@ -15,7 +15,7 @@ flowchart TB
   subgraph GH["GitHub · repositorio privado"]
     team["Equipo<br/>solo lectura en GCP"]
     repo["Repositorio<br/>Terraform en 4 etapas"]
-    gha["GitHub Actions<br/>un trabajo por raíz, con su environment<br/>para escribir: solo desde main"]
+    gha["GitHub Actions<br/>un trabajo por raíz, con su environment<br/>escribe solo _terraform-root.yml en main"]
     team -- "pull request" --> repo -- "merge a main" --> gha
   end
 
@@ -76,17 +76,20 @@ flowchart TB
 
 - **WIF.** El proveedor acepta solo tokens del repositorio por su ID numérico y el de su dueño.
   Las cuentas que escriben se toman por `attribute.deploy`, que vale el entorno de GitHub solo si
-  el trabajo es de `main` y de un flujo reutilizable de `.github/workflows/` de este repositorio,
-  y `none` si no (`stages/0-bootstrap/wif.tf`). `tf-base` y `tf-net` aceptan `common`; cada
-  cuenta de entorno, solo su entorno. Cualquier otro trabajo, de cualquier rama, solo obtiene
-  `tf-read` (pendientes 123 y 124). La regla "Deployment branches: `main`" de cada entorno de
-  GitHub queda como segunda barrera.
-- **Protección del estado.** La política de denegación del proyecto niega a las nueve cuentas,
-  sobre lo que tenga la etiqueta (bucket y llavero del estado, las propias cuentas), borrar o
-  cambiar su IAM y suplantar a las cuentas. Sin condición les niega tocar WIF y los roles
-  personalizados, crear llaves de cuentas, borrar el proyecto y pedir tokens o firmas de
-  cualquier cuenta de servicio (`actAs` sigue permitido; pendiente 127). Que las etiquetas
-  funcionen sin organización es HYPOTHESIS (ADR 0029 §5).
+  el trabajo es el `apply` de `_terraform-root.yml` de este repositorio leído de `main`
+  (`job_workflow_ref` exacto), en una ejecución de `main` disparada por `push` o
+  `workflow_dispatch`, y `none` si no (`stages/0-bootstrap/wif.tf`). `tf-base` y `tf-net`
+  aceptan `common`; cada cuenta de entorno, solo su entorno. Cualquier otro trabajo, de
+  cualquier rama o de otro flujo, solo obtiene `tf-read` (pendientes 123, 124 y 156). La regla
+  "Deployment branches: `main`" de cada entorno de GitHub queda como segunda barrera.
+- **Protección del estado.** La política de denegación del proyecto tiene cuatro reglas. A las
+  nueve cuentas les niega, sobre lo que tenga la etiqueta (bucket y llavero del estado, las
+  propias cuentas), borrar o cambiar su IAM y suplantar a las cuentas; sin condición, tocar WIF
+  y los roles personalizados, crear llaves de cuentas, borrar el proyecto, cambiar los servicios
+  habilitados y pedir tokens o firmas de cualquier cuenta de servicio (`actAs` sigue permitido;
+  pendiente 127); y leer valores de secretos (salvo `tf-net`). A todos, también a la persona
+  dueña, les niega crear llaves de cuentas de servicio (pendiente 155). Que las etiquetas y la
+  denegación funcionen sin organización es HYPOTHESIS (ADR 0029 §5).
 - **Cuentas de ejecución.** Las de las cargas (`<prefix>-<env>-<app>-<uso>`: `gke-nodes`,
   `workload`, `mig`, `run` y `sched` donde hay apagado) las crea `1-base` con sus permisos
   (`stages/1-base/runtime_accounts.tf`). `tf-wl-<env>` solo tiene `serviceAccountUser` sobre las
@@ -102,26 +105,29 @@ flowchart TB
   `0-bootstrap`.
 - **Qué separa a los entornos** (ADR 0029 §9): una VPC por entorno sin peering entre ellas, el
   prefijo `<prefix>-<env>-` y la etiqueta `env`, una cuenta por entorno ligada a su entorno de
-  GitHub y permisos condicionados en Storage, KMS y Secret Manager. **No** los separan, como
-  riesgo aceptado: los permisos sin condición de las cuentas de entorno sobre Compute, GKE,
-  Cloud Run, Cloud SQL, Memorystore, Filestore, Backup and DR y Monitoring, los agentes de
-  servicio, la regla por defecto de Binary Authorization (sin atestadores por entorno) y las
-  cuotas.
+  GitHub y permisos condicionados en Storage, KMS, Secret Manager, Cloud SQL, GKE y Backup and
+  DR. **No** los separan, como riesgo aceptado: los permisos sin condición de las cuentas de
+  entorno sobre Compute, Cloud Run, Memorystore, Filestore, Backup for GKE, Certificate Manager
+  y Monitoring, la creación de un clúster con el nombre de otro entorno (riesgo 3 del ADR 0029
+  §9), los agentes de servicio, la regla por defecto de Binary Authorization (sin atestadores
+  por entorno) y las cuotas.
 
 ## Lo que cambió del primer texto del ADR 0029 al código
 
-El diagrama sigue al código final (`6d27623`). Durante la construcción y las correcciones de R2
-cambió esto respecto del primer texto del ADR 0029 (24 nov 2026):
+El diagrama sigue al código de la rama `r3/cierre` (con el arreglo de la re-revisión de
+seguridad, `r2/seg2`). Durante la construcción, las correcciones de R2 y ese arreglo cambió esto
+respecto del primer texto del ADR 0029 (24 nov 2026):
 
 | Tema | Primer texto del ADR 0029 | Código |
 |---|---|---|
 | Políticas de organización y VPC-SC | En `1-base` (§1) | En `0-bootstrap` (`org.tf`), las aplica la persona |
 | Cuentas de ejecución de las cargas | Las crea cada raíz de entorno (§4) | Las crea `1-base` (`runtime_accounts.tf`); `3-workloads` solo las lee |
-| Cuentas que escriben por WIF | Por `attribute.environment` (§3) | Por `attribute.deploy`: entorno de GitHub, `main` y flujo del repositorio |
+| Cuentas que escriben por WIF | Por `attribute.environment` (§3) | Por `attribute.deploy`: entorno de GitHub, `main`, `_terraform-root.yml` exacto y evento `push` o `workflow_dispatch` |
 | Cuenta de Compute por defecto sin Editor (`DEPRIVILEGE`) | En `1-base` (§4) | En `0-bootstrap` (`main.tf`) |
-| Rol `<prefix>OffHoursScheduler` | En `1-base` (§4) | Lo crea `0-bootstrap`; `1-base` lo publica como `off_hours_role_id` y se lo da a la cuenta `sched` |
+| Rol `<prefix>OffHoursScheduler` | En `1-base` (§4) | Lo crea `0-bootstrap`; `1-base` lo publica como `off_hours_role_id` y se lo da a la cuenta `sched`, condicionado a la instancia y a los clústeres de su entorno |
 | Lo que leen las raíces de red | `1-base` (y el hub, los spokes) (§2) | Ninguna lee `1-base`; los spokes leen solo el hub |
 | Roles de `tf-read` | Cuatro roles más el bucket (§3) | Los mismos y `serviceusage.serviceUsageConsumer`, que tienen todas las cuentas |
-| Regla sin condición de la denegación | WIF (§5) | WIF, roles personalizados, llaves de cuentas, borrar el proyecto y pedir tokens o firmas |
+| Regla sin condición de la denegación | WIF (§5) | WIF, roles personalizados, llaves de cuentas, borrar el proyecto, cambiar los servicios habilitados y pedir tokens o firmas; además, una regla que niega a todos crear llaves de cuentas de servicio |
+| Roles de GKE y Monitoring de `tf-wl-<env>` | Sin condición (§3) | `container.clusterAdmin` (no `container.admin`), con Cloud SQL y Backup and DR condicionados al entorno; cinco roles finos de Monitoring (no `monitoring.editor`) |
 
 El diseño anterior, de varios proyectos y carpetas, está en la rama `archivo/multiproyecto`.

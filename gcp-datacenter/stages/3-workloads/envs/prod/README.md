@@ -44,8 +44,9 @@ Las llaves vienen de `kms_key_ids[<env>]` de `1-base`; las cuentas de ejecución
 Las crea `1-base` (`stages/1-base/runtime_accounts.tf`) con sus permisos: roles mínimos de
 telemetría en el proyecto, lectura de los secretos del entorno (`workload` y `run`), lectura del
 repositorio del entorno (`gke-nodes` y `mig`), `cloudsql.client` e `instanceUser` limitados a
-las instancias `<prefix>-<env>-data-` (`workload`, `run` y `mig`), el rol del apagado (`sched`)
-y el enlace de Workload Identity (`workload`). Esta raíz las lee y las adjunta a sus recursos:
+las instancias `<prefix>-<env>-data-` (`workload`, `run` y `mig`), el rol del apagado (`sched`,
+condicionado a la instancia y a los clústeres del entorno) y el enlace de Workload Identity por
+clúster (`workload`). Esta raíz las lee y las adjunta a sus recursos:
 `<prefix>-tf-wl-<env>` solo tiene `iam.serviceAccountUser` sobre `gke-nodes`, `mig`, `run` y
 `sched` de su entorno. Una postcondición exige que `1-base` publique las cuatro cuentas (y
 `scheduler` con el apagado).
@@ -58,13 +59,18 @@ Run descarga imágenes con su agente de servicio, que es del proyecto: ese permi
 ### Alcance por entorno en el proyecto único
 
 - **Workload Identity**: el pool `<proyecto>.svc.id.goog` es del proyecto y lo comparten los
-  clústeres de los tres entornos, así que lo que separa a los entornos es el namespace,
-  `<application>-<environment>`, que fija `1-base` (ADR 0029 §9). Una cuenta de Kubernetes con
-  el mismo namespace y nombre en el clúster de otro entorno obtendría la misma identidad: se
-  evita no creando namespaces de otro entorno en un clúster (riesgo aceptado, ADR 0029). El pool
-  lo crea GKE con el primer clúster: `1-base` crea el enlace solo con
+  clústeres de los tres entornos, y el principal de un namespace y una cuenta de Kubernetes vale
+  desde cualquier clúster del proyecto. Por eso `1-base` enlaza la cuenta `workload` al
+  `principalSet` de todos los pods del clúster `<prefix>-<env>-<application>-gke[-dr]`
+  (`…/kubernetes.cluster/https://container.googleapis.com/v1/projects/<proyecto>/locations/<ubicación>/clusters/<nombre>`),
+  no a un namespace (ADR 0029 §9, hallazgo N1): la frontera es el clúster, que es de un solo
+  entorno y una sola aplicación. Cualquier pod del clúster que use una cuenta de Kubernetes
+  anotada con la cuenta `workload` la obtiene; el namespace `<application>-<environment>` queda
+  como convención. El pool lo crea GKE con el primer clúster: `1-base` crea el enlace solo con
   `gke_workload_identity_bindings = true`, que se enciende después del primer apply de esta raíz
-  con `enable_gke`. Mientras tanto el `check "workload_identity_enlazada"` avisa en cada plan.
+  con `enable_gke` (para el clúster de DR, el entorno debe estar en `dr_environments` de
+  `1-base`). Mientras tanto el `check "workload_identity_enlazada"` avisa en cada plan si algún
+  clúster activo no tiene enlace (pendiente 158).
 - **Observabilidad**: las alertas, el SLO y el tablero filtran por los nombres
   `<prefix>-<env>-` (clústeres, instancias de Cloud SQL, mapas de URL) y por la etiqueta `env`
   de las VM, para no mezclar los entornos del proyecto (módulo `observability`).
@@ -170,7 +176,7 @@ gcloud scheduler jobs run <id>
 
 | Prefijo | Salidas que usa (ADR 0029, "Interfaces entre etapas") |
 |---|---|
-| `1-base` | `kms_key_ids` (entorno → uso → ID; también se acepta entorno → ubicación → uso), `artifact_registry_repositories` (entorno → aplicación → URL `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>`), `runtime_service_accounts` (entorno → aplicación → uso → correo), `gke_workload_identity_members` (entorno → aplicación → miembro o null), `notification_channel_ids` |
+| `1-base` | `kms_key_ids` (entorno → uso → ID; también se acepta entorno → ubicación → uso), `artifact_registry_repositories` (entorno → aplicación → URL `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>`), `runtime_service_accounts` (entorno → aplicación → uso → correo), `gke_workload_identity_members` (entorno → aplicación → clúster `primary` o `dr` → `principalSet`, o null sin el enlace), `notification_channel_ids` |
 | `2-networks/<env>` | `network_self_link`, `subnets`, `psa_range_name`, `secure_tags`, `secure_tag_keys`, `reserved_cidrs`, `lb_backend_ports` (opcional) |
 
 De `kms_key_ids` la raíz toma la ubicación del ID de cada llave y el uso de la primera palabra

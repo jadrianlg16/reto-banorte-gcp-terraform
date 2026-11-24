@@ -165,8 +165,8 @@ de la persona que aplica.
    | `github_repository`, `github_repository_id`, `github_repository_owner_id` | el nombre es informativo; WIF confía en los dos números (entre comillas) |
    | `state_bucket_location`, `state_bucket_dual_regions` | `US` por defecto. **No se cambia después del primer apply** (ADR 0022) |
    | `budget_amount` | monto mensual del presupuesto |
-   | `enable_protection_tags` | `true`. `false` solo si un apply demuestra que las etiquetas no funcionan en el proyecto: deja solo la regla sin condición de la denegación |
-   | `enable_deny_policy` | `true`. Exige `roles/iam.denyAdmin`. `false` quita la política de denegación entera |
+   | `enable_protection_tags` | `true`. `false` solo si un apply demuestra que las etiquetas no funcionan en el proyecto: quita la regla con etiqueta y deja las otras tres de la denegación (sin condición, valores de secretos y llaves para todos) |
+   | `enable_deny_policy` | `true`. Exige `roles/iam.denyAdmin`. `false` quita la política de denegación entera, también la regla que niega a todos crear llaves de cuentas de servicio |
    | `labels` | `app`, `owner` y `cost_center` en minúsculas |
 
    Un error en los IDs de WIF no se nota en el plan: aparece cuando el primer flujo de GitHub no
@@ -192,14 +192,16 @@ de la persona que aplica.
      `TfNetworkTagManager` y `OffHoursScheduler`, con el prefijo), el pool
      `bnt-bootstrap-sec-wif-pool` y el proveedor con `attribute_condition` sobre
      `assertion.repository_id` y `assertion.repository_owner_id` y el atributo
-     `attribute.deploy` (las cuentas que escriben solo desde `main`; `pipeline.md` §5,
-     pendientes 123 y 124);
+     `attribute.deploy` (las cuentas que escriben solo desde el trabajo `apply` de
+     `_terraform-root.yml` en `main`, con `push` o `workflow_dispatch`; `pipeline.md` §5,
+     pendientes 123, 124 y 156);
    - `roles/resourcemanager.tagUser` en el proyecto para el agente de GKE y para
      `<número>@cloudservices.gserviceaccount.com` (pendiente 137);
    - la etiqueta `bnt-proteccion = etapa-0` con sus enlaces y la política
      `bnt-bootstrap-sec-deny-pipeline` (según las dos banderas; la regla sin etiqueta también
-     niega a las nueve cuentas pedir tokens o firmar como otra cuenta, pendiente 127), y el
-     presupuesto `bnt-bootstrap-ops-budget`;
+     niega a las nueve cuentas pedir tokens o firmar como otra cuenta y cambiar los servicios
+     habilitados, pendientes 127 y 154, y la regla 4 niega a todos, también a ti, crear llaves
+     de cuentas de servicio, pendiente 155), y el presupuesto `bnt-bootstrap-ops-budget`;
    - solo con organización: `google_org_policy_policy` con padre `projects/<ID>` (al final, después
      de las cuentas, sus roles y el bucket) y, con `access_policy_id`, el perímetro
      `bnt_common_sec_perimeter` en dry-run alrededor del proyecto.
