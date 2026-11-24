@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Pruebas sin GCP de los scripts que usan los flujos (datos de prueba en scripts/testdata/):
-#   unmanaged-resources.py  recursos de Cloud Asset que no están en los estados
+#   unmanaged-resources.py  recursos de Cloud Asset del proyecto que no están en los estados
+#   affected-roots.sh       raíces que planea pr.yml (y drift.yml con --all)
+#   root-tfvars.py          variables de cada raíz desde GCP_TFVARS_JSON
 #   go-test-report.sh       conteo de pruebas omitidas de go test -json
 #   module-tests.sh         pruebas de integración de cada módulo
 #   plan-fingerprint.py     huella del plan revisado (apply.yml)
 #   cut-plan.py             recorte de planes para policies/fixtures
+#   check-main-tip.sh, plan-gate.sh
 #   destroy-guard.sh, destroy-plan-check.py, destroy-orphans.py   destroy.yml
+# y la estructura de los flujos que dependen de ellos (orden del ADR 0029 §2, cuentas del plan y
+# del apply, destroy.yml).
 #
 # Uso: scripts/selftest.sh   (sale con 1 si algo no da lo esperado)
-# Requiere python3 (o PYTHON con la ruta del intérprete). Compatible con bash 3.2.
+# Requiere python3 (o PYTHON con la ruta del intérprete) y git. Compatible con bash 3.2.
 
 set -uo pipefail
 
@@ -17,6 +22,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR" || exit 2
 PY="${PYTHON:-python3}"
 DATA="scripts/testdata"
+WF="../.github/workflows"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -29,37 +35,39 @@ check() { # check <descripción> <código esperado> <código obtenido>
     fails=$((fails + 1))
   fi
 }
+gitc() { git -C "$1" -c user.name=t -c user.email=t@example.com -c core.autocrlf=false "${@:2}"; }
 
 # --- unmanaged-resources.py ----------------------------------------------------------------
-# Carpeta de dev: folders/222222222222, con los proyectos example-dev-app y example-dev-data
-# (4-projects.state.json); 4-projects-qa.state.json tiene un proyecto de otra carpeta.
+# Proyecto único (ADR 0029): example-landing-zone, número 111111111111. Estados de 0-bootstrap,
+# 1-base y el spoke de dev (crudos) y de 3-workloads de dev (`terraform show -json`).
 u="$DATA/unmanaged"
-um() { "$PY" scripts/unmanaged-resources.py --folder folders/222222222222 "$@"; }
-dev_states=(--state "$u/4-projects.state.json" --state "$u/4-projects-qa.state.json")
-um --assets "$u/assets.json" "${dev_states[@]}" \
-  --state "$u/5-workloads.show.json" --state "$u/2-security.state.json" \
+um() { "$PY" scripts/unmanaged-resources.py --project example-landing-zone --project-number 111111111111 "$@"; }
+states=(--state "$u/0-bootstrap.state.json" --state "$u/1-base.state.json" --state "$u/2-networks-dev.state.json")
+um --assets "$u/assets.json" "${states[@]}" --state "$u/3-workloads-dev.show.json" \
   --summary "$tmp/summary.md" >"$tmp/out.txt" 2>&1
 check "unmanaged-resources: sale con 1 si hay recursos no administrados" 1 $?
 grep '^NO ADMINISTRADO ' "$tmp/out.txt" >"$tmp/got.txt"
 if diff -u "$u/expected.txt" "$tmp/got.txt"; then
-  echo "OK    unmanaged-resources: exactamente los 4 recursos manuales esperados"
+  echo "OK    unmanaged-resources: exactamente los 5 recursos manuales esperados"
 else
   echo "FALLA unmanaged-resources: la lista de no administrados no coincide"
   cat "$tmp/out.txt"
   fails=$((fails + 1))
 fi
-grep -q '| \*\*No administrados\*\* | 4 |' "$tmp/summary.md"
+grep -q '| \*\*No administrados\*\* | 5 |' "$tmp/summary.md"
 check "unmanaged-resources: resumen en Markdown con el conteo" 0 $?
-um --assets "$u/assets.json" "${dev_states[@]}" \
-  --state "$u/5-workloads.show.json" --state "$u/2-security.state.json" \
+grep -q '^  permitidos por regla: 4$' "$tmp/out.txt"
+check "unmanaged-resources: la lista de permitidos cubre lo que GCP crea solo (4)" 0 $?
+um --assets "$u/assets.json" "${states[@]}" --state "$u/3-workloads-dev.show.json" \
   --report-only >/dev/null 2>&1
 check "unmanaged-resources: --report-only sale con 0" 0 $?
-# Sin el estado de 5-workloads, sus recursos pasan a no administrados (la comparación depende
+# Sin el estado de 3-workloads, sus recursos pasan a no administrados (la comparación depende
 # de los estados, no de la lista de permitidos).
-um --assets "$u/assets.json" "${dev_states[@]}" --state "$u/2-security.state.json" >"$tmp/out2.txt" 2>&1
+um --assets "$u/assets.json" "${states[@]}" >"$tmp/out2.txt" 2>&1
 n="$(grep -c '^NO ADMINISTRADO ' "$tmp/out2.txt")"
-# 4 manuales + 7 de 5-workloads: bucket, plantilla, MIG, su VM y su disco, clúster y node pool.
-check "unmanaged-resources: sin un estado, sus recursos salen como no administrados (11)" 11 "$n"
+# 5 manuales + 8 de 3-workloads: cuenta de servicio, bucket, plantilla, MIG, su VM y su disco,
+# clúster y node pool.
+check "unmanaged-resources: sin un estado, sus recursos salen como no administrados (13)" 13 "$n"
 # Listados que no permiten concluir nada: error (2), nunca "0 no administrados" con 0, ni
 # siquiera con --report-only.
 printf '[]' >"$tmp/a-lista-vacia.json"
@@ -68,56 +76,243 @@ printf '{"results": []}' >"$tmp/a-results-vacio.json"
 printf '{"nextPageToken": "x"}' >"$tmp/a-sin-results.json"
 printf '[{"assetType": "storage.googleapis.com/Bucket"}]' >"$tmp/a-sin-name.json"
 for a in lista-vacia objeto-vacio results-vacio sin-results sin-name; do
-  um --assets "$tmp/a-$a.json" "${dev_states[@]}" --report-only >/dev/null 2>&1
+  um --assets "$tmp/a-$a.json" "${states[@]}" --report-only >/dev/null 2>&1
   check "unmanaged-resources: listado $a es error aunque haya --report-only" 2 $?
 done
-um --assets "$u/assets-otra-carpeta.json" "${dev_states[@]}" --state "$u/2-security.state.json" >/dev/null 2>&1
-check "unmanaged-resources: listado de una carpeta ajena es error" 2 $?
-# Listado de la carpeta de qa con --folder de dev: trae un proyecto administrado (de qa), pero
-# faltan los de dev.
-um --assets "$u/assets-qa.json" "${dev_states[@]}" --report-only >/dev/null 2>&1
-check "unmanaged-resources: listado de la carpeta de otro entorno es error" 2 $?
-# Listado truncado: solo uno de los dos proyectos de dev.
+um --assets "$u/assets-otro-proyecto.json" "${states[@]}" --report-only >/dev/null 2>&1
+check "unmanaged-resources: listado de otro proyecto es error" 2 $?
+# Listado sin el proyecto mismo (otro alcance, truncado o sin permisos).
 "$PY" -c '
 import json, sys
 a = json.load(open(sys.argv[1], encoding="utf-8"))
-a = [x for x in a if not x["name"].endswith("/projects/111111111112")]
+a = [x for x in a if x["assetType"] != "cloudresourcemanager.googleapis.com/Project"]
 json.dump(a, open(sys.argv[2], "w", encoding="utf-8"))
-' "$u/assets.json" "$tmp/a-truncado.json"
-um --assets "$tmp/a-truncado.json" "${dev_states[@]}" --state "$u/5-workloads.show.json" \
-  --state "$u/2-security.state.json" --report-only >"$tmp/out-trunc.txt" 2>&1
-check "unmanaged-resources: listado truncado (falta un proyecto del entorno) es error" 2 $?
-grep -q 'example-dev-data' "$tmp/out-trunc.txt"
+' "$u/assets.json" "$tmp/a-sin-proyecto.json"
+um --assets "$tmp/a-sin-proyecto.json" "${states[@]}" --report-only >"$tmp/out-sinp.txt" 2>&1
+check "unmanaged-resources: listado que no trae el proyecto es error" 2 $?
+grep -q 'no trae el proyecto example-landing-zone' "$tmp/out-sinp.txt"
 check "unmanaged-resources: el error nombra el proyecto que falta" 0 $?
-"$PY" scripts/unmanaged-resources.py --folder folders/999 --assets "$u/assets.json" \
-  "${dev_states[@]}" --report-only >/dev/null 2>&1
-check "unmanaged-resources: --folder sin proyectos en los estados es error" 2 $?
+"$PY" scripts/unmanaged-resources.py --project X --project-number 111111111111 --assets "$u/assets.json" \
+  "${states[@]}" --report-only >/dev/null 2>&1
+check "unmanaged-resources: --project inválido es error" 2 $?
+"$PY" scripts/unmanaged-resources.py --project example-landing-zone --project-number abc \
+  --assets "$u/assets.json" "${states[@]}" --report-only >/dev/null 2>&1
+check "unmanaged-resources: --project-number inválido es error" 2 $?
 # APIs habilitadas: las dependencias de la lista cerrada se permiten; otra API habilitada a
 # mano (aiplatform) se reporta.
-um --assets "$u/assets-apis.json" "${dev_states[@]}" >"$tmp/out3.txt" 2>&1
+um --assets "$u/assets-apis.json" --state "$u/0-bootstrap.state.json" >"$tmp/out3.txt" 2>&1
 check "unmanaged-resources: una API habilitada a mano sale con 1" 1 $?
 [ "$(grep '^NO ADMINISTRADO ' "$tmp/out3.txt")" = \
   "NO ADMINISTRADO serviceusage.googleapis.com/Service projects/111111111111/services/aiplatform.googleapis.com" ]
 check "unmanaged-resources: solo la API manual sale; storage-api y containerfilesystem se permiten" 0 $?
-# drift.yml pasa la carpeta del entorno al script.
-grep -q -- '--folder "${folder}"' ../.github/workflows/drift.yml
-check "drift.yml: pasa --folder con la carpeta del entorno" 0 $?
+# drift.yml lista el proyecto (no una carpeta) y pasa su ID y su número al script.
+grep -qF -- '--scope="projects/${PROJECT_ID}"' "$WF/drift.yml" &&
+  grep -qF -- '--project "${PROJECT_ID}" --project-number "${PROJECT_NUMBER}"' "$WF/drift.yml" &&
+  ! grep -q -- '--folder' "$WF/drift.yml"
+check "drift.yml: Cloud Asset con --scope=projects/<ID> y el script con --project y --project-number" 0 $?
 
-# drift.yml revisa cada carpeta que crea 1-org (local environment + environments).
+# --- affected-roots.sh ---------------------------------------------------------------------
+# Repositorio de prueba con el árbol del ADR 0029 §2: 0-bootstrap, 1-base, el hub 2-networks
+# con sus spokes envs/{dev,qa,prod} y 3-workloads/envs/{dev,qa,prod}. El spoke de dev usa
+# stages/2-networks/comun-red (dentro del hub) como módulo local; stages/3-workloads/comun no
+# lo usa nadie, pero cuelga de 3-workloads.
+ar="$tmp/ar"
+ag="$ar/gcp-datacenter"
+mkdir -p "$ag/scripts"
+cp scripts/affected-roots.sh "$ag/scripts/"
+for r in 0-bootstrap 1-base 2-networks 2-networks/envs/dev 2-networks/envs/qa 2-networks/envs/prod \
+  3-workloads/envs/dev 3-workloads/envs/qa 3-workloads/envs/prod; do
+  mkdir -p "$ag/stages/$r"
+  echo 'terraform {}' >"$ag/stages/$r/versions.tf"
+done
+mkdir -p "$ag/stages/2-networks/comun-red" "$ag/stages/3-workloads/comun" "$ag/modules/storage" \
+  "$ag/policies" "$ag/docs"
+printf 'module "comun" {\n  source = "../../comun-red"\n}\n' >"$ag/stages/2-networks/envs/dev/main.tf"
+for f in stages/2-networks/comun-red/main.tf stages/3-workloads/comun/main.tf stages/3-workloads/README.md \
+  modules/storage/main.tf policies/p.rego docs/d.md; do
+  echo base >"$ag/$f"
+done
+echo base >"$ar/README.md"
+git init -q "$ar" 2>/dev/null
+gitc "$ar" add -A 2>/dev/null && gitc "$ar" commit -q -m base 2>/dev/null
+roots_of() { # lee "roots=<json>" y escribe las raíces separadas por espacios
+  "$PY" -c '
+import json, sys
+line = sys.stdin.read().strip()
+if not line.startswith("roots="):
+    sys.exit(1)
+print(" ".join(r["root"] for r in json.loads(line[len("roots="):])))
+'
+}
+ar_case() { # ar_case <descripción> <archivo relativo al repositorio> <raíces esperadas>
+  local before got
+  before="$(git -C "$ar" rev-parse HEAD)"
+  mkdir -p "$(dirname "$ar/$2")"
+  echo cambio >>"$ar/$2"
+  gitc "$ar" add -A 2>/dev/null && gitc "$ar" commit -q -m "cambio en $2" 2>/dev/null
+  got="$(bash "$ag/scripts/affected-roots.sh" "$before" HEAD 2>/dev/null | roots_of)"
+  [ "$got" = "$3" ]
+  check "affected-roots: $1" 0 $?
+  [ "$got" = "$3" ] || echo "      esperado [$3], obtenido [$got]"
+}
+all_roots="stages/1-base stages/2-networks stages/2-networks/envs/dev stages/2-networks/envs/prod stages/2-networks/envs/qa stages/3-workloads/envs/dev stages/3-workloads/envs/prod stages/3-workloads/envs/qa"
+workload_roots="stages/3-workloads/envs/dev stages/3-workloads/envs/prod stages/3-workloads/envs/qa"
+bash "$ag/scripts/affected-roots.sh" --all >"$tmp/all.txt" 2>&1
+check "affected-roots: --all sale con 0" 0 $?
+want_all='roots=[{"root":"stages/1-base","stage":"1-base","environment":"common"},{"root":"stages/2-networks","stage":"2-networks","environment":"common"},{"root":"stages/2-networks/envs/dev","stage":"2-networks/dev","environment":"dev"},{"root":"stages/2-networks/envs/prod","stage":"2-networks/prod","environment":"prod"},{"root":"stages/2-networks/envs/qa","stage":"2-networks/qa","environment":"qa"},{"root":"stages/3-workloads/envs/dev","stage":"3-workloads/dev","environment":"dev"},{"root":"stages/3-workloads/envs/prod","stage":"3-workloads/prod","environment":"prod"},{"root":"stages/3-workloads/envs/qa","stage":"3-workloads/qa","environment":"qa"}]'
+[ "$(cat "$tmp/all.txt")" = "$want_all" ]
+check "affected-roots: --all da las 8 raíces con la llave de cuenta y el entorno de GitHub (sin 0-bootstrap)" 0 $?
+sed 's/^roots=//' "$tmp/all.txt" >"$tmp/all.json"
+ar_case "un cambio en el spoke de dev planea solo ese spoke" gcp-datacenter/stages/2-networks/envs/dev/main.tf \
+  "stages/2-networks/envs/dev"
+ar_case "un cambio en el hub planea solo el hub" gcp-datacenter/stages/2-networks/main.tf "stages/2-networks"
+ar_case "un cambio en 1-base planea solo 1-base" gcp-datacenter/stages/1-base/main.tf "stages/1-base"
+ar_case "un cambio en 3-workloads de qa planea solo esa raíz" gcp-datacenter/stages/3-workloads/envs/qa/main.tf \
+  "stages/3-workloads/envs/qa"
+ar_case "un cambio en 0-bootstrap no planea nada (la aplica una persona)" gcp-datacenter/stages/0-bootstrap/main.tf ""
+ar_case "un cambio en modules/ planea todas las raíces" gcp-datacenter/modules/storage/main.tf "$all_roots"
+ar_case "un cambio en policies/ planea todas las raíces" gcp-datacenter/policies/p.rego "$all_roots"
+ar_case "stages/3-workloads/README.md planea las tres raíces de 3-workloads" \
+  gcp-datacenter/stages/3-workloads/README.md "$workload_roots"
+ar_case "código común en stages/3-workloads/comun planea las tres raíces de 3-workloads" \
+  gcp-datacenter/stages/3-workloads/comun/main.tf "$workload_roots"
+ar_case "un módulo local dentro del hub planea el hub y el spoke que lo usa" \
+  gcp-datacenter/stages/2-networks/comun-red/main.tf "stages/2-networks stages/2-networks/envs/dev"
+ar_case "un cambio en docs/ no planea nada" gcp-datacenter/docs/d.md ""
+ar_case "un cambio fuera de gcp-datacenter/ no planea nada" README.md ""
+bash "$ag/scripts/affected-roots.sh" >/dev/null 2>&1
+check "affected-roots: sin argumentos es error de uso" 2 $?
+bash "$ag/scripts/affected-roots.sh" --all extra >/dev/null 2>&1
+check "affected-roots: --all con otro argumento es error de uso" 2 $?
+mkdir -p "$ag/stages/3-workloads/envs/dev/extra"
+echo 'terraform {}' >"$ag/stages/3-workloads/envs/dev/extra/versions.tf"
+bash "$ag/scripts/affected-roots.sh" --all >/dev/null 2>&1
+check "affected-roots: una raíz sin la forma stages/<etapa>[/envs/<env>] es error (2)" 2 $?
+grep -qF 'bash scripts/affected-roots.sh "${BASE_SHA}" "${HEAD_SHA}"' "$WF/pr.yml" &&
+  grep -qF 'bash scripts/affected-roots.sh --all' "$WF/drift.yml"
+check "affected-roots: pr.yml lo llama con base y cabeza del PR y drift.yml con --all" 0 $?
+
+# apply.yml: las raíces, llaves y entornos de GitHub son los de affected-roots.sh y el orden es
+# el del ADR 0029 §2 (cada trabajo espera al anterior; qa después de la prueba de humo de dev).
+"$PY" -c '
+import json, re, sys
+wf = open(sys.argv[1], encoding="utf-8").read()
+roots = json.load(open(sys.argv[2], encoding="utf-8"))
+jobs = dict(re.findall(r"\n  ([a-z][a-z0-9-]*):\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n|\Z)", wf[wf.index("\njobs:"):], re.S))
+def field(body, key):
+    m = re.search(r"^      %s: (.+)$" % key, body, re.M)
+    return m.group(1).strip() if m else None
+def needs(body):
+    m = re.search(r"^    needs: (.+)$", body, re.M)
+    return m.group(1).strip() if m else None
+bad = []
+cond = "    if: vars.GCP_ENABLED == \x27true\x27 && github.ref == \x27refs/heads/main\x27\n"
+deployed = []
+for name, body in jobs.items():
+    if name != "gate" and cond not in body + "\n":
+        bad.append("%s sin la condición de GCP_ENABLED y main" % name)
+    if "uses: ./.github/workflows/_terraform-root.yml" in body:
+        deployed.append({"root": field(body, "root"), "stage": field(body, "stage"),
+                         "environment": field(body, "environment")})
+if sorted(deployed, key=lambda r: str(r["root"])) != sorted(roots, key=lambda r: r["root"]):
+    bad.append("raíces de apply.yml distintas de affected-roots.sh --all: %s" % deployed)
+label = {n: field(b, "root") or ("humo" if "TestDevSmoke" in b else n) for n, b in jobs.items()}
+order, cur = [], "gate"
+while True:
+    nxt = [n for n, b in jobs.items() if needs(b) == cur]
+    if len(nxt) != 1:
+        break
+    cur = nxt[0]
+    order.append(label[cur])
+want = ["stages/1-base", "stages/2-networks", "stages/2-networks/envs/dev", "stages/3-workloads/envs/dev", "humo",
+        "stages/2-networks/envs/qa", "stages/3-workloads/envs/qa", "stages/2-networks/envs/prod",
+        "stages/3-workloads/envs/prod"]
+if order != want:
+    bad.append("orden %s" % order)
+print("; ".join(bad))
+sys.exit(1 if bad else 0)
+' "$WF/apply.yml" "$tmp/all.json" >"$tmp/apply-order.txt" 2>&1
+rc=$?
+check "apply.yml: 1-base → hub → dev (red, cargas, humo) → qa → prod, con las llaves y entornos de affected-roots $(cat "$tmp/apply-order.txt")" 0 "$rc"
+
+# Cuentas (ADR 0029 §3 y ADR 0025): todo plan corre con la cuenta de lectura y -lock=false; el
+# apply, con la cuenta de la raíz y el candado.
 "$PY" -c '
 import re, sys
-tf = open("stages/1-org/main.tf", encoding="utf-8").read()
-folders = set(re.findall(r"^\s*environment\s*=\s*\"([a-z]+)\"", tf, re.M))
-m = re.search(r"^\s*environments\s*=\s*\[([^\]]*)\]", tf, re.M)
-folders |= set(re.findall(r"\"([a-z]+)\"", m.group(1)))
-wf = open("../.github/workflows/drift.yml", encoding="utf-8").read()
-job = wf[wf.index("\n  unmanaged:"):]
-matrix = set(re.search(r"^\s*env:\s*\[([^\]]*)\]", job, re.M).group(1).replace(" ", "").split(","))
-print("carpetas de 1-org: %s; matriz de drift.yml: %s" % (sorted(folders), sorted(matrix)))
-sys.exit(0 if folders and folders == matrix else 1)
-' >"$tmp/drift-matrix.txt" 2>&1
+def job(text, name):
+    m = re.search(r"\n  %s:\n(.*?)(?=\n  [a-z][a-z0-9_-]*:\n|\Z)" % name, text, re.S)
+    return m.group(1) if m else ""
+def plans(body):
+    return [l.strip() for l in body.splitlines() if l.strip().startswith("terraform plan")]
+read_sa = "service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}"
+bad = []
+texts = {p: open(p, encoding="utf-8").read() for p in sys.argv[1:]}
+for path, text in texts.items():
+    body = job(text, "plan")
+    if read_sa not in body:
+        bad.append("%s plan sin la cuenta de lectura" % path)
+    if not plans(body) or any("-lock=false" not in l for l in plans(body)):
+        bad.append("%s plan sin -lock=false" % path)
+    if "GCP_STAGE_SERVICE_ACCOUNTS)" in body:
+        bad.append("%s plan usa una cuenta de raíz" % path)
+root = [t for p, t in texts.items() if p.endswith("_terraform-root.yml")][0]
+apply_job = job(root, "apply")
+if "service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[inputs.stage] }}" not in apply_job:
+    bad.append("_terraform-root apply sin la cuenta de la raíz")
+if "GCP_AUDIT_SERVICE_ACCOUNT" in apply_job or not plans(apply_job) or any("-lock=false" in l for l in plans(apply_job)):
+    bad.append("_terraform-root apply con la cuenta de lectura o sin candado")
+for path, text in texts.items():
+    if not path.endswith("_terraform-root.yml") and re.search(r"service_account:.*GCP_STAGE_SERVICE_ACCOUNTS", text):
+        bad.append("%s usa una cuenta de raíz" % path)
+print("; ".join(bad))
+sys.exit(1 if bad else 0)
+' "$WF/pr.yml" "$WF/drift.yml" "$WF/_terraform-root.yml" >"$tmp/accounts.txt" 2>&1
 rc=$?
-check "drift.yml: recursos no administrados en todas las carpetas de 1-org ($(cat "$tmp/drift-matrix.txt"))" 0 "$rc"
+check "flujos: plan con la cuenta de lectura y -lock=false (pr, drift, _terraform-root); apply con la cuenta de la raíz $(cat "$tmp/accounts.txt")" 0 "$rc"
+
+# --- root-tfvars.py ------------------------------------------------------------------------
+rt="$tmp/rt"
+mkdir -p "$rt/stages/1-base" "$rt/stages/sin-proyecto"
+printf 'variable "project_id" {\n  type = string\n}\n' >"$rt/stages/1-base/variables.tf"
+printf 'project_id = "REEMPLAZAR"\nprefix     = "bnt"\n' >"$rt/stages/1-base/terraform.tfvars.example"
+printf 'variable "otra" {\n  type = string\n}\n' >"$rt/stages/sin-proyecto/variables.tf"
+tfv() { # tfv <TFVARS_JSON> <raíz>: corre root-tfvars.py desde $rt; devuelve su código
+  (cd "$rt" && TFVARS_JSON="$1" "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "$2" >/dev/null 2>&1)
+}
+tfv '{"common": {"project_id": "example-landing-zone", "prefix": "bnt"}, "stages/1-base": {"prefix": "otro"}}' stages/1-base
+check "root-tfvars: con common.project_id escribe las variables" 0 $?
+"$PY" -c '
+import json, sys
+v = json.load(open(sys.argv[1], encoding="utf-8"))
+same = open(sys.argv[2], encoding="utf-8").read() == open(sys.argv[3], encoding="utf-8").read()
+sys.exit(0 if v == {"project_id": "example-landing-zone", "prefix": "otro"} and same else 1)
+' "$rt/stages/1-base/zz-ci.auto.tfvars.json" "$rt/stages/1-base/terraform.tfvars" \
+  "$rt/stages/1-base/terraform.tfvars.example" 2>/dev/null
+check "root-tfvars: common + la llave de la raíz (gana la raíz) y terraform.tfvars copiado del ejemplo" 0 $?
+rm -f "$rt/stages/1-base/zz-ci.auto.tfvars.json" "$rt/stages/1-base/terraform.tfvars"
+tfv '{"common": {"prefix": "bnt"}}' stages/1-base
+check "root-tfvars: sin project_id en GCP_TFVARS_JSON es error si la raíz lo declara" 2 $?
+[ ! -e "$rt/stages/1-base/zz-ci.auto.tfvars.json" ] && [ ! -e "$rt/stages/1-base/terraform.tfvars" ]
+check "root-tfvars: sin project_id no escribe nada (el plan no toma el marcador del ejemplo)" 0 $?
+tfv '{"common": {"project_id": " "}}' stages/1-base
+check "root-tfvars: project_id en blanco es error" 2 $?
+tfv '' stages/1-base
+check "root-tfvars: GCP_TFVARS_JSON vacío es error si la raíz declara project_id" 2 $?
+tfv 'no es json' stages/1-base
+check "root-tfvars: GCP_TFVARS_JSON que no es JSON es error" 2 $?
+tfv '["x"]' stages/1-base
+check "root-tfvars: GCP_TFVARS_JSON que no es un objeto es error" 2 $?
+tfv '{"common": "x"}' stages/1-base
+check "root-tfvars: una llave que no es un objeto es error" 2 $?
+tfv '{}' stages/sin-proyecto
+check "root-tfvars: una raíz sin la variable project_id no lo exige" 0 $?
+tfv '{"common": {"project_id": "example-landing-zone"}}' stages/no-existe
+check "root-tfvars: una raíz que no existe es error" 2 $?
+n=0
+for f in pr.yml drift.yml _terraform-root.yml; do
+  n=$((n + $(grep -cF 'python3 scripts/root-tfvars.py "${ROOT}"' "$WF/$f")))
+done
+check "root-tfvars: los flujos lo usan antes de cada init (pr, drift y plan y apply de _terraform-root: 4)" 4 "$n"
 
 # --- go-test-report.sh ---------------------------------------------------------------------
 g="$DATA/go-test"
@@ -134,8 +329,8 @@ check "go-test-report: máximo inválido es error de uso" 2 $?
 
 # --- module-tests.sh -----------------------------------------------------------------------
 got="$(bash scripts/module-tests.sh firewall 2>/dev/null)"
-[ "$got" = '^(TestFirewallHierarchical|TestFirewallNetwork)$' ]
-check "module-tests: firewall incluye la variante jerárquica" 0 $?
+[ "$got" = '^(TestFirewallNetwork)$' ]
+check "module-tests: firewall solo tiene la política de red (ADR 0029 §6)" 0 $?
 missing=0
 for d in modules/*/; do
   m="$(basename "$d")"
@@ -193,7 +388,6 @@ check "cut-plan: una expresión sin coincidencias falla" 1 $?
 #   D  .github/workflows/x.yml   (cambio de flujo: C queda viejo)
 tip_script="${CHECK_MAIN_TIP_SCRIPT:-$PROJECT_DIR/scripts/check-main-tip.sh}" # otro script solo para comparar
 r="$tmp/tip"
-gitc() { git -C "$1" -c user.name=t -c user.email=t@example.com "${@:2}"; }
 tip_commit() { # tip_commit <archivo> <mensaje>: commit en dev y push al remoto; imprime el sha
   mkdir -p "$r/dev/$(dirname "$1")"
   echo "$2" >>"$r/dev/$1"
@@ -268,10 +462,10 @@ sh = open(sys.argv[2], encoding="utf-8").read()
 deploy = set(re.search(r"DEPLOY_PATHS:-([^}]*)\}", sh).group(1).split())
 print("disparo %s, script %s" % (sorted(trigger), sorted(deploy)))
 sys.exit(0 if trigger == deploy else 1)
-' ../.github/workflows/apply.yml scripts/check-main-tip.sh >"$tmp/paths.txt" 2>&1
+' "$WF/apply.yml" scripts/check-main-tip.sh >"$tmp/paths.txt" 2>&1
 rc=$?
 check "check-main-tip: apply.yml se dispara con las rutas del despliegue ($(cat "$tmp/paths.txt"))" 0 "$rc"
-n="$(grep -c 'scripts/check-main-tip.sh "${GITHUB_SHA}"' ../.github/workflows/_terraform-root.yml)"
+n="$(grep -c 'scripts/check-main-tip.sh "${GITHUB_SHA}"' "$WF/_terraform-root.yml")"
 check "check-main-tip: _terraform-root.yml lo llama en plan y antes del apply (2)" 2 "$n"
 # Orden en el trabajo apply: la comprobación va después de volver a planear y antes del apply.
 "$PY" -c '
@@ -281,7 +475,7 @@ apply_job = t[t.index("\n  apply:"):]
 a = apply_job.index("check-main-tip.sh")
 b = apply_job.index("terraform apply -input=false")
 sys.exit(0 if a < b else 1)
-' ../.github/workflows/_terraform-root.yml
+' "$WF/_terraform-root.yml"
 check "check-main-tip: en el trabajo apply va antes de terraform apply" 0 $?
 
 # Variables de entorno de GitHub: el apply compara la huella de las variables con la del plan
@@ -296,13 +490,15 @@ ok = ("vars_fingerprint: ${{ steps.vars.outputs.fingerprint }}" in plan_job
       and apply_job.index("PLAN_VARS_FINGERPRINT") < apply_job.index("terraform init")
       and "sean variables de repositorio" in apply_job)
 sys.exit(0 if ok else 1)
-' ../.github/workflows/_terraform-root.yml
+' "$WF/_terraform-root.yml"
 check "_terraform-root: el apply compara las variables con las del plan antes de init" 0 $?
 
 # CODEOWNERS: lo que decide si un cambio pasa o se despliega es solo de seguridad (gana la
-# última línea que coincide; aquí solo hay patrones de directorio y de archivo anclados).
+# última línea que coincide; aquí solo hay patrones de directorio y de archivo anclados). Las
+# raíces del ADR 0029: 1-base de seguridad, 2-networks de red y 3-workloads de plataforma; sin
+# rutas de etapas que ya no existen.
 "$PY" -c '
-import sys
+import re, sys
 rules = []
 for line in open(sys.argv[1], encoding="utf-8"):
     line = line.split("#", 1)[0].strip()
@@ -315,16 +511,22 @@ def owners(path):
         if pattern == "*" or path == pattern or (pattern.endswith("/") and path.startswith(pattern)):
             found = o
     return found
-need = ["/.github/workflows/pr.yml", "/.github/CODEOWNERS", "/gcp-datacenter/scripts/plan-gate.sh",
-        "/gcp-datacenter/policies/required_labels.rego", "/gcp-datacenter/stages/0-bootstrap/wif.tf",
-        "/gcp-datacenter/.checkov.yaml", "/gcp-datacenter/.tflint.hcl",
-        "/gcp-datacenter/tests/e2e/smoke_test.go"]
-bad = [p for p in need if owners(p) != ["@PENDIENTE-seguridad"]]
+want = {p: ["@PENDIENTE-seguridad"] for p in (
+    "/.github/workflows/pr.yml", "/.github/CODEOWNERS", "/gcp-datacenter/scripts/plan-gate.sh",
+    "/gcp-datacenter/policies/required_labels.rego", "/gcp-datacenter/stages/0-bootstrap/wif.tf",
+    "/gcp-datacenter/stages/1-base/main.tf", "/gcp-datacenter/.checkov.yaml", "/gcp-datacenter/.tflint.hcl",
+    "/gcp-datacenter/tests/e2e/smoke_test.go")}
+want["/gcp-datacenter/stages/2-networks/main.tf"] = ["@PENDIENTE-red"]
+want["/gcp-datacenter/stages/2-networks/envs/dev/main.tf"] = ["@PENDIENTE-red"]
+want["/gcp-datacenter/stages/3-workloads/envs/dev/main.tf"] = ["@PENDIENTE-plataforma"]
+bad = ["%s→%s" % (p, owners(p)) for p, o in want.items() if owners(p) != o]
+bad += ["ruta vieja %s" % p for p, _ in rules
+        if re.match(r"/gcp-datacenter/stages/(?!(0-bootstrap|1-base|2-networks|3-workloads)/)", p)]
 print(", ".join(bad))
 sys.exit(1 if bad else 0)
 ' ../.github/CODEOWNERS >"$tmp/owners.txt" 2>&1
 rc=$?
-check "CODEOWNERS: flujos, scripts, políticas, 0-bootstrap, .checkov.yaml, .tflint.hcl y tests/e2e solo de seguridad $(cat "$tmp/owners.txt")" 0 "$rc"
+check "CODEOWNERS: flujos, scripts, políticas, 0-bootstrap, 1-base, .checkov.yaml, .tflint.hcl y tests/e2e solo de seguridad; 2-networks de red; 3-workloads de plataforma $(cat "$tmp/owners.txt")" 0 "$rc"
 
 # docs/pipeline.md §4 nombra los ajustes de GitHub sin los que la revisión no protege la
 # compuerta (aprobaciones viejas, último push, sin excepciones) y explica por qué.
@@ -345,13 +547,13 @@ gate() { # gate <descripción> <código esperado> VAR=valor...
   check "plan-gate: $desc" "$want" $?
 }
 gate "GCP apagado y sin fork pasa" 0 GCP_ENABLED= AFFECTED=skipped PLAN=skipped IS_FORK=false
-gate "planes con éxito pasan" 0 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-org"}]' PLAN=success IS_FORK=false
-gate "un plan fallido falla" 1 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-org"}]' PLAN=failure IS_FORK=false
+gate "planes con éxito pasan" 0 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-base"}]' PLAN=success IS_FORK=false
+gate "un plan fallido falla" 1 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-base"}]' PLAN=failure IS_FORK=false
 gate "sin raíces afectadas y plan omitido pasa" 0 GCP_ENABLED=true AFFECTED=success ROOTS='[]' PLAN=skipped IS_FORK=false
-gate "con GCP, plan omitido habiendo raíces falla" 1 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-org"}]' PLAN=skipped IS_FORK=false
+gate "con GCP, plan omitido habiendo raíces falla" 1 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-base"}]' PLAN=skipped IS_FORK=false
 # Fork: las variables pueden no llegar (GCP_ENABLED vacío) y el plan se omite.
-gate "fork que toca raíces falla aunque GCP_ENABLED llegue vacío" 1 GCP_ENABLED= AFFECTED=success ROOTS='[{"root":"stages/1-org"}]' PLAN=skipped IS_FORK=true
-gate "fork que toca raíces falla con GCP_ENABLED=true" 1 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-org"}]' PLAN=skipped IS_FORK=true
+gate "fork que toca raíces falla aunque GCP_ENABLED llegue vacío" 1 GCP_ENABLED= AFFECTED=success ROOTS='[{"root":"stages/1-base"}]' PLAN=skipped IS_FORK=true
+gate "fork que toca raíces falla con GCP_ENABLED=true" 1 GCP_ENABLED=true AFFECTED=success ROOTS='[{"root":"stages/1-base"}]' PLAN=skipped IS_FORK=true
 gate "fork sin raíces afectadas pasa" 0 GCP_ENABLED= AFFECTED=success ROOTS='[]' PLAN=skipped IS_FORK=true
 gate "fork sin raíces calculadas falla" 1 GCP_ENABLED= AFFECTED=skipped PLAN=skipped IS_FORK=true
 grep -q 'fork' "$tmp/gate.md"
@@ -383,56 +585,115 @@ guard "confirmación vacía se rechaza" 1 pedido dev "" refs/heads/main
 guard "confirmación con espacio final se rechaza" 1 pedido dev "dev " refs/heads/main
 guard "confirmación en mayúsculas se rechaza" 1 pedido dev DEV refs/heads/main
 guard "pedido desde otra rama se rechaza" 1 pedido dev dev refs/heads/feat/x
-guard "raíz de 5-workloads de dev pasa" 0 raiz dev stages/5-workloads/envs/dev
-guard "raíz de 4-projects de qa pasa" 0 raiz qa stages/4-projects/envs/qa
-guard "raíz de 3-networks de qa pasa" 0 raiz qa stages/3-networks/envs/qa
-guard "raíz de prod se rechaza" 1 raiz prod stages/5-workloads/envs/prod
-guard "raíz de prod con entorno dev se rechaza" 1 raiz dev stages/5-workloads/envs/prod
-guard "raíz de otro entorno se rechaza" 1 raiz dev stages/4-projects/envs/qa
-guard "hub de 3-networks se rechaza" 1 raiz dev stages/3-networks
-guard "1-org se rechaza" 1 raiz dev stages/1-org
-guard "ruta con .. se rechaza" 1 raiz dev stages/5-workloads/envs/dev/../prod
+# Raíces (ADR 0029 §8): solo 3-workloads y el spoke de dev o qa.
+guard "3-workloads de dev pasa" 0 raiz dev stages/3-workloads/envs/dev
+guard "3-workloads de qa pasa" 0 raiz qa stages/3-workloads/envs/qa
+guard "spoke 2-networks de dev pasa" 0 raiz dev stages/2-networks/envs/dev
+guard "spoke 2-networks de qa pasa" 0 raiz qa stages/2-networks/envs/qa
+guard "3-workloads de prod se rechaza" 1 raiz prod stages/3-workloads/envs/prod
+guard "raíz de prod con entorno dev se rechaza" 1 raiz dev stages/3-workloads/envs/prod
+guard "raíz de otro entorno se rechaza" 1 raiz dev stages/2-networks/envs/qa
+guard "hub (stages/2-networks) se rechaza" 1 raiz dev stages/2-networks
+guard "1-base se rechaza" 1 raiz dev stages/1-base
+guard "0-bootstrap se rechaza" 1 raiz dev stages/0-bootstrap
+guard "ruta con .. se rechaza" 1 raiz dev stages/3-workloads/envs/dev/../prod
+guard "ruta con barra final se rechaza" 1 raiz dev stages/3-workloads/envs/dev/
+guard "ruta de una etapa que ya no existe (4-projects) se rechaza" 1 raiz dev stages/4-projects/envs/dev
 guard "sin argumentos es error de uso" 2
 guard "modo desconocido es error de uso" 2 todo dev dev refs/heads/main
 
-# Planes de destrucción reales sin GCP (Terraform 1.16.5, 23 nov 2026): plan-real-dev y
-# plan-real-protegido son `plan -destroy -refresh=false` con google 6.50.0 sobre un estado
-# escrito a mano (token ficticio: el proveedor no llama a las API para planear un borrado);
-# plan-real-terraform-data-a y -b, dos `plan -destroy` del mismo estado con recursos integrados.
+# Planes de destrucción reales sin GCP (Terraform 1.16.5 con google 6.50.0, 24 nov 2026; token
+# ficticio: el proveedor no llama a las API para planear un borrado con -refresh=false):
+#   plan-real-spoke-dev (40 recursos) y plan-real-workloads-dev (90): `plan -destroy` de
+#     stages/2-networks/envs/dev y stages/3-workloads/envs/dev (ramas r1/redes y r1/cargas)
+#     sobre un estado armado con su plan de creación (los valores calculados llevan IDs
+#     ficticios con el formato del proveedor);
+#   plan-real-protegido (17): raíz de prueba con protecciones en el estado, recursos únicos del
+#     proyecto y recursos sin el prefijo del entorno;
+#   plan-real-terraform-data-a y -b: dos `plan -destroy` del mismo estado con recursos integrados.
 pc() { "$PY" scripts/destroy-plan-check.py "$@"; }
-pc "$d/plan-real-dev.json" --summary "$tmp/destroy.md" --root stages/5-workloads/envs/dev >"$tmp/pc.txt" 2>&1
-check "destroy-plan-check: dev con protecciones apagadas y DELETE pasa" 0 $?
-[ "$(grep -c '^AVISO ' "$tmp/pc.txt")" = 3 ] && grep -q 'google_backup_dr_backup_vault' "$tmp/pc.txt" &&
-  grep -q 'google_service_networking_connection' "$tmp/pc.txt" && grep -q 'google_storage_bucket' "$tmp/pc.txt"
-check "destroy-plan-check: avisa de la bóveda, la conexión de PSA y el bucket sin force_destroy (3)" 0 $?
-grep -q 'Recursos que se destruyen: 6' "$tmp/destroy.md"
-check "destroy-plan-check: resumen en Markdown con los recursos que se destruyen" 0 $?
-pc "$d/plan-real-protegido.json" >"$tmp/pc2.txt" 2>&1
-check "destroy-plan-check: protecciones en el estado detienen el destroy (1)" 1 $?
+pc "$d/plan-real-spoke-dev.json" --env dev --summary "$tmp/destroy-red.md" \
+  --root stages/2-networks/envs/dev >"$tmp/pc-red.txt" 2>&1
+check "destroy-plan-check: el destroy real del spoke de dev pasa (reglas, valores de etiqueta, DNS y PSA por su padre)" 0 $?
+[ "$(grep -c '^AVISO ' "$tmp/pc-red.txt")" = 1 ] &&
+  grep -q '^AVISO .*google_service_networking_connection' "$tmp/pc-red.txt"
+check "destroy-plan-check: el spoke solo avisa de la conexión de PSA" 0 $?
+grep -q 'Recursos que se destruyen: 40' "$tmp/destroy-red.md"
+check "destroy-plan-check: resumen en Markdown con los recursos que se destruyen (40)" 0 $?
+pc "$d/plan-real-workloads-dev.json" --env dev --summary "$tmp/destroy-wl.md" \
+  --root stages/3-workloads/envs/dev >"$tmp/pc-wl.txt" 2>&1
+check "destroy-plan-check: el destroy real de 3-workloads de dev pasa (tablero por su displayName)" 0 $?
+[ "$(grep -c '^AVISO ' "$tmp/pc-wl.txt")" = 2 ] && grep -q 'google_backup_dr_backup_vault' "$tmp/pc-wl.txt" &&
+  grep -q 'google_storage_bucket' "$tmp/pc-wl.txt"
+check "destroy-plan-check: avisa de la bóveda y del bucket sin force_destroy (2)" 0 $?
+grep -q 'Recursos que se destruyen: 90' "$tmp/destroy-wl.md"
+check "destroy-plan-check: el resumen cuenta los 90 recursos de 3-workloads" 0 $?
+for p in spoke-dev workloads-dev; do
+  pc "$d/plan-real-$p.json" --env qa >"$tmp/pc-qa.txt" 2>&1
+  rc=$?
+  [ "$rc" = 1 ] && grep -q '^BLOQUEO (variables)' "$tmp/pc-qa.txt" &&
+    [ "$(grep -c '^BLOQUEO ' "$tmp/pc-qa.txt")" -gt "$(grep -c '^BLOQUEO (variables)' "$tmp/pc-qa.txt")" ]
+  check "destroy-plan-check: el plan de dev ($p) pedido como qa se detiene (entorno y nombres)" 0 $?
+done
+pc "$d/plan-real-protegido.json" --env dev >"$tmp/pc2.txt" 2>&1
+check "destroy-plan-check: protecciones y recursos ajenos al entorno detienen el destroy (1)" 1 $?
 grep '^BLOQUEO ' "$tmp/pc2.txt" | sed 's/: .*//' >"$tmp/bloqueos.txt"
 if diff -u "$d/bloqueos-esperados.txt" "$tmp/bloqueos.txt"; then
-  echo "OK    destroy-plan-check: exactamente los 6 bloqueos (deletion_protection, settings, Filestore, GKE, PREVENT, ABANDON)"
+  echo "OK    destroy-plan-check: exactamente los 14 bloqueos (protecciones, proyecto, únicos del proyecto, sin prefijo del entorno)"
 else
   echo "FALLA destroy-plan-check: la lista de bloqueos no coincide"
   fails=$((fails + 1))
 fi
 grep -q 'backup_count 3).*FALLA' "$tmp/pc2.txt"
 check "destroy-plan-check: con backup_count > 0 avisa que el borrado de la bóveda falla" 0 $?
-pc "$d/plan-real-terraform-data-a.json" >/dev/null 2>&1
+# Hijos sin nombre del entorno: un valor de etiqueta ("enabled") sin namespaced_name pasa por su
+# llave, que está en el plan; sin la llave en el plan se detiene. Una regla de una política de
+# firewall ajena se detiene.
+"$PY" -c '
+import json, sys
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+values = [rc for rc in p["resource_changes"] if rc["type"] == "google_tags_tag_value"]
+for rc in values:
+    rc["change"]["before"].pop("namespaced_name", None)
+json.dump(p, open(sys.argv[2], "w", encoding="utf-8"))
+p["resource_changes"] = [rc for rc in p["resource_changes"] if rc["type"] != "google_tags_tag_key"]
+json.dump(p, open(sys.argv[3], "w", encoding="utf-8"))
+rules = [rc for rc in p["resource_changes"] if rc["type"] == "google_compute_network_firewall_policy_rule"]
+rules[0]["change"]["before"]["firewall_policy"] = "bnt-common-net-fw"
+p["resource_changes"] = [rc for rc in p["resource_changes"] if rc["type"] != "google_tags_tag_value"]
+json.dump(p, open(sys.argv[4], "w", encoding="utf-8"))
+sys.exit(0 if values and rules else 1)
+' "$d/plan-real-spoke-dev.json" "$tmp/tag-sin-ns.json" "$tmp/tag-sin-llave.json" "$tmp/regla-ajena.json"
+check "destroy-plan-check: (preparación) variantes del plan del spoke" 0 $?
+pc "$tmp/tag-sin-ns.json" --env dev >/dev/null 2>&1
+check "destroy-plan-check: un valor de etiqueta sin namespaced_name pasa por su llave del entorno" 0 $?
+pc "$tmp/tag-sin-llave.json" --env dev >"$tmp/pc-tag.txt" 2>&1
+[ $? = 1 ] && [ "$(grep -c '^BLOQUEO ' "$tmp/pc-tag.txt")" = 2 ] &&
+  [ "$(grep -c '^BLOQUEO .*google_tags_tag_value' "$tmp/pc-tag.txt")" = 2 ]
+check "destroy-plan-check: valores de etiqueta cuya llave no está en el plan se detienen (2)" 0 $?
+pc "$tmp/regla-ajena.json" --env dev >"$tmp/pc-regla.txt" 2>&1
+[ $? = 1 ] && [ "$(grep -c '^BLOQUEO ' "$tmp/pc-regla.txt")" = 1 ] &&
+  grep -q '^BLOQUEO .*firewall_policy_rule.*firewall_policy=bnt-common-net-fw' "$tmp/pc-regla.txt"
+check "destroy-plan-check: una regla de la política de firewall de otro entorno se detiene" 0 $?
+pc "$d/plan-real-terraform-data-a.json" --env dev --prefix bnt >/dev/null 2>&1
 check "destroy-plan-check: plan de destrucción real de recursos integrados pasa" 0 $?
+pc "$d/plan-real-terraform-data-a.json" --env dev >/dev/null 2>&1
+check "destroy-plan-check: sin --prefix ni variable prefix en el plan es error (2)" 2 $?
+pc "$d/plan-real-spoke-dev.json" >/dev/null 2>&1
+check "destroy-plan-check: sin --env es error de uso (2)" 2 $?
 "$PY" -c '
 import json, sys
 p = json.load(open(sys.argv[1], encoding="utf-8"))
 p["resource_changes"][0]["change"]["actions"] = ["update"]
 json.dump(p, open(sys.argv[2], "w", encoding="utf-8"))
-' "$d/plan-real-dev.json" "$tmp/no-destroy.json"
-pc "$tmp/no-destroy.json" >/dev/null 2>&1
+' "$d/plan-real-spoke-dev.json" "$tmp/no-destroy.json"
+pc "$tmp/no-destroy.json" --env dev >/dev/null 2>&1
 check "destroy-plan-check: un plan con una acción que no es delete es error (2)" 2 $?
 printf '{"resource_changes": {}}' >"$tmp/rc-objeto.json"
-pc "$tmp/rc-objeto.json" >/dev/null 2>&1
+pc "$tmp/rc-objeto.json" --env dev --prefix bnt >/dev/null 2>&1
 check "destroy-plan-check: resource_changes que no es lista es error (2)" 2 $?
 printf 'no es json' >"$tmp/no-json.json"
-pc "$tmp/no-json.json" >/dev/null 2>&1
+pc "$tmp/no-json.json" --env dev --prefix bnt >/dev/null 2>&1
 check "destroy-plan-check: un archivo que no es JSON es error (2)" 2 $?
 # La huella del plan también vale para planes de destrucción: dos planes del mismo estado, con
 # distinta fecha, dan la misma huella.
@@ -441,36 +702,49 @@ fb="$("$PY" scripts/plan-fingerprint.py "$d/plan-real-terraform-data-b.json")"
 [ -n "$fa" ] && [ "$fa" = "$fb" ] && ! cmp -s "$d/plan-real-terraform-data-a.json" "$d/plan-real-terraform-data-b.json"
 check "plan-fingerprint: dos planes de destrucción reales distintos del mismo estado dan la misma huella" 0 $?
 
-do_() { "$PY" scripts/destroy-orphans.py --folder folders/222222222222 "$@"; }
-do_ --assets "$d/assets-esperados.json" --summary "$tmp/orphans.md" >"$tmp/do.txt" 2>&1
-check "destroy-orphans: carpeta con proyectos en borrado, sus recursos y la carpeta misma pasa" 0 $?
-[ "$(grep -c '^ESPERADO ' "$tmp/do.txt")" = 8 ]
-check "destroy-orphans: lista los 8 esperados con su motivo" 0 $?
-do_ --assets "$d/assets-huerfanos.json" --summary "$tmp/orphans.md" >"$tmp/do2.txt" 2>&1
-check "destroy-orphans: un proyecto activo y sus recursos son huérfanos (1)" 1 $?
+# destroy-orphans.py: listados del proyecto después del destroy de dev. Estados que quedan:
+# 0-bootstrap, 1-base, el spoke de dev (sin incluir_red) y 3-workloads de dev ya vacío.
+do_() { "$PY" scripts/destroy-orphans.py --env dev --prefix bnt --project example-landing-zone \
+  --project-number 111111111111 "$@"; }
+left=(--state "$u/0-bootstrap.state.json" --state "$u/1-base.state.json" --state "$d/3-workloads-dev-vacio.state.json")
+do_ --assets "$d/assets-esperados.json" "${left[@]}" --state "$u/2-networks-dev.state.json" \
+  --summary "$tmp/orphans.md" >"$tmp/do.txt" 2>&1
+check "destroy-orphans: lo de 1-base, el spoke conservado y lo que se está borrando pasan" 0 $?
+[ "$(grep -c '^ESPERADO ' "$tmp/do.txt")" = 10 ]
+check "destroy-orphans: lista los 10 esperados del entorno con su motivo (los de otros entornos no cuentan)" 0 $?
+do_ --assets "$d/assets-esperados.json" "${left[@]}" >"$tmp/do-red.txt" 2>&1
+[ $? = 1 ] && [ "$(grep -c '^HUERFANO ' "$tmp/do-red.txt")" = 2 ] &&
+  grep -q '^HUERFANO compute.googleapis.com/Network .*bnt-dev-net-spoke' "$tmp/do-red.txt"
+check "destroy-orphans: sin el estado del spoke, su VPC y su subred son huérfanos (2)" 0 $?
+do_ --assets "$d/assets-huerfanos.json" --state "$u/1-base.state.json" \
+  --state "$d/3-workloads-dev-vacio.state.json" --summary "$tmp/orphans2.md" >"$tmp/do2.txt" 2>&1
+check "destroy-orphans: recursos del entorno que sobrevivieron al destroy son huérfanos (1)" 1 $?
 grep '^HUERFANO ' "$tmp/do2.txt" >"$tmp/huerfanos.txt"
 if diff -u "$d/huerfanos-esperados.txt" "$tmp/huerfanos.txt"; then
-  echo "OK    destroy-orphans: exactamente los 5 huérfanos esperados"
+  echo "OK    destroy-orphans: exactamente los 6 huérfanos esperados (por etiqueta env, nombre o correo)"
 else
   echo "FALLA destroy-orphans: la lista de huérfanos no coincide"
   fails=$((fails + 1))
 fi
-grep -q 'huérfanos 5' "$tmp/orphans.md"
+grep -q 'huérfanos 6' "$tmp/orphans2.md"
 check "destroy-orphans: resumen en Markdown con el conteo" 0 $?
 do_ --assets "$d/assets-huerfanos.json" --report-only >/dev/null 2>&1
 check "destroy-orphans: --report-only sale con 0" 0 $?
-printf '[]' >"$tmp/o-vacia.json"
-do_ --assets "$tmp/o-vacia.json" >/dev/null 2>&1
-check "destroy-orphans: carpeta vacía pasa" 0 $?
-printf '{"results": []}' >"$tmp/o-results-vacio.json"
-do_ --assets "$tmp/o-results-vacio.json" >/dev/null 2>&1
-check "destroy-orphans: {\"results\": []} es carpeta vacía y pasa" 0 $?
-for a in a-objeto-vacio a-sin-results a-sin-name; do
+"$PY" scripts/destroy-orphans.py --env qa --prefix bnt --project example-landing-zone \
+  --project-number 111111111111 --assets "$d/assets-huerfanos.json" >"$tmp/do-qa.txt" 2>&1
+[ $? = 1 ] && [ "$(grep '^HUERFANO ' "$tmp/do-qa.txt")" = "HUERFANO storage.googleapis.com/Bucket //storage.googleapis.com/bnt-qa-data-app-usc1" ]
+check "destroy-orphans: con --env qa solo cuenta lo de qa" 0 $?
+for a in a-lista-vacia a-objeto-vacio a-sin-results a-sin-name a-sin-proyecto; do
   do_ --assets "$tmp/$a.json" --report-only >/dev/null 2>&1
   check "destroy-orphans: listado ${a#a-} es error aunque haya --report-only" 2 $?
 done
-"$PY" scripts/destroy-orphans.py --folder dev --assets "$tmp/o-vacia.json" >/dev/null 2>&1
-check "destroy-orphans: --folder que no es una carpeta es error" 2 $?
+do_ --assets "$u/assets-otro-proyecto.json" --report-only >/dev/null 2>&1
+check "destroy-orphans: listado de otro proyecto es error" 2 $?
+do_ --assets "$d/assets-huerfanos.json" --project X >/dev/null 2>&1
+check "destroy-orphans: --project inválido es error" 2 $?
+"$PY" scripts/destroy-orphans.py --env Dev --prefix bnt --project example-landing-zone \
+  --project-number 111111111111 --assets "$d/assets-huerfanos.json" >/dev/null 2>&1
+check "destroy-orphans: --env inválido es error" 2 $?
 
 # Estructura de destroy.yml y del modo destroy de _terraform-root.yml.
 "$PY" -c '
@@ -486,56 +760,71 @@ if triggers != {"workflow_dispatch"}:
 opts = re.search(r"entorno:.*?options:\n((?:\s+- \S+\n)+)", on, re.S)
 if not opts or re.findall(r"- (\S+)", opts.group(1)) != ["dev", "qa"]:
     bad.append("las opciones de entorno no son exactamente dev y qa")
+if not re.search(r"\n      incluir_red:\n(?:        .*\n)*?        type: boolean\n        default: false\n", on):
+    bad.append("incluir_red no es booleana con false por defecto")
 group = lambda t: re.search(r"^concurrency:\n\s+group: (\S+)\n\s+cancel-in-progress: false", t, re.M)
 if not group(wf) or not group(apply_wf) or group(wf).group(1) != group(apply_wf).group(1):
     bad.append("concurrency distinta de apply.yml (o con cancelación)")
-if "destroy-guard.sh pedido" not in wf[wf.index("\n  gate:"):wf.index("\n  workloads:")]:
+def job(name):
+    m = re.search(r"\n  %s:\n(.*?)(?=\n  [a-z]+:\n|\Z)" % name, wf, re.S)
+    return m.group(1) if m else ""
+if "destroy-guard.sh pedido" not in job("gate"):
     bad.append("el trabajo gate no llama a destroy-guard.sh pedido")
-order = [("workloads", "gate", "5-workloads"), ("projects", "workloads", "4-projects"),
-         ("networks", "projects", "3-networks"), ("orphans", "networks", None)]
-for job, need, stage in order:
-    m = re.search(r"\n  %s:\n(.*?)(?=\n  [a-z]+:\n|\Z)" % job, wf, re.S)
-    body = m.group(1) if m else ""
-    cond = re.search(r"^    if: (.*)$", body, re.M)
-    if not cond or "github.ref == \x27refs/heads/main\x27" not in cond.group(1) \
-            or "vars.GCP_ENABLED == \x27true\x27" not in cond.group(1) \
-            or "(inputs.entorno == \x27dev\x27 || inputs.entorno == \x27qa\x27)" not in cond.group(1):
-        bad.append("%s: if sin main, sin GCP_ENABLED o sin limitar a dev y qa" % job)
-    if "needs: %s\n" % need not in body:
-        bad.append("%s no espera a %s" % (job, need))
+conds = ("github.ref == \x27refs/heads/main\x27", "vars.GCP_ENABLED == \x27true\x27",
+         "(inputs.entorno == \x27dev\x27 || inputs.entorno == \x27qa\x27)")
+for name, need, stage in (("workloads", "gate", "3-workloads"), ("networks", "workloads", "2-networks"),
+                          ("orphans", "[workloads, networks]", None)):
+    body = job(name)
+    m = re.search(r"^    if: (.*)$", body, re.M)
+    cond = m.group(1) if m else ""
+    if not cond or any(c not in cond for c in conds):
+        bad.append("%s: if sin main, sin GCP_ENABLED o sin limitar a dev y qa" % name)
+    if ("inputs.incluir_red" in cond) != (name != "workloads"):
+        bad.append("%s: incluir_red mal usado en el if" % name)
+    if "    needs: %s\n" % need not in body:
+        bad.append("%s no espera a %s" % (name, need))
     if stage:
-        want = ["root: stages/%s/envs/${{ inputs.entorno }}" % stage, "stage: %s" % stage,
+        want = ["root: stages/%s/envs/${{ inputs.entorno }}" % stage, "stage: %s/${{ inputs.entorno }}" % stage,
                 "environment: ${{ inputs.entorno }}", "destroy: true", "uses: ./.github/workflows/_terraform-root.yml"]
-        bad += ["%s sin \"%s\"" % (job, w) for w in want if w not in body]
-    elif "vars.GCP_AUDIT_SERVICE_ACCOUNT" not in body or "destroy-orphans.py" not in body:
-        bad.append("orphans sin la cuenta de auditoría o sin destroy-orphans.py")
+        bad += ["%s sin \"%s\"" % (name, w) for w in want if w not in body]
+    else:
+        if "needs.workloads.result == \x27success\x27" not in cond:
+            bad.append("orphans no exige que 3-workloads se haya destruido")
+        for w in ("vars.GCP_AUDIT_SERVICE_ACCOUNT", "destroy-orphans.py", "--scope=\"projects/${PROJECT_ID}\"",
+                  "--project-number \"${PROJECT_NUMBER}\"", "--env \"${ENV_NAME}\"", "--prefix \"${PREFIX}\""):
+            if w not in body:
+                bad.append("orphans sin %s" % w)
 for u in re.findall(r"uses: (\S+)", wf):
     if not u.startswith("./") and not re.search(r"@[0-9a-f]{40}$", u):
         bad.append("acción sin SHA completo: %s" % u)
 plan_job = root[root.index("\n  plan:"):root.index("\n  apply:")]
 apply_job = root[root.index("\n  apply:"):]
-for name, job in (("plan", plan_job), ("apply", apply_job)):
-    g = job.find("destroy-guard.sh raiz")
-    if g < 0 or g > job.index("google-github-actions/auth") or g > job.index("terraform init"):
+for name, body in (("plan", plan_job), ("apply", apply_job)):
+    g = body.find("destroy-guard.sh raiz")
+    if g < 0 or g > body.index("google-github-actions/auth") or g > body.index("terraform init"):
         bad.append("_terraform-root %s: destroy-guard.sh raiz falta o va después de autenticar" % name)
-    if "destroy-plan-check.py" not in job:
-        bad.append("_terraform-root %s: falta destroy-plan-check.py" % name)
-    if "terraform plan \"${mode[@]}\"" not in job:
+    m = re.search(r"destroy-plan-check\.py[^\n]*", body)
+    if not m or "--env" not in m.group(0):
+        bad.append("_terraform-root %s: falta destroy-plan-check.py con --env" % name)
+    if "terraform plan \"${mode[@]}\"" not in body:
         bad.append("_terraform-root %s: el plan no recibe -destroy" % name)
 if apply_job.index("destroy-plan-check.py") > apply_job.index("terraform apply -input=false"):
     bad.append("_terraform-root apply: destroy-plan-check.py después de terraform apply")
+if "value: ${{ jobs.plan.outputs.prefix }}" not in root or "PREFIX: ${{ needs.workloads.outputs.prefix }}" not in wf:
+    bad.append("el prefijo del plan de 3-workloads no llega a orphans (salida prefix de _terraform-root)")
 print("; ".join(bad))
 sys.exit(1 if bad else 0)
-' ../.github/workflows/destroy.yml ../.github/workflows/apply.yml ../.github/workflows/_terraform-root.yml >"$tmp/destroy-wf.txt" 2>&1
+' "$WF/destroy.yml" "$WF/apply.yml" "$WF/_terraform-root.yml" >"$tmp/destroy-wf.txt" 2>&1
 rc=$?
-check "destroy.yml: solo manual, dev/qa, concurrencia de apply.yml, orden 5→4→3, guardias y SHA $(cat "$tmp/destroy-wf.txt")" 0 "$rc"
+check "destroy.yml: solo manual, dev/qa, incluir_red falso por defecto, concurrencia de apply.yml, 3-workloads → [spoke] → huérfanos del proyecto, guardias y SHA $(cat "$tmp/destroy-wf.txt")" 0 "$rc"
 
 # Conftest sobre los planes de destrucción (las políticas no deben rechazar un plan sin `after`).
 conftest_cmd="${CONFTEST_CMD:-$(command -v conftest 2>/dev/null || true)}"
 [ -z "$conftest_cmd" ] && [ -x "$HOME/go/bin/conftest" ] && conftest_cmd="$HOME/go/bin/conftest"
 [ -z "$conftest_cmd" ] && [ -x "$HOME/go/bin/conftest.exe" ] && conftest_cmd="$HOME/go/bin/conftest.exe"
 if [ -n "$conftest_cmd" ]; then
-  "$conftest_cmd" test "$d/plan-real-dev.json" "$d/plan-real-protegido.json" --policy policies --no-color >/dev/null 2>&1
+  "$conftest_cmd" test "$d/plan-real-spoke-dev.json" "$d/plan-real-workloads-dev.json" \
+    "$d/plan-real-protegido.json" --policy policies --no-color >/dev/null 2>&1
   check "conftest: las políticas aceptan los planes de destrucción reales" 0 $?
 else
   echo "INFO  conftest no está en el PATH: no se prueba Conftest sobre los planes de destrucción"

@@ -7,10 +7,13 @@
 #   compila las pruebas sin ejecutar ninguna. Si todavía no existe tests/go.mod, el trabajo
 #   lo avisa y termina en verde.
 # integration (solo con GCP_ENABLED = "true"): corre las pruebas reales con Workload
-#   Identity Federation y la cuenta de servicio de pruebas. Cada prueba crea y destruye su
-#   propio proyecto efímero.
+#   Identity Federation y la cuenta de servicio de pruebas. Por defecto todas corren en el
+#   proyecto único de pruebas TERRATEST_PROJECT_ID (ADR 0029: sin carpetas ni organización),
+#   con nombres únicos por corrida, y cada una destruye lo que creó. Con
+#   TEST_EPHEMERAL_PROJECTS = "true", cada prueba crea y destruye su propio proyecto efímero
+#   (necesita facturación y una carpeta u organización).
 #   - Nocturno y manual: todos los paquetes salvo tests/e2e (la prueba de extremo a extremo
-#     aplica 0 → 5 y se lanza a mano).
+#     aplica 0 → 3 y se lanza a mano).
 #   - Etiqueta modules/<módulo>/vX.Y.Z: solo las pruebas de ese módulo
 #     (scripts/module-tests.sh). La etiqueta no fija versiones: las raíces usan rutas relativas.
 #   - Omitidas: scripts/go-test-report.sh lista en el resumen cada prueba omitida con su
@@ -20,9 +23,13 @@
 # Variables de repositorio de las pruebas reales (los nombres de entorno que reciben las
 # pruebas de Go son los mismos):
 #   TERRATEST_SERVICE_ACCOUNT  correo de la cuenta de servicio de pruebas (no es de una etapa).
-#   TERRATEST_PROJECT_ID       proyecto de pruebas (cuota, APIs y llamadas sin proyecto propio).
-#   TERRATEST_BILLING_ACCOUNT  cuenta de facturación de los proyectos efímeros.
-#   TERRATEST_ORG_ID           ID numérico de la organización.
+#   TERRATEST_PROJECT_ID       proyecto único de pruebas, donde corren todas por defecto
+#                              (conviene uno aparte del de la landing zone).
+#   TEST_EPHEMERAL_PROJECTS    "true": un proyecto efímero por prueba (opcional).
+#   TERRATEST_BILLING_ACCOUNT  cuenta de facturación de los proyectos efímeros (solo con
+#                              TEST_EPHEMERAL_PROJECTS).
+#   TERRATEST_ORG_ID           ID numérico de la organización (proyectos efímeros sin carpeta y
+#                              pruebas de organización; opcional).
 #   TERRATEST_FOLDER_ID        carpeta donde se crean los proyectos efímeros (opcional).
 #   TERRATEST_MAX_SKIPS        máximo de pruebas omitidas aceptado (por defecto 0).
 #   TEST_ALLOW_EXPENSIVE, TEST_ALLOW_ORG, TEST_DIRECTORY_CUSTOMER_ID, TEST_ACCESS_POLICY_ID,
@@ -109,6 +116,7 @@ jobs:
       id-token: write
     env:
       TERRATEST_PROJECT_ID: ${{ vars.TERRATEST_PROJECT_ID }}
+      TEST_EPHEMERAL_PROJECTS: ${{ vars.TEST_EPHEMERAL_PROJECTS }}
       TERRATEST_BILLING_ACCOUNT: ${{ vars.TERRATEST_BILLING_ACCOUNT }}
       TERRATEST_ORG_ID: ${{ vars.TERRATEST_ORG_ID }}
       TERRATEST_FOLDER_ID: ${{ vars.TERRATEST_FOLDER_ID }}
@@ -133,8 +141,17 @@ jobs:
         env:
           TERRATEST_SERVICE_ACCOUNT: ${{ vars.TERRATEST_SERVICE_ACCOUNT }}
         run: |
+          # Proyecto único (por defecto): la cuenta y el proyecto. Proyectos efímeros: además la
+          # facturación y una carpeta u organización donde crearlos.
+          required="TERRATEST_SERVICE_ACCOUNT TERRATEST_PROJECT_ID"
+          if [ "${TEST_EPHEMERAL_PROJECTS:-}" = "true" ]; then
+            required="${required} TERRATEST_BILLING_ACCOUNT"
+            if [ -z "${TERRATEST_FOLDER_ID:-}" ]; then
+              required="${required} TERRATEST_ORG_ID"
+            fi
+          fi
           missing=""
-          for v in TERRATEST_SERVICE_ACCOUNT TERRATEST_PROJECT_ID TERRATEST_BILLING_ACCOUNT TERRATEST_ORG_ID; do
+          for v in ${required}; do
             if [ -z "${!v:-}" ]; then
               missing="${missing} ${v}"
             fi

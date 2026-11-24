@@ -11,7 +11,7 @@ test_iam_group_and_sa_passes if {
 		mk_create("google_folder_iam_binding.admins", "google_folder_iam_binding", {
 			"folder": "folders/000000000000",
 			"role": "roles/resourcemanager.folderViewer",
-			"members": ["group:platform-devops@example.com", "serviceAccount:bnt-tf-1-org@example-project.iam.gserviceaccount.com"],
+			"members": ["group:platform-devops@example.com", "serviceAccount:bnt-tf-base@example-project.iam.gserviceaccount.com"],
 		}),
 	])
 	count(all_denials(plan)) == 0

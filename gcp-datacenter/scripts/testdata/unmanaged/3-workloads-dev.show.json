@@ -1,0 +1,69 @@
+{
+  "format_version": "1.0",
+  "terraform_version": "1.16.5",
+  "values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_service_account.runtime[\"run\"]",
+          "mode": "managed",
+          "type": "google_service_account",
+          "name": "runtime",
+          "values": {"id": "projects/example-landing-zone/serviceAccounts/bnt-dev-app-run@example-landing-zone.iam.gserviceaccount.com", "email": "bnt-dev-app-run@example-landing-zone.iam.gserviceaccount.com", "unique_id": "100000000000000000002", "project": "example-landing-zone"}
+        }
+      ],
+      "child_modules": [
+        {
+          "address": "module.storage",
+          "resources": [
+            {
+              "address": "module.storage.google_storage_bucket.this",
+              "mode": "managed",
+              "type": "google_storage_bucket",
+              "name": "this",
+              "values": {"id": "bnt-dev-data-app-usc1", "name": "bnt-dev-data-app-usc1", "project": "example-landing-zone", "self_link": "https://www.googleapis.com/storage/v1/b/bnt-dev-data-app-usc1"}
+            }
+          ]
+        },
+        {
+          "address": "module.mig[\"primary\"]",
+          "resources": [
+            {
+              "address": "module.mig[\"primary\"].google_compute_region_instance_template.this",
+              "mode": "managed",
+              "type": "google_compute_region_instance_template",
+              "name": "this",
+              "values": {"id": "projects/example-landing-zone/regions/us-central1/instanceTemplates/bnt-dev-app-mig-usc1-20261124000000000000000001", "project": "example-landing-zone", "self_link": "https://www.googleapis.com/compute/v1/projects/example-landing-zone/regions/us-central1/instanceTemplates/bnt-dev-app-mig-usc1-20261124000000000000000001"}
+            },
+            {
+              "address": "module.mig[\"primary\"].google_compute_region_instance_group_manager.this",
+              "mode": "managed",
+              "type": "google_compute_region_instance_group_manager",
+              "name": "this",
+              "values": {"id": "projects/example-landing-zone/regions/us-central1/instanceGroupManagers/bnt-dev-app-mig-usc1", "project": "example-landing-zone", "base_instance_name": "bnt-dev-app-mig", "self_link": "https://www.googleapis.com/compute/v1/projects/example-landing-zone/regions/us-central1/instanceGroupManagers/bnt-dev-app-mig-usc1"}
+            }
+          ]
+        },
+        {
+          "address": "module.gke[\"primary\"]",
+          "resources": [
+            {
+              "address": "module.gke[\"primary\"].google_container_cluster.this",
+              "mode": "managed",
+              "type": "google_container_cluster",
+              "name": "this",
+              "values": {"id": "projects/example-landing-zone/locations/us-central1/clusters/bnt-dev-app-gke", "name": "bnt-dev-app-gke", "project": "example-landing-zone", "self_link": "https://container.googleapis.com/v1/projects/example-landing-zone/locations/us-central1/clusters/bnt-dev-app-gke"}
+            },
+            {
+              "address": "module.gke[\"primary\"].google_container_node_pool.scheduled[\"general\"]",
+              "mode": "managed",
+              "type": "google_container_node_pool",
+              "name": "scheduled",
+              "values": {"id": "projects/example-landing-zone/locations/us-central1/clusters/bnt-dev-app-gke/nodePools/general", "name": "general", "project": "example-landing-zone"}
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

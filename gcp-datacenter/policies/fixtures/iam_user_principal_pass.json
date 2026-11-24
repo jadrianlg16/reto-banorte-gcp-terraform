@@ -14,7 +14,7 @@
           "values": {
             "role": "roles/iam.workloadIdentityUser",
             "condition": [],
-            "service_account_id": "projects/example-project/serviceAccounts/bnt-tf-1-org@example-project.iam.gserviceaccount.com"
+            "service_account_id": "projects/example-project/serviceAccounts/bnt-tf-base@example-project.iam.gserviceaccount.com"
           },
           "sensitive_values": {}
         }
@@ -86,7 +86,7 @@
         "after": {
           "role": "roles/iam.workloadIdentityUser",
           "condition": [],
-          "service_account_id": "projects/example-project/serviceAccounts/bnt-tf-1-org@example-project.iam.gserviceaccount.com"
+          "service_account_id": "projects/example-project/serviceAccounts/bnt-tf-base@example-project.iam.gserviceaccount.com"
         },
         "after_unknown": {
           "id": true,

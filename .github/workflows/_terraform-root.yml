@@ -164,17 +164,11 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
 
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
       - name: Variables de la raíz
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
-        run: |
-          cd "${ROOT}"
-          if [ -f terraform.tfvars.example ]; then
-            cp terraform.tfvars.example terraform.tfvars
-          fi
-          # Los *.auto.tfvars.json se cargan después de terraform.tfvars y lo sobrescriben.
-          printf '%s' "${TFVARS_JSON:-"{}"}" |
-            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+        run: python3 scripts/root-tfvars.py "${ROOT}"
 
       - name: terraform init
         env:
@@ -325,13 +319,7 @@ jobs:
       - name: Variables de la raíz
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
-        run: |
-          cd "${ROOT}"
-          if [ -f terraform.tfvars.example ]; then
-            cp terraform.tfvars.example terraform.tfvars
-          fi
-          printf '%s' "${TFVARS_JSON:-"{}"}" |
-            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+        run: python3 scripts/root-tfvars.py "${ROOT}"
 
       - name: terraform init
         env:

@@ -42,6 +42,15 @@ Bloqueos por alcance (ADR 0029 §1, §4 y §8; protegen lo compartido del proyec
     `projects`, `locations`, `regions` o `zones` (el ID del proyecto no cuenta), y del correo,
     solo la parte local. Los recursos de otros proveedores (terraform_data, random...) no se
     revisan: no existen en GCP.
+    Hijos que GCP nombra dentro de un padre propio (reglas de una política de firewall, el valor
+    `enabled` de una llave de etiqueta, registros DNS, la conexión de PSA de la VPC): pasan por
+    el atributo que nombra al padre (`firewall_policy`, `managed_zone`, `network`) o, si ese
+    atributo es un ID sin nombre (`parent = "tagKeys/123"`), porque el padre está en el mismo
+    plan y pasó la regla (PARENT_ATTRS, transitivo). Un hijo cuyo padre no está en el plan ni
+    lleva el prefijo se bloquea. Un tablero de Monitoring, sin otro nombre, se reconoce por el
+    `displayName` de su `dashboard_json`. Así los destroy reales del spoke con `incluir_red` y de
+    3-workloads pasan enteros (scripts/testdata/destroy/plan-real-spoke-dev.json y
+    plan-real-workloads-dev.json).
 
 Avisos (no detienen; el destroy puede fallar por causas que el plan no ve):
   - bóveda de Backup and DR: los respaldos dentro de la retención forzada no se borran y, desde
@@ -100,13 +109,21 @@ PROJECT_SINGLETONS = {
 # `namespaced_name` (valores de etiquetas: <proyecto>/<llave>/<valor>) se mira sin su primer
 # segmento, que es el proyecto.
 NAME_ATTRS = (
-    "name", "account_id", "secret_id", "repository_id", "backup_vault_id", "backup_plan_id",
+    "name", "name_prefix", "account_id", "secret_id", "repository_id", "backup_vault_id", "backup_plan_id",
     "backup_plan_association_id", "short_name", "slo_id", "service_id", "display_name",
     "namespaced_name", "self_link",
     "instance", "cluster", "router", "network", "managed_zone", "firewall_policy", "policy",
     "crypto_key_id", "key_ring_id", "bucket", "service_account_id", "repository", "service",
     "location_id", "member",
 )
+# Atributos con un documento JSON cuyo campo es el nombre visible: un tablero de Monitoring no
+# tiene otro nombre (su `id` es projects/<número>/dashboards/<uuid>).
+JSON_NAME_ATTRS = {"dashboard_json": "displayName"}
+# Atributos que apuntan al recurso padre por su ID. Un recurso sin nombre del entorno pasa si
+# alguno de estos es el `id`, `name` o `self_link` de otro recurso del mismo plan que pasó.
+PARENT_ATTRS = ("parent", "firewall_policy", "managed_zone", "network", "attachment_target", "router", "policy")
+ID_ATTRS = ("id", "name", "self_link")
+LINK_PREFIX = re.compile(r"^(https://www\.googleapis\.com/compute/(v1|beta)/|//[a-z]+\.googleapis\.com/)")
 SKIP_AFTER = {"projects", "locations", "regions", "zones", "folders", "organizations"}
 MEMBER_TYPE = re.compile(r"^(serviceAccount|user|group|domain|principal|principalSet|deleted:serviceAccount):")
 
@@ -156,7 +173,23 @@ def names_of(before):
         v = before.get(attr)
         if isinstance(v, str) and v.strip():
             out.append((attr, v))
+    for attr, field in JSON_NAME_ATTRS.items():
+        try:
+            v = json.loads(before.get(attr) or "null")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(v, dict) and isinstance(v.get(field), str) and v[field].strip():
+            out.append(("%s.%s" % (attr, field), v[field]))
     return out
+
+
+def link_key(value):
+    """ID comparable: sin el prefijo de URL de la API (self_link y nombre completo valen igual)."""
+    return LINK_PREFIX.sub("", value.strip()) if isinstance(value, str) and value.strip() else None
+
+
+def own_ids(before):
+    return {k for k in (link_key(before.get(a)) for a in ID_ATTRS) if k}
 
 
 def plan_variable(plan, name):
@@ -178,6 +211,8 @@ def check(plan, env, prefix):
     marker = "%s-%s-" % (prefix, env)
 
     blockers, warnings, deletes = [], [], []
+    env_ids = set()  # IDs de los recursos del plan que pasaron la regla del nombre
+    unnamed = []  # (dirección, before, nombres) sin nombre del entorno: se resuelven por el padre
     plan_env = plan_variable(plan, "environment")
     if plan_env is not None and plan_env != env:
         blockers.append(("(variables)", "el plan es del entorno %s y se pidió destruir %s" % (plan_env, env)))
@@ -213,10 +248,10 @@ def check(plan, env, prefix):
                                  "ni lo borra (ADR 0029 §4)" % rtype))
             else:
                 names = names_of(before)
-                if not any(env_named(v, marker, attr == "namespaced_name") for attr, v in names):
-                    shown = ", ".join("%s=%s" % (a, v) for a, v in names[:3]) or "sin atributo de nombre"
-                    blockers.append((address, "nombre sin %s (%s): no es del entorno %s y su destroy borraría algo "
-                                     "compartido o de otro entorno (ADR 0029 §8)" % (marker, shown, env)))
+                if any(env_named(v, marker, attr == "namespaced_name") for attr, v in names):
+                    env_ids |= own_ids(before)
+                else:
+                    unnamed.append((address, before, names))
 
         policy = before.get("deletion_policy")
         if policy == "PREVENT":
@@ -243,6 +278,22 @@ def check(plan, env, prefix):
         elif rtype == "google_storage_bucket" and before.get("force_destroy") is not True:
             warnings.append((address, "bucket sin force_destroy: el borrado falla si tiene objetos (también versiones "
                              "no actuales)"))
+
+    # Hijos sin nombre propio del entorno: pasan si su padre (PARENT_ATTRS) es un recurso del
+    # plan que ya pasó; se repite hasta que no cambie (un hijo de un hijo también pasa).
+    changed = True
+    while changed and unnamed:
+        changed = False
+        for item in list(unnamed):
+            address, before, names = item
+            if any(link_key(before.get(a)) in env_ids for a in PARENT_ATTRS if link_key(before.get(a))):
+                env_ids |= own_ids(before)
+                unnamed.remove(item)
+                changed = True
+    for address, before, names in unnamed:
+        shown = ", ".join("%s=%s" % (a, v) for a, v in names[:3]) or "sin atributo de nombre"
+        blockers.append((address, "nombre sin %s (%s) ni un padre del entorno en este plan: no es del entorno %s "
+                         "y su destroy borraría algo compartido o de otro entorno (ADR 0029 §8)" % (marker, shown, env)))
     return blockers, warnings, deletes
 
 

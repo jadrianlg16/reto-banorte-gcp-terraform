@@ -1,0 +1,5 @@
+[
+  {"name": "//cloudresourcemanager.googleapis.com/projects/111111111111", "assetType": "cloudresourcemanager.googleapis.com/Project", "project": "projects/111111111111", "displayName": "example-landing-zone", "state": "ACTIVE"},
+  {"name": "//cloudresourcemanager.googleapis.com/projects/222222222222", "assetType": "cloudresourcemanager.googleapis.com/Project", "project": "projects/222222222222", "displayName": "otro-proyecto", "state": "ACTIVE"},
+  {"name": "//storage.googleapis.com/otro-bucket", "assetType": "storage.googleapis.com/Bucket", "project": "projects/222222222222", "displayName": "otro-bucket"}
+]

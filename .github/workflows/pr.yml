@@ -27,8 +27,11 @@
 #                                   La usan solo los apply de apply.yml y destroy.yml.
 #   GCP_STATE_BUCKET                bucket de estado (salida state_bucket de 0-bootstrap).
 #   GCP_TFVARS_JSON                 JSON con los valores de las variables para el plan:
-#                                   {"common": {...}, "stages/1-base": {...}, ...}. Para cada
-#                                   raíz se combinan "common" y la llave de la raíz.
+#                                   {"common": {"project_id": "...", ...}, "stages/1-base": {...},
+#                                   ...}. Para cada raíz se combinan "common" y la llave de la
+#                                   raíz (scripts/root-tfvars.py). "common" debe traer
+#                                   project_id, el proyecto único (ADR 0029 §1): sin él, el plan
+#                                   de una raíz que lo declara falla.
 # Secreto opcional: INFRACOST_API_KEY (sin él se omite el costo).
 
 name: pr
@@ -239,17 +242,11 @@ jobs:
           tar -xzf "${file}" conftest
           sudo install -m 0755 conftest /usr/local/bin/conftest
 
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
       - name: Variables del plan
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
-        run: |
-          cd "${ROOT}"
-          if [ -f terraform.tfvars.example ]; then
-            cp terraform.tfvars.example terraform.tfvars
-          fi
-          # Los *.auto.tfvars.json se cargan después de terraform.tfvars y lo sobrescriben.
-          printf '%s' "${TFVARS_JSON:-"{}"}" |
-            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+        run: python3 scripts/root-tfvars.py "${ROOT}"
 
       - name: terraform init
         env:

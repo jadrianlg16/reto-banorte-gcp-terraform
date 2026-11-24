@@ -1,5 +1,6 @@
-# Fixture de integración del módulo firewall (política de red): política global asociada a una
-# VPC de la prueba, con dos etiquetas seguras (una llave por etiqueta) y reglas por etiqueta.
+# Fixture de integración del módulo firewall (política de red, la única desde el ADR 0029 §6):
+# política global asociada a una VPC de la prueba, con dos etiquetas seguras (una llave por
+# etiqueta, con padre el proyecto de la VPC) y reglas por etiqueta.
 
 terraform {
   required_version = ">= 1.9"
@@ -36,11 +37,9 @@ module "network" {
 module "firewall" {
   source = "../../../modules/firewall"
 
-  prefix            = var.prefix
-  environment       = "dev"
-  policy_type       = "network"
-  parent            = module.network.network_id
-  secure_tag_parent = "projects/${var.project_id}"
+  prefix      = var.prefix
+  environment = "dev"
+  parent      = module.network.network_id
 
   secure_tags = {
     lb_backend = { description = "Backends del balanceador." }

@@ -9,8 +9,8 @@ Niveles del contrato (§9.2) que viven aquí:
 
 | Nivel | Carpeta | Qué hace | Sin GCP |
 |---|---|---|---|
-| Integración | `integration/` | Un proyecto efímero por módulo: `init`/`apply` de `fixtures/<módulo>/`, comprobaciones en salidas y en la API de GCP, `destroy` | Solo se compila |
-| Extremo a extremo | `e2e/` | Aplica 0 → 5, mide el tiempo, segundo plan sin cambios, conectividad, destroy de dev y búsqueda de huérfanos | Solo se compila |
+| Integración | `integration/` | Por módulo, en el proyecto único de pruebas (o en uno efímero): `init`/`apply` de `fixtures/<módulo>/`, comprobaciones en salidas y en la API de GCP, `destroy` | Solo se compila |
+| Extremo a extremo | `e2e/` | Aplica 0 → 3 en el proyecto de la landing zone (ADR 0029), mide el tiempo, segundo plan sin cambios, conectividad, destroy de dev y búsqueda de huérfanos | Solo se compila (salvo las pruebas sin compuerta de `config.example.json`, del orden de raíces y de la evaluación de conectividad, que sí corren) |
 | Prueba de humo de dev | `e2e/` (`TestDevSmoke`) | Sin aplicar nada: lee las salidas de dev ya aplicado y corre sus Connectivity Tests. La corre `apply.yml` antes de qa | Solo se compila |
 
 Los niveles estático, de políticas y unitario no están aquí: `scripts/check.sh`, `policies/` y
@@ -24,8 +24,8 @@ tests/
   helpers/                variables de entorno, compuertas, nombres únicos, etiquetas, opciones
                           de Terraform con errores reintentables, gcloud en JSON, KMS
   fixtures/<módulo>/      una raíz por módulo que lo llama con entradas de forma real
-  fixtures/firewall-hierarchical/   segunda variante del módulo firewall
-  fixtures/support/       project (proyecto efímero), cmek (llave de apoyo), network (VPC de apoyo)
+  fixtures/support/       project (APIs en el proyecto único o proyecto efímero), cmek (llave de
+                          apoyo), network (VPC de apoyo)
   integration/            pruebas de los 26 módulos
   e2e/                    prueba de extremo a extremo, config.example.json y la prueba de humo
                           de dev (smoke_test.go)
@@ -34,32 +34,41 @@ tests/
 Cada prueba de integración:
 
 1. se marca `t.Parallel()` y se omite (`t.Skip`) si faltan variables o su compuerta;
-2. crea un proyecto efímero `tt-<módulo>-<id>` (`fixtures/support/project`) o reutiliza uno;
+2. obtiene su proyecto con `fixtures/support/project`:
+   - **por defecto**, el proyecto único de pruebas `TERRATEST_PROJECT_ID` (ADR 0029: un solo
+     proyecto, sin carpetas ni organización). Solo habilita las APIs que pide, sin apagarlas al
+     terminar (`disable_on_destroy = false`), y no lo borra;
+   - con `TEST_EPHEMERAL_PROJECTS=true`, un proyecto efímero `tt-<módulo>-<id>` en
+     `TERRATEST_FOLDER_ID` o en la organización `TERRATEST_ORG_ID`, que se borra al final.
+     HYPOTHESIS: sin organización una cuenta de servicio no puede crear proyectos; por eso no es
+     el modo por defecto;
 3. copia `gcp-datacenter/` a una carpeta temporal (para no compartir `.terraform` ni estado entre
    pruebas en paralelo) y aplica `fixtures/<módulo>/`;
 4. comprueba las exigencias del módulo (§8) en las salidas y con `gcloud ... --format=json` o el
    cliente de Cloud Storage de Go;
-5. destruye el fixture (`defer`) y después el proyecto (`t.Cleanup`).
+5. destruye el fixture (`defer`) y después, si es efímero, el proyecto (`t.Cleanup`).
 
 Los nombres son únicos por corrida: `prefix` = `t` + cinco caracteres de `random.UniqueID()` en
 minúsculas, y todo recurso etiquetable lleva las cinco etiquetas obligatorias más
-`terratest_run=<id>`.
+`terratest_run=<id>`. Así varias pruebas comparten el proyecto único sin chocar.
+VERIFICAR-EN-APPLY: que las cuotas del proyecto (redes, routers, IP por región) alcancen para las
+pruebas en paralelo (`go test -parallel`, por defecto el número de CPU).
 
 ## Variables de entorno
 
 `.github/workflows/terratest.yml` exporta las `TERRATEST_*`, `GOOGLE_CLOUD_PROJECT` y las
-`TEST_*` de esta tabla salvo `TEST_REUSE_PROJECT`, con los mismos nombres que las variables de
-repositorio (`docs/pipeline.md` §2); las que no estén definidas llegan vacías. Ningún ID,
-correo ni secreto vive en el código.
+`TEST_*` de esta tabla, con los mismos nombres que las variables de repositorio
+(`docs/pipeline.md` §2); las que no estén definidas llegan vacías. Ningún ID, correo ni secreto
+vive en el código.
 
 | Variable | Uso | Quién la necesita |
 |---|---|---|
-| `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | Todas las que crean proyecto |
-| `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de proyectos y carpetas efímeros. Opcional: sin ella se usa la organización | Opcional; obligatoria para `TestProjectFactory` |
-| `TERRATEST_ORG_ID` | Número de la organización | Padre por defecto; `TestOrg`, `TestVPCSC`, e2e |
-| `TERRATEST_PROJECT_ID` | Proyecto de pruebas (cuota y llamadas sin proyecto propio); con `TEST_REUSE_PROJECT=true`, el proyecto donde corren todas | Opcional |
+| `TERRATEST_PROJECT_ID` | Proyecto único de pruebas, donde corren todas las de integración por defecto (también cuota y llamadas sin proyecto propio) | Todas, salvo con `TEST_EPHEMERAL_PROJECTS=true` |
+| `TEST_EPHEMERAL_PROJECTS` | `true`: un proyecto efímero por prueba en vez del proyecto único (necesita las tres de abajo) | Opcional |
+| `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | Solo con `TEST_EPHEMERAL_PROJECTS=true` |
+| `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de proyectos y carpetas efímeros. Opcional: sin ella se usa la organización | Proyectos efímeros; `TestProjectFactory`, `TestFolders` |
+| `TERRATEST_ORG_ID` | Número de la organización | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
 | `GOOGLE_CLOUD_PROJECT` | Proyecto por defecto de `gcloud` y del proveedor | Recomendado |
-| `TEST_REUSE_PROJECT` | `true`: no crea proyectos efímeros, usa `TERRATEST_PROJECT_ID` (más rápido; las APIs quedan habilitadas) | Opcional, local |
 | `TEST_REGION` / `TEST_DR_REGION` | Regiones (por defecto `us-central1` / `us-east4`). Deben estar en los mapas de códigos cortos de los módulos | Opcional |
 | `TEST_DIRECTORY_CUSTOMER_ID` | Cliente de Cloud Identity (`C…`) | `TestOrg` |
 | `TEST_ACCESS_POLICY_ID` | Política de Access Context Manager existente (una organización solo tiene una) | `TestVPCSC` |
@@ -70,26 +79,32 @@ correo ni secreto vive en el código.
 | `TEST_LB_DOMAIN` | Dominio del certificado (por defecto `<prefix>.terratest.example.com`; el certificado no llega a ACTIVE) | Opcional |
 
 La identidad es la de Application Default Credentials (`gcloud auth application-default login`
-en local; WIF con `TERRATEST_SERVICE_ACCOUNT` en CI). Necesita crear proyectos y asociarles
-facturación en el padre, y para las pruebas de organización, los roles de cada recurso.
+en local; WIF con `TERRATEST_SERVICE_ACCOUNT` en CI). Necesita en el proyecto único los roles de
+los recursos que crean los fixtures y habilitar APIs; solo con proyectos efímeros, crear
+proyectos y asociarles facturación en el padre, y para las pruebas de organización, los roles de
+cada recurso. Las pruebas de `org`, `vpc-sc`, `folders` y `project-factory` prueban módulos de
+la landing zone de varios proyectos; mientras esos módulos existan siguen aquí, con sus
+compuertas, y piden organización o carpeta. La variante jerárquica de `firewall` se quitó: el
+módulo solo crea la política de red de una VPC (ADR 0029 §6).
 
 ## Compuertas
 
 | Compuerta | Pruebas | Motivo |
 |---|---|---|
-| `TEST_ALLOW_ORG=true` | `TestOrg`, `TestVPCSC`, `TestFirewallHierarchical` | Alcance de organización. Para acotar el efecto: las nueve políticas y la política jerárquica se aplican a una carpeta contenedora vacía creada por la prueba; el sink de `org` sí es de organización, con un filtro que no coincide con nada; el perímetro va en dry-run |
+| `TEST_ALLOW_ORG=true` | `TestOrg`, `TestVPCSC` | Alcance de organización. Para acotar el efecto: las nueve políticas se aplican a una carpeta contenedora vacía creada por la prueba; el sink de `org` sí es de organización, con un filtro que no coincide con nada; el perímetro va en dry-run |
 | `TEST_ALLOW_EXPENSIVE=true` | `TestGKE`, `TestCloudSQL`, `TestMemorystore`, `TestFilestore`, `TestHybridConnectivity`, `TestBackupDR` | Lentas (10–20 min) o con cobro por hora relevante |
-| `TEST_E2E=true` | `TestEndToEnd` | Aplica la landing zone completa en una organización real |
+| `TEST_E2E=true` | `TestEndToEnd` | Aplica la landing zone completa en su proyecto real |
 | `TEST_SMOKE=true` (más `TEST_E2E_STATE_BUCKET`) | `TestDevSmoke` | Lee el estado real y crea Connectivity Tests en dev; la activa `apply.yml` |
 
-Sin compuerta (proyecto efímero y recursos baratos o gratuitos): `storage`, `kms`, `secrets`,
+Sin compuerta (recursos baratos o gratuitos): `storage`, `kms`, `secrets`,
 `log-export`, `iam`, `folders`, `project-factory`, `network-hub`, `network-spoke`, `firewall` (de
 red), `dns`, `cloud-armor`, `cloud-run`, `compute-mig`, `load-balancer` (externo),
 `observability`, `audit-alerts`.
 
 ## Advertencia de costo
 
-Las pruebas crean recursos reales que se cobran a `TERRATEST_BILLING_ACCOUNT`. Una corrida de
+Las pruebas crean recursos reales que se cobran a la facturación del proyecto de pruebas (o a
+`TERRATEST_BILLING_ACCOUNT` con proyectos efímeros). Una corrida de
 integración completa con `TEST_ALLOW_EXPENSIVE=true` levanta a la vez un clúster regional de
 GKE, Cloud SQL, Redis, 1 TiB de Filestore, cuatro túneles HA VPN y un balanceador global durante
 decenas de minutos. La de extremo a extremo despliega toda la landing zone y deja sin destruir
@@ -98,9 +113,13 @@ lo compartido. **HIPÓTESIS sin medir**: no hay cifras de costo porque nunca se 
 Lo que puede quedar después de una corrida (revisar a mano):
 
 - Llaveros y llaves de KMS: GCP no los borra nunca. Las pruebas programan la destrucción de las
-  versiones; en un proyecto efímero desaparecen con el proyecto.
-- Proyectos efímeros en `DELETE_REQUESTED` durante 30 días (cuentan contra la cuota de proyectos).
-- Si un `destroy` falla, la prueba lo marca como error y los recursos siguen vivos.
+  versiones; en el proyecto único se acumulan (con el prefijo de cada corrida), en uno efímero
+  desaparecen con el proyecto.
+- Las APIs habilitadas en el proyecto único quedan habilitadas.
+- Con proyectos efímeros, proyectos en `DELETE_REQUESTED` durante 30 días (cuentan contra la
+  cuota de proyectos).
+- Si un `destroy` falla, la prueba lo marca como error y los recursos siguen vivos; se reconocen
+  por la etiqueta `terratest_run=<id>` o el prefijo de la corrida.
 
 ## Cómo correr
 
@@ -112,12 +131,12 @@ Desde `gcp-datacenter/tests`. Las pruebas largas necesitan `-timeout` mayor que 
 go vet ./...
 go test -count=1 -run XXX ./...
 
-# Una sola prueba de integración.
-export TERRATEST_BILLING_ACCOUNT=... TERRATEST_FOLDER_ID=...
+# Una sola prueba de integración, en el proyecto único de pruebas.
+export TERRATEST_PROJECT_ID=...
 go test -count=1 -v -timeout 60m -run '^TestStorage$' ./integration
 
-# Varias, reutilizando un proyecto ya existente.
-export TERRATEST_PROJECT_ID=... TEST_REUSE_PROJECT=true
+# Varias, cada una en un proyecto efímero (necesita organización o carpeta).
+export TEST_EPHEMERAL_PROJECTS=true TERRATEST_BILLING_ACCOUNT=... TERRATEST_FOLDER_ID=...
 go test -count=1 -v -timeout 90m -run 'TestStorage|TestKMS|TestSecrets' ./integration
 
 # Todas las de integración, incluidas las caras y las de organización.
@@ -147,8 +166,8 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
   omisión no pasa en silencio.
 - La prueba de extremo a extremo no corre en CI: se lanza a mano.
 - `TestDevSmoke` corre en `apply.yml` (trabajo `dev / prueba de humo`), no aquí, con
-  `TEST_SMOKE=true`, `TEST_E2E_STATE_BUCKET` y la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`; una omisión
-  también la hace fallar.
+  `TEST_SMOKE=true`, `TEST_E2E_STATE_BUCKET` y la cuenta de lectura `GCP_AUDIT_SERVICE_ACCOUNT`
+  (salida `read_service_account` de `0-bootstrap`); una omisión también la hace fallar.
 
 ## Exigencias que comprueba cada prueba de integración
 
@@ -166,7 +185,6 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestNetworkHub` | network-hub | VPC personalizada, PGA y flow logs al 100 % (valor por defecto) en cada subred, router por región con ASN 64514 |
 | `TestNetworkSpoke` | network-spoke | PGA y flow logs al 100 % (valor por defecto), rangos secundarios, proxy-only, PSA, peering en ambos sentidos con rutas personalizadas, NAT |
 | `TestFirewallNetwork` | firewall | Llave de etiqueta por etiqueta (`GCE_FIREWALL`), reglas por etiqueta, denegación por defecto, asociación a la VPC |
-| `TestFirewallHierarchical` | firewall | Asociación al padre, ninguna regla allow, salud, IAP y tráfico interno delegados con `goto_next` (§7.3), deny por defecto |
 | `TestDNS` | dns | Zonas privadas en la VPC, VIP restringido, reenvío por ruta privada, reenvío entrante |
 | `TestHybridConnectivity` | hybrid-connectivity | 2 interfaces, 2 túneles ESTABLISHED, BGP UP, anuncio CUSTOM con 35.199.192.0/19 |
 | `TestComputeMIG` | compute-mig | Shielded VM, sin IP pública, disco con CMEK, cuenta propia, autocuración, límites del autoescalador |
@@ -193,33 +211,44 @@ Compuerta `TEST_E2E=true`. Variables:
 | Variable | Uso |
 |---|---|
 | `TEST_E2E_CONFIG` | Ruta a un JSON con las variables de cada raíz (copiar `e2e/config.example.json`; los `*.json` de `e2e/` salvo el ejemplo están en `.gitignore`) |
-| `TERRATEST_ORG_ID` | Organización para la búsqueda de huérfanos |
 | `TEST_E2E_ENVS` | Entornos, separados por coma (por defecto `dev`; dev siempre va). Por ejemplo `dev,prod` |
 | `TEST_E2E_STATE_BUCKET` | La etapa 0 ya está arrancada: se salta el procedimiento de estado local |
-| `TEST_E2E_IMPERSONATE` | `true`: las etapas 1 a 5 corren suplantando su cuenta de servicio (el operador necesita `iam.serviceAccountTokenCreator` sobre ellas) |
-| `TEST_E2E_ENFORCE_DURATION` | `true`: falla si 0 → 5 tarda más de 90 minutos (si no, solo lo registra) |
+| `TEST_E2E_IMPERSONATE` | `true`: las raíces 1 a 3 corren suplantando su cuenta de servicio (el operador necesita `iam.serviceAccountTokenCreator` sobre ellas) |
+| `TEST_E2E_ENFORCE_DURATION` | `true`: falla si 0 → 3 tarda más de 90 minutos (si no, solo lo registra) |
 | `TEST_E2E_CONNECTIVITY` | `false` omite las pruebas de conectividad |
 | `TEST_E2E_ONPREM_IP` | IP de destino en on-premises (por defecto `192.168.0.10`) |
 | `TEST_E2E_SKIP_DESTROY` | `true`: no destruye dev |
+| `TEST_E2E_DESTROY_NETWORK` | `true`: destruye también el spoke de dev (como `incluir_red` de `destroy.yml`) |
 | `TEST_E2E_RUN_ID` | ID de la corrida (etiqueta `e2e_run`); por defecto aleatorio |
+| `PYTHON` | Intérprete para `scripts/destroy-orphans.py` (por defecto `python3`) |
+
+Ya no hace falta `TERRATEST_ORG_ID`: el proyecto y su número salen de las salidas `project_id` y
+`project_number` de `0-bootstrap`.
 
 ### Decisiones de `config.example.json`
 
-- **Imagen de Cloud Run y Binary Authorization.** La etapa 4 crea en el proyecto de la
-  aplicación una política ALWAYS_DENY que solo admite su repositorio de Artifact Registry y
-  `binary_authorization_allowlist_patterns`. La imagen de muestra
-  (`us-docker.pkg.dev/cloudrun/container/hello:latest`) no está en ese repositorio, así que el
+- **Proyecto único.** `common.project_id` es el proyecto que creó una persona (ADR 0029 §1); las
+  llaves de `stages` son las raíces del ADR 0029 §2 (`0-bootstrap`, `1-base`, `2-networks`,
+  `2-networks/envs/dev`, `3-workloads/envs/dev`). `TestConfigExampleRoots` (sin GCP) rechaza
+  una llave de otra raíz. Los nombres de las variables siguen los `variables.tf` de cada raíz; una
+  variable que la raíz no declara solo produce una advertencia de Terraform (`-var-file`).
+- **Imagen de Cloud Run y Binary Authorization.** `1-base` crea la única política de Binary
+  Authorization del proyecto, que solo admite los repositorios de Artifact Registry del proyecto
+  y `binary_authorization_allowlist_patterns` (ADR 0029 §4). La imagen de muestra
+  (`us-docker.pkg.dev/cloudrun/container/hello:latest`) no está en esos repositorios, así que el
   ejemplo la admite con `binary_authorization_allowlist_patterns =
-  ["us-docker.pkg.dev/cloudrun/container/hello*"]` en `4-projects/envs/dev`. Se eligió el
-  patrón y no publicar la imagen en el repositorio porque solo depende de esa variable (sin
-  `docker` ni una identidad publicadora en la prueba). Si se cambia `cloud_run_image`, hay que
-  cambiar el patrón; `TestConfigExampleBinaryAuthorization` (sin GCP) lo comprueba contra la
-  validación de la variable. **VERIFICAR-EN-APPLY**: que el `*` final admita la etiqueta
-  `:latest`. Las pruebas de integración no cambian: corren en proyectos efímeros sin política
-  de Binary Authorization propia (la de Google por defecto admite todo).
+  ["us-docker.pkg.dev/cloudrun/container/hello*"]` en `1-base`. Se eligió el patrón y no
+  publicar la imagen en el repositorio porque solo depende de esa variable (sin `docker` ni una
+  identidad publicadora en la prueba). Si se cambia `cloud_run_image`, hay que cambiar el patrón;
+  `TestConfigExampleBinaryAuthorization` (sin GCP) lo comprueba contra la validación de la
+  variable en la raíz de `stages/` que la declare. **VERIFICAR-EN-APPLY**: que el `*` final
+  admita la etiqueta `:latest`. Las pruebas de integración no cambian: no aplican `1-base`.
+  HYPOTHESIS: si el proyecto único de pruebas es el mismo de la landing zone, su política de
+  Binary Authorization también vale para `TestCloudRun` y `TestGKE`; por eso conviene un proyecto
+  de pruebas aparte.
 - **VPN de DR del hub.** `enable_vpn_dr = true` explícito, como en el diseño: el hub crea 8
   túneles (2 HA VPN de 2 túneles en el hub y sus puntas en `onprem-sim`). Se mantiene para que
-  0 → 5 mida el tiempo y el costo del diseño real; con un tiempo acotado se puede poner `false`
+  0 → 3 mida el tiempo y el costo del diseño real; con un tiempo acotado se puede poner `false`
   (4 túneles), y entonces la prueba no cubre la ruta de DR a on-premises.
   `TestConfigExampleVPNDR` exige que el valor esté escrito.
 
@@ -231,17 +260,18 @@ Compuerta `TEST_E2E=true`. Variables:
    remoto no está vacío y mueve `terraform.tfstate*` a la carpeta temporal de la prueba. Si ya
    existe un `terraform.tfstate` o un `backend_override.tf` en la raíz, falla sin tocar nada. Con
    `TEST_E2E_STATE_BUCKET`, solo inicializa contra ese bucket y aplica.
-2. **Etapas 1 → 5** en el orden del contrato (`1-org`, `2-security`, `3-networks`,
-   `3-networks/envs/<env>`, `4-projects/envs/<env>`, `5-workloads/envs/<env>`), usadas en su lugar
-   con `-backend-config=bucket=…` y `-reconfigure`. Por raíz escribe un `.tfvars.json` (fuera del
-   repositorio) con `common` + la sección de la raíz + lo que la prueba conoce: `state_bucket`,
-   `workloads_service_account` (salida de la etapa 0) y, solo en dev, `project_deletion_policy`,
-   `deletion_policy = "DELETE"` y `deletion_protection = false` para poder destruir. Todas las
-   etiquetas llevan `e2e_run=<id>`.
-3. **Tiempo** total de 0 → 5 frente al objetivo de 90 minutos (§12, pendiente 10): se registra
+2. **Raíces 1 → 3** en el orden de `apply.yml` (ADR 0029 §2): `1-base`, el hub `2-networks` y,
+   por cada entorno pedido, `2-networks/envs/<env>` y `3-workloads/envs/<env>`. Se usan en su
+   lugar con `-backend-config=bucket=…` y `-reconfigure`. Por raíz escribe un `.tfvars.json`
+   (fuera del repositorio) con `common` + la sección de la raíz + lo que la prueba conoce:
+   `state_bucket` (salida de la etapa 0) y, solo en `3-workloads/envs/dev`,
+   `deletion_protection = false` para poder destruir. Ninguna raíz crea ni borra proyectos.
+   Todas las etiquetas llevan `e2e_run=<id>`.
+3. **Tiempo** total de 0 → 3 frente al objetivo de 90 minutos (§12, pendiente 10): se registra
    siempre y falla solo con `TEST_E2E_ENFORCE_DURATION=true`.
 4. **Segundo plan** `plan -detailed-exitcode` en cada raíz aplicada: exige exit 0 (pendiente 11).
-5. **Conectividad** con Connectivity Tests (análisis de configuración, sin tráfico ni VM):
+5. **Conectividad** con Connectivity Tests (análisis de configuración, sin tráfico ni VM), todas
+   en el proyecto único (el proyecto sale del `network_self_link` del spoke de dev):
    - dev → IP privada de Cloud SQL:5432: REACHABLE;
    - Internet → IP del balanceador de dev:443: REACHABLE;
    - dev → on-premises simulado (192.168.0.10:22 en `onprem-sim`): ruta por la HA VPN (el
@@ -265,10 +295,16 @@ Compuerta `TEST_E2E=true`. Variables:
    horario (`settings.activationPolicy = NEVER`, ADR 0028) falla la prueba con un mensaje que
    lo dice y cómo seguir; la detección se prueba sin GCP
    (`go test -run TestSQLStoppedError ./e2e/`).
-6. **Destroy de dev** en orden inverso (5 → 4 → 3) y búsqueda de huérfanos con
-   `gcloud asset search-all-resources --query="labels.e2e_run=<id> AND labels.env=dev"` en la
-   organización, con reintentos durante 30 minutos (el índice tarda). Los proyectos en
-   `DELETE_REQUESTED` no cuentan.
+6. **Destroy de dev** como `destroy.yml` (ADR 0029 §8): siempre `3-workloads/envs/dev`; el
+   spoke `2-networks/envs/dev` solo con `TEST_E2E_DESTROY_NETWORK=true` (la conexión de PSA
+   puede tardar en poder borrarse después de Cloud SQL).
+7. **Huérfanos** como `destroy.yml`: `terraform state pull` de cada raíz aplicada,
+   `gcloud asset search-all-resources --scope=projects/<project_id>` y
+   `scripts/destroy-orphans.py --env dev` con esos estados. Huérfano es lo que tenga
+   `labels.env=dev` o un nombre con `<prefix>-dev-` y no esté en ningún estado ni en la lista de
+   lo que conserva `1-base` (llaves, llaveros, repositorios y secretos). Se reintenta durante 30
+   minutos (el índice tarda). Necesita `python3` (o `PYTHON`) y
+   `cloudasset.assets.searchAllResources` en el proyecto (VERIFICAR-EN-APPLY).
 
 ### Qué queda manual
 
@@ -279,25 +315,29 @@ Compuerta `TEST_E2E=true`. Variables:
   registro DNS; luego `curl -I https://<dominio>/`.
 - **Resolución DNS desde on-premises** (reenvío entrante y anuncio de 35.199.192.0/19, pendiente 7).
 - **Simulacro de DR**: runbook `docs/runbooks/04-conmutacion-a-dr.md`; no se automatiza.
-- **Desmontaje de lo compartido** (etapas 0, 1, 2, hub y entornos distintos de dev): no se
-  destruye. Lleva llaves con `prevent_destroy`, el bucket de estado y, si se bloqueó, la retención
-  de logs.
+- **Desmontaje de lo compartido** (`0-bootstrap`, `1-base`, el hub y entornos distintos de dev):
+  no se destruye. Lleva llaves con `prevent_destroy`, el bucket de estado y, si se bloqueó, la
+  retención de logs. El proyecto no se borra (lo creó una persona).
 
 ## Prueba de humo de dev (`e2e/smoke_test.go`)
 
 `TestDevSmoke`, compuerta `TEST_SMOKE=true` más `TEST_E2E_STATE_BUCKET`. No aplica ni destruye
 nada:
 
-1. `terraform init` con `-backend-config=bucket=…` en `stages/3-networks`,
-   `stages/3-networks/envs/dev` y `stages/5-workloads/envs/dev`, y lectura de sus salidas.
+1. `terraform init` con `-backend-config=bucket=…` en `stages/2-networks`,
+   `stages/2-networks/envs/dev` y `stages/3-workloads/envs/dev`, y lectura de sus salidas
+   (`onprem_sim_network_name` del hub; `network_self_link` y `subnets` del spoke;
+   `sql_instance_connection_name` y `lb_ip_address` de las cargas).
 2. Las Connectivity Tests de dev de la prueba de extremo a extremo (dev → Cloud SQL, Internet →
    balanceador de dev, dev → on-premises simulado), sin la de prod. Falla si no hay ninguna
    expresable o si alguna no da lo esperado.
 
 La corre `apply.yml` (trabajo `dev / prueba de humo`) después de aplicar dev y antes de qa, con
-la cuenta `GCP_AUDIT_SERVICE_ACCOUNT`; sus permisos están en `docs/pipeline.md` §3. Las
-pruebas se crean en el proyecto host de dev, que tiene la API
-`networkmanagement.googleapis.com` habilitada por `stages/3-networks/envs/dev`. Local:
+la cuenta de lectura `GCP_AUDIT_SERVICE_ACCOUNT` (`tf-read`, con
+`roles/networkmanagement.admin` en el proyecto, ADR 0029 §3); sus permisos están en
+`docs/pipeline.md` §3. Las pruebas se crean en el proyecto único, que tiene la API
+`networkmanagement.googleapis.com` habilitada por `0-bootstrap` (todas las APIs, una sola vez).
+Local:
 
 ```bash
 TEST_SMOKE=true TEST_E2E_STATE_BUCKET=<bucket> go test -count=1 -v -timeout 25m -run '^TestDevSmoke$' ./e2e

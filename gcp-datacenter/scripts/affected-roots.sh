@@ -17,7 +17,9 @@
 #
 # Reglas (quién afecta a quién):
 #   - Una raíz es un directorio de stages/ con versions.tf. 0-bootstrap queda fuera: la aplica
-#     una persona a mano y no tiene cuenta de pipeline (ADR 0029 §2).
+#     una persona a mano y no tiene cuenta de pipeline (ADR 0029 §2). Un cambio en
+#     stages/0-bootstrap/ no planea ninguna raíz: las demás leen sus salidas del estado, que no
+#     cambia hasta que esa persona la aplica.
 #   - Un archivo de stages/ dentro de una raíz afecta a la raíz más profunda que lo contiene:
 #     un cambio en stages/2-networks/envs/dev afecta solo al spoke dev, no al hub.
 #   - Un archivo de stages/ fuera de toda raíz (por ejemplo stages/3-workloads/README.md o
@@ -151,6 +153,7 @@ if [ "$all" -eq 0 ]; then
 $DEPS
 EOF
     case "$f" in
+      stages/0-bootstrap/*) continue ;; # la aplica una persona: no planea otras raíces
       stages/*) ;;
       *) continue ;;
     esac

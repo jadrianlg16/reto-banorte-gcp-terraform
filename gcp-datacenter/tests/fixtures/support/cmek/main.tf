@@ -45,7 +45,8 @@ variable "grant_storage_agent" {
 }
 
 # VERIFICAR-EN-APPLY: que generateServiceIdentity acepte cada servicio de identity_services
-# (mismo criterio que stages/4-projects/envs/<env>/service_agents.tf).
+# (mismo criterio que stages/1-base, que da a los agentes de servicio permisos sobre las llaves,
+# ADR 0029 §4).
 resource "google_project_service_identity" "this" {
   provider = google-beta
   for_each = var.identity_services
