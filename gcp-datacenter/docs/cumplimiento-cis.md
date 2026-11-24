@@ -197,7 +197,7 @@ Las banderas están en bloques `database_flags` fijos de la primaria y la répli
 
 | 5.0 | 3.0 · categoría SCC | Recomendación | Cómo lo aborda el repositorio | Estado |
 |---|---|---|---|---|
-| 7.1 | 7.1 · `PUBLIC_DATASET` | Datasets no públicos | Ningún recurso `google_bigquery_*`; el sink de auditoría escribe en un bucket de Logging. | **No aplica** |
+| 7.1 | 7.1 · `PUBLIC_DATASET` | Datasets no públicos | Ningún recurso `google_bigquery_*`; el sink de auditoría escribe en un bucket de Cloud Storage (`modules/log-export/main.tf:33`). | **No aplica** |
 | 7.2 | 7.2 · `BIGQUERY_TABLE_CMEK_DISABLED` | Tablas con CMEK | Igual que 7.1. | **No aplica** |
 | 7.3 | 7.3 · `DATASET_CMEK_DISABLED` | CMEK por defecto en datasets | Igual que 7.1. | **No aplica** |
 | 7.4 | 7.4 · — | Datos de BigQuery clasificados | Igual que 7.1. | **No aplica** |
