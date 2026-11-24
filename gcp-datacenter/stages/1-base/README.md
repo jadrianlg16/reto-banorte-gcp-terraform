@@ -9,8 +9,8 @@ pipeline con la cuenta `<prefix>-tf-base` (entorno de GitHub `common`); lee el e
 
 | Archivo | Recursos |
 |---|---|
-| `main.tf` | Configuración de auditoría del proyecto (`ADMIN_READ` para todos los servicios; `DATA_READ` y `DATA_WRITE` para KMS, IAM, Secret Manager, Cloud SQL y Cloud Storage); llaves comunes `logs` y `pubsub`; bucket de logs con CMEK y sink de proyecto (módulo `log-export`, con una exclusión para los registros del propio bucket); alertas de auditoría CIS 2.5 a 2.12 (módulo `audit-alerts`); contactos esenciales del proyecto; tema de Pub/Sub y notificación de hallazgos de SCC (opcional) |
-| `kms.tf` | Un llavero por entorno y ubicación (`primary_region`, `dr_region` y la multirregión `us`) con las llaves de cada uso y sus agentes de servicio; contenedores de secretos por entorno con réplica en las dos regiones |
+| `main.tf` | Configuración de auditoría del proyecto (`ADMIN_READ` para todos los servicios; `DATA_READ` y `DATA_WRITE` para KMS, IAM, Secret Manager, Cloud SQL y Cloud Storage); llaves comunes `logs` y `pubsub`; bucket de logs con CMEK y sink de proyecto (módulo `log-export`, con una exclusión para los registros del propio bucket); alertas de auditoría CIS 2.5 a 2.12 (módulo `audit-alerts`, canal `security`); canal de operaciones opcional (`operations_alert_email`) para las alertas de los entornos; contactos esenciales del proyecto; tema de Pub/Sub y notificación de hallazgos de SCC (opcional) |
+| `kms.tf` | Un llavero por entorno y ubicación con llaves (`primary_region`; `dr_region` y la multirregión `us` según `dr_environments` y `artifact_registry_location`), solo con las llaves que alguien usa, y sus agentes de servicio; contenedores de secretos por entorno con réplica en la región primaria y, en `dr_environments`, en la de DR |
 | `artifacts.tf` | Un repositorio Docker `<prefix>-<env>-<app>` por entorno y aplicación, cifrado con la llave `artifacts` de su entorno; su IAM; la política única de Binary Authorization |
 | `iam.tf` | Roles de solo lectura de los grupos de personas y los roles de proyecto de las cuentas de ejecución (el `tagUser` de los agentes de GKE y de las APIs de Google lo da 0-bootstrap) |
 | `runtime_accounts.tf` | Las cuentas de ejecución de cada entorno y aplicación y sus permisos (tabla de abajo) |
@@ -43,15 +43,21 @@ proyecto: `gke_workload_identity_bindings` queda en `false` hasta el primer appl
 
 ## Llaves por entorno
 
-Llaveros `<prefix>-<env>-sec-keyring-<código de ubicación>`; cada llave cifra con un solo uso:
+Llaveros `<prefix>-<env>-sec-keyring-<código de ubicación>`; cada llave cifra con un solo uso y
+solo existen las que usan `3-workloads` (su lista `required_kms`) y esta etapa (hallazgo H9).
+`dr_environments` (por defecto `["prod"]`) son los entornos con `enable_dr`:
 
 | Uso | Agentes con `cryptoKeyEncrypterDecrypter` | Ubicaciones |
 |---|---|---|
-| `gke` | GKE (secretos de Kubernetes) y Compute (discos de los nodos) | regiones |
-| `compute`, `sql`, `filestore`, `redis`, `run`, `secrets` | el agente de ese servicio | regiones |
-| `storage` | Cloud Storage | regiones y `us` |
-| `backup` | Backup for GKE | regiones y `us` |
-| `artifacts` | Artifact Registry | regiones y `us` |
+| `gke` | GKE (secretos de Kubernetes) y Compute (discos de los nodos) | primaria; DR en `dr_environments` |
+| `compute`, `run`, `sql`, `secrets` | el agente de ese servicio | primaria; DR en `dr_environments` |
+| `redis`, `filestore` | el agente de ese servicio | primaria (3-workloads no los crea en DR) |
+| `storage` | Cloud Storage | primaria (bucket sin DR); `us` en `dr_environments` (doble región) |
+| `backup` | Backup for GKE | DR en `dr_environments` (el plan de respaldo vive en `dr_region`) |
+| `artifacts` | Artifact Registry | solo `artifact_registry_location` |
+
+Un entorno de `3-workloads` con `enable_dr` que no esté en `dr_environments` falla en su plan
+(precondición de llaves). En los entornos sin DR los secretos tienen una sola réplica.
 
 Los agentes de servicio son uno por proyecto, así que cada uno puede cifrar con las llaves de los
 tres entornos (riesgo aceptado, ADR 0029 §9). La separación está en quién administra: el IAM de
@@ -101,7 +107,7 @@ de esta etapa no tiene `roles/orgpolicy.policyAdmin` ni roles sobre la política
 | `artifact_registry_repositories` | entorno → aplicación → `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>` | `3-workloads` |
 | `runtime_service_accounts` | entorno → aplicación → uso (`gke_nodes`, `workload`, `mig`, `run`, `scheduler`) → correo | `3-workloads` |
 | `gke_workload_identity_members` | entorno → aplicación → `serviceAccount:<proyecto>.svc.id.goog[<app>-<env>/<cuenta>]` o null | `3-workloads` |
-| `notification_channel_ids` | `{ security = <canal> }` | `3-workloads` |
+| `notification_channel_ids` | `{ security = <canal>, operations = <canal> }` (`operations` solo con `operations_alert_email`) | `3-workloads` (solo `operations`) |
 | `secret_ids` | entorno → nombre → ID | informativa |
 | `off_hours_role_id` | ID completo del rol personalizado del apagado (lo crea 0-bootstrap) | informativa |
 | `security_alert_email`, `log_bucket` | valores sueltos | informativas |
@@ -130,14 +136,17 @@ forma de su tabla de interfaces. Comprueba la configuración de auditoría, el s
 su exclusión, los llaveros y sus agentes, los repositorios, su IAM y la política de Binary
 Authorization, los roles de grupos y agentes, las cuentas de ejecución y sus permisos (roles,
 condición de Cloud SQL, secretos, repositorio, `serviceAccountUser` de las cuentas de cargas y
-el enlace de Workload Identity con y sin `gke_workload_identity_bindings`), los nombres de llave
-de `kms_key_ids`, que no haya roles de organización, las variantes con SCC y atestadores, con
+el enlace de Workload Identity con y sin `gke_workload_identity_bindings`), los llaveros y los
+nombres exactos de `kms_key_ids` (solo las llaves usadas; DR según `dr_environments`, también
+con qa), que no haya roles de organización, el canal de operaciones, las variantes con SCC y
+atestadores, con
 atestadores por entorno (solos y con comunes: lista sin repositorios, atestador de cada entorno
 en sus clústeres y regla por defecto), sin prod y con patrones de imagen válidos; y que se
 rechazan entradas inválidas (proyecto distinto del de 0-bootstrap, contactos que no cubren las
 categorías obligatorias, grupo desconocido, publicador `user:`, secretos fuera de dev, qa y prod,
 una aplicación de más de 8 caracteres, el apagado en prod, atestadores por entorno que no cubren
-todos los entornos y un patrón de imagen que admite un registro entero).
+todos los entornos, un entorno de DR fuera de `environments` y un patrón de imagen que admite un
+registro entero).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -175,6 +184,7 @@ todos los entornos y un patrón de imagen que admite un registro entero).
 | [google_artifact_registry_repository_iam_member.writer](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/artifact_registry_repository_iam_member) | resource |
 | [google_binary_authorization_policy.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/binary_authorization_policy) | resource |
 | [google_essential_contacts_contact.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/essential_contacts_contact) | resource |
+| [google_monitoring_notification_channel.operations](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/monitoring_notification_channel) | resource |
 | [google_project_iam_audit_config.all_services](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_audit_config) | resource |
 | [google_project_iam_audit_config.data_access](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_audit_config) | resource |
 | [google_pubsub_topic.scc_findings](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic) | resource |
@@ -203,6 +213,7 @@ todos los entornos y un patrón de imagen que admite un registro entero).
 | <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado), con la forma <registro>/<ruta>[/*\|/**\|*]: comodines solo al final, * al final del nombre o después de una /, ** solo después de una /. Globales: valen para todos los clústeres y Cloud Run. | `list(string)` | `[]` | no |
 | <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y todas las reglas de clúster (todos a la vez: Binary Authorization pide la atestación de cada uno). Vacío (por defecto): sin atestaciones comunes; sin binary\_authorization\_env\_attestors se niega todo lo que no esté en la lista de permitidos. | `list(string)` | `[]` | no |
 | <a name="input_binary_authorization_env_attestors"></a> [binary\_authorization\_env\_attestors](#input\_binary\_authorization\_env\_attestors) | Mapa entorno → atestador (projects/<p>/attestors/<a>), uno por entorno de environments. Con él, los repositorios del proyecto salen de la lista de permitidos (queda solo binary\_authorization\_allowlist\_patterns), cada clúster <prefix>-<env>-<app>-gke[-dr] exige el atestador de su entorno y la regla por defecto (Cloud Run y clústeres fuera de la convención) exige binary\_authorization\_attestors o, si está vacío, el atestador del primer entorno de la promoción (dev, qa, prod). Vacío (por defecto): la lista de permitidos global con los repositorios de los tres entornos (una imagen de dev se puede desplegar en prod; riesgo del ADR 0024). Los atestadores no los crea esta etapa. | `map(string)` | `{}` | no |
+| <a name="input_dr_environments"></a> [dr\_environments](#input\_dr\_environments) | Entornos con recuperación ante desastres (enable\_dr en su raíz de 3-workloads): solo ellos tienen llaves en dr\_region (<uso>\_dr), la llave storage de la multirregión us y la segunda réplica de sus secretos. Por defecto prod. Un entorno de 3-workloads con enable\_dr que no esté aquí falla en su plan por falta de llaves. | `list(string)` | <pre>[<br/>  "prod"<br/>]</pre> | no |
 | <a name="input_enable_scc_notification"></a> [enable\_scc\_notification](#input\_enable\_scc\_notification) | Si es true, crea el tema de Pub/Sub con CMEK y la notificación de hallazgos de Security Command Center del proyecto. SCC se activa a mano en el proyecto antes (ADR 0029 §7); por eso es false por defecto. | `bool` | `false` | no |
 | <a name="input_environments"></a> [environments](#input\_environments) | Entornos con llaveros, llaves, contenedores de secretos y repositorios de imágenes. | `list(string)` | <pre>[<br/>  "dev",<br/>  "qa",<br/>  "prod"<br/>]</pre> | no |
 | <a name="input_essential_contacts_language"></a> [essential\_contacts\_language](#input\_essential\_contacts\_language) | Idioma de las notificaciones de Essential Contacts (etiqueta BCP-47, por ejemplo es o en). | `string` | `"es"` | no |
@@ -215,6 +226,7 @@ todos los entornos y un patrón de imagen que admite un registro entero).
 | <a name="input_log_retention_locked"></a> [log\_retention\_locked](#input\_log\_retention\_locked) | Si es true, bloquea la retención del bucket de logs. IRREVERSIBLE una vez aplicado: la retención ya no se puede acortar ni quitar y el bucket no se puede borrar hasta que venza el último objeto. | `bool` | `false` | no |
 | <a name="input_name_suffix"></a> [name\_suffix](#input\_name\_suffix) | Sufijo opcional del nombre del bucket de logs para que sea único a nivel mundial. Vacío: sin sufijo. | `string` | `""` | no |
 | <a name="input_off_hours_environments"></a> [off\_hours\_environments](#input\_off\_hours\_environments) | Entornos con cuenta de los trabajos del apagado fuera de horario (<prefix>-<env>-<app>-sched, ADR 0028) y su rol. 3-workloads la usa con off\_hours\_shutdown.enabled. Nunca prod. | `list(string)` | <pre>[<br/>  "dev",<br/>  "qa"<br/>]</pre> | no |
+| <a name="input_operations_alert_email"></a> [operations\_alert\_email](#input\_operations\_alert\_email) | Correo (de preferencia una lista de grupo) del canal de operaciones: recibe las alertas de los entornos que crea 3-workloads (disponibilidad, SLO, recursos), además de los notification\_emails de cada entorno. null (por defecto): sin canal de operaciones. Las alertas de auditoría van siempre a security\_alert\_email, nunca a este canal. | `string` | `null` | no |
 | <a name="input_scc_notification_filter"></a> [scc\_notification\_filter](#input\_scc\_notification\_filter) | Filtro de los hallazgos de Security Command Center que se publican en el tema de Pub/Sub. Por defecto, los activos y sin silenciar de severidad alta o crítica. | `string` | `"state = \"ACTIVE\" AND mute != \"MUTED\" AND (severity = \"HIGH\" OR severity = \"CRITICAL\")"` | no |
 | <a name="input_secret_names"></a> [secret\_names](#input\_secret\_names) | Mapa entorno → nombres cortos de los contenedores de secretos (sin valores, ADR 0015). El ID queda <prefix>-<entorno>-sec-<nombre>. Un entorno sin entrada no tiene secretos. | `map(list(string))` | `{}` | no |
 
@@ -224,9 +236,9 @@ todos los entornos y un patrón de imagen que admite un registro entero).
 | ---- | ----------- |
 | <a name="output_artifact_registry_repositories"></a> [artifact\_registry\_repositories](#output\_artifact\_registry\_repositories) | Mapa entorno → aplicación → URL del repositorio Docker (<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>), como la salida de la etapa 4 anterior. Binary Authorization admite estos repositorios y binary\_authorization\_allowlist\_patterns. |
 | <a name="output_gke_workload_identity_members"></a> [gke\_workload\_identity\_members](#output\_gke\_workload\_identity\_members) | Mapa entorno → aplicación → miembro serviceAccount:<proyecto>.svc.id.goog[<app>-<env>/<cuenta>] que actúa como la cuenta workload, o null mientras gke\_workload\_identity\_bindings sea false (el enlace no existe). |
-| <a name="output_kms_key_ids"></a> [kms\_key\_ids](#output\_kms\_key\_ids) | Mapa entorno → llave → ID de la llave KMS. Llave: <uso> en primary\_region, <uso>\_dr en dr\_region y <uso>\_us en la multirregión us (formato de la etapa 2 anterior; el uso es la primera palabra y la ubicación sale del ID). Usos: gke, compute, sql, storage, filestore, redis, secrets, backup, run y artifacts (en us solo storage, backup y artifacts). |
+| <a name="output_kms_key_ids"></a> [kms\_key\_ids](#output\_kms\_key\_ids) | Mapa entorno → llave → ID de la llave KMS. Llave: <uso> en primary\_region, <uso>\_dr en dr\_region y <uso>\_us en la multirregión us (formato de la etapa 2 anterior; el uso es la primera palabra y la ubicación sale del ID). Solo las llaves que alguien usa: en la primaria gke, compute, run, sql, storage, redis, filestore y secrets; en dr\_region (solo entornos de dr\_environments) gke, compute, run, sql, backup y secrets; en us storage (solo dr\_environments); y artifacts solo en artifact\_registry\_location. |
 | <a name="output_log_bucket"></a> [log\_bucket](#output\_log\_bucket) | Nombre del bucket de logs de auditoría (destino del sink de proyecto). |
-| <a name="output_notification_channel_ids"></a> [notification\_channel\_ids](#output\_notification\_channel\_ids) | Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security\_alert\_email (alertas de auditoría). |
+| <a name="output_notification_channel_ids"></a> [notification\_channel\_ids](#output\_notification\_channel\_ids) | Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security\_alert\_email (alertas de auditoría, solo de 1-base). operations: canal de operations\_alert\_email, que 3-workloads agrega a las alertas de su entorno; solo existe con operations\_alert\_email. |
 | <a name="output_off_hours_role_id"></a> [off\_hours\_role\_id](#output\_off\_hours\_role\_id) | ID completo (projects/<id>/roles/<prefix>OffHoursScheduler) del rol personalizado del apagado fuera de horario (ADR 0028). Lo crea 0-bootstrap; 1-base lo publica. |
 | <a name="output_runtime_service_accounts"></a> [runtime\_service\_accounts](#output\_runtime\_service\_accounts) | Mapa entorno → aplicación → uso → correo de las cuentas de ejecución (<prefix>-<env>-<app>-<uso>): gke\_nodes, workload, mig, run y, en off\_hours\_environments, scheduler (<prefix>-<env>-<app>-sched). 3-workloads las usa; no las crea. |
 | <a name="output_secret_ids"></a> [secret\_ids](#output\_secret\_ids) | Mapa entorno → nombre corto → ID del secreto (projects/<proyecto>/secrets/<id>). Un entorno sin secretos tiene un mapa vacío. |

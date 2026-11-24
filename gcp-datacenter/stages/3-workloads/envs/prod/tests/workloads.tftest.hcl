@@ -60,10 +60,13 @@ override_data {
       gke_workload_identity_members = {
         for env in ["dev", "qa", "prod"] : env => { app = "serviceAccount:example-lz.svc.id.goog[app-${env}/app]" }
       }
-      off_hours_role_id        = "projects/example-lz/roles/bntOffHoursScheduler"
-      security_alert_email     = "gcp-security-admins@example.com"
-      notification_channel_ids = { security = "projects/example-lz/notificationChannels/000000000001" }
-      log_bucket               = "bnt-common-ops-audit-logs"
+      off_hours_role_id    = "projects/example-lz/roles/bntOffHoursScheduler"
+      security_alert_email = "gcp-security-admins@example.com"
+      notification_channel_ids = {
+        security   = "projects/example-lz/notificationChannels/000000000001"
+        operations = "projects/example-lz/notificationChannels/000000000002"
+      }
+      log_bucket = "bnt-common-ops-audit-logs"
     }
   }
 }
@@ -326,8 +329,8 @@ run "prod_operacion_normal" {
     error_message = "Debe existir la verificación de disponibilidad del dominio."
   }
   assert {
-    condition     = local.base_notification_channel_ids == tolist(["projects/example-lz/notificationChannels/000000000001"])
-    error_message = "Los canales de notification_channel_ids de 1-base deben pasar a las alertas del entorno."
+    condition     = local.base_notification_channel_ids == tolist(["projects/example-lz/notificationChannels/000000000002"])
+    error_message = "Solo el canal operations de 1-base pasa a las alertas del entorno; security queda para auditoría."
   }
   # Respaldo: plan de Cloud SQL y, con DR y GKE, plan de Backup for GKE.
   assert {

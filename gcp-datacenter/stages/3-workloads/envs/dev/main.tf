@@ -97,7 +97,7 @@ resource "terraform_data" "upstream_checks" {
   lifecycle {
     precondition {
       condition     = alltrue([for p in local.required_kms : contains(keys(lookup(local.kms_key_ids, p[0], {})), p[1])])
-      error_message = "Falta en kms_key_ids[environment] de 1-base alguna llave [ubicación][uso] que esta configuración necesita (la ubicación sale del ID de la llave)."
+      error_message = "Falta en kms_key_ids[environment] de 1-base alguna llave [ubicación][uso] que esta configuración necesita (la ubicación sale del ID de la llave). Con enable_dr, el entorno tiene que estar en dr_environments de 1-base: solo esos entornos tienen llaves en dr_region y storage en la multirregión."
     }
     precondition {
       condition = alltrue(flatten([

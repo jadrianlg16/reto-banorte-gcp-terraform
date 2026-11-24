@@ -114,21 +114,25 @@ run "plan_con_valores_de_ejemplo" {
     error_message = "Sin enable_scc_notification no se crea la notificación de SCC."
   }
   assert {
-    condition     = output.security_alert_email == "seguridad@example.com" && contains(keys(output.notification_channel_ids), "security")
-    error_message = "Las salidas de avisos deben publicar el correo y el canal security."
+    condition     = output.security_alert_email == "seguridad@example.com" && keys(output.notification_channel_ids) == ["security"]
+    error_message = "Las salidas de avisos deben publicar el correo y solo el canal security (sin operations_alert_email no hay canal de operaciones)."
   }
 
   # --- Llaves por entorno ---
+  # Solo las llaves que alguien usa (H9): las de dr_region y storage de us solo en
+  # dr_environments (prod), artifacts solo en artifact_registry_location (us).
   assert {
     condition = alltrue([
-      length(module.kms) == 9,
+      toset(keys(module.kms)) == toset(["dev/us-central1", "dev/us", "qa/us-central1", "qa/us", "prod/us-central1", "prod/us-east4", "prod/us"]),
       module.kms["dev/us-central1"].keyring_name == "bnt-dev-sec-keyring-usc1",
       module.kms["prod/us-east4"].keyring_name == "bnt-prod-sec-keyring-use4",
       module.kms["qa/us"].keyring_name == "bnt-qa-sec-keyring-us",
-      toset(keys(module.kms["qa/us"].key_names)) == toset(["storage", "backup", "artifacts"]),
-      length(module.kms["dev/us-central1"].key_names) == 10,
+      toset(keys(module.kms["dev/us-central1"].key_names)) == toset(["gke", "compute", "run", "sql", "storage", "redis", "filestore", "secrets"]),
+      toset(keys(module.kms["prod/us-east4"].key_names)) == toset(["gke", "compute", "run", "sql", "backup", "secrets"]),
+      toset(keys(module.kms["prod/us"].key_names)) == toset(["storage", "artifacts"]),
+      toset(keys(module.kms["qa/us"].key_names)) == toset(["artifacts"]),
     ])
-    error_message = "Un llavero por entorno y ubicación con los usos de la etapa 2 anterior."
+    error_message = "Un llavero por entorno y ubicación con llaves, y solo las llaves que usan 3-workloads y esta etapa."
   }
   assert {
     condition = alltrue([
@@ -137,7 +141,7 @@ run "plan_con_valores_de_ejemplo" {
       local.keyrings["prod/us-east4"].keys["sql"].encrypter_decrypters == ["serviceAccount:service-222222222222@gcp-sa-cloud-sql.iam.gserviceaccount.com"],
       local.keyrings["qa/us"].keys["artifacts"].encrypter_decrypters == ["serviceAccount:service-222222222222@gcp-sa-artifactregistry.iam.gserviceaccount.com"],
       local.keyrings["prod/us-central1"].keys["secrets"].encrypter_decrypters == ["serviceAccount:service-222222222222@gcp-sa-secretmanager.iam.gserviceaccount.com"],
-      local.keyrings["dev/us"].keys["backup"].encrypter_decrypters == ["serviceAccount:service-222222222222@gcp-sa-gkebackup.iam.gserviceaccount.com"],
+      local.keyrings["prod/us-east4"].keys["backup"].encrypter_decrypters == ["serviceAccount:service-222222222222@gcp-sa-gkebackup.iam.gserviceaccount.com"],
     ])
     error_message = "Cada agente de servicio recibe permiso sobre las llaves de su uso en los tres entornos."
   }
@@ -314,11 +318,58 @@ run "nombres_de_llave_de_la_salida" {
 
   assert {
     condition = alltrue([
-      length(output.kms_key_ids["dev"]) == 23,
-      alltrue([for k in ["sql", "sql_dr", "gke", "gke_dr", "secrets_dr", "storage_us", "backup_us", "artifacts_us"] : contains(keys(output.kms_key_ids["prod"]), k)]),
-      !contains(keys(output.kms_key_ids["prod"]), "sql_us"),
+      toset(keys(output.kms_key_ids["dev"])) == toset(["gke", "compute", "run", "sql", "storage", "redis", "filestore", "secrets", "artifacts_us"]),
+      toset(keys(output.kms_key_ids["prod"])) == toset([
+        "gke", "compute", "run", "sql", "storage", "redis", "filestore", "secrets",
+        "gke_dr", "compute_dr", "run_dr", "sql_dr", "backup_dr", "secrets_dr",
+        "storage_us", "artifacts_us",
+      ]),
     ])
-    error_message = "kms_key_ids debe tener <uso>, <uso>_dr y <uso>_us (en us solo storage, backup y artifacts)."
+    error_message = "kms_key_ids debe tener <uso>, <uso>_dr y <uso>_us, solo con las llaves que se usan (sin backup ni artifacts regionales, sin redis, filestore ni storage en DR, y _dr y storage_us solo en dr_environments)."
+  }
+}
+
+# Los entornos de DR se eligen con dr_environments: qa con DR tiene sus llaves _dr y storage_us.
+run "dr_environments_con_qa" {
+  command = plan
+
+  variables {
+    dr_environments = ["qa", "prod"]
+  }
+
+  assert {
+    condition = alltrue([
+      alltrue([for k in ["gke_dr", "sql_dr", "backup_dr", "secrets_dr", "storage_us"] : contains(keys(output.kms_key_ids["qa"]), k)]),
+      length([for k in keys(output.kms_key_ids["dev"]) : k if endswith(k, "_dr")]) == 0,
+    ])
+    error_message = "Con qa en dr_environments, qa tiene llaves de DR y dev no."
+  }
+}
+
+run "rechaza_entorno_de_dr_desconocido" {
+  command = plan
+
+  variables {
+    dr_environments = ["prod", "staging"]
+  }
+
+  expect_failures = [var.dr_environments]
+}
+
+run "con_canal_de_operaciones" {
+  command = plan
+
+  variables {
+    operations_alert_email = "Operaciones@example.com"
+  }
+
+  assert {
+    condition = alltrue([
+      google_monitoring_notification_channel.operations["this"].labels["email_address"] == "operaciones@example.com",
+      google_monitoring_notification_channel.operations["this"].display_name == "bnt-common-ops-operations",
+      toset(keys(output.notification_channel_ids)) == toset(["security", "operations"]),
+    ])
+    error_message = "Con operations_alert_email hay un canal de operaciones aparte del de seguridad."
   }
 }
 
@@ -425,13 +476,14 @@ run "sin_prod_no_hay_reglas_de_cluster" {
 
   variables {
     environments                 = ["dev"]
+    dr_environments              = []
     secret_names                 = {}
     artifact_registry_publishers = {}
   }
 
   assert {
-    condition     = length(google_binary_authorization_policy.this.cluster_admission_rules) == 0 && length(module.kms) == 3
-    error_message = "Sin prod no hay reglas de clúster de prod."
+    condition     = length(google_binary_authorization_policy.this.cluster_admission_rules) == 0 && toset(keys(module.kms)) == toset(["dev/us-central1", "dev/us"])
+    error_message = "Sin prod no hay reglas de clúster de prod; sin entornos de DR no hay llavero en dr_region."
   }
 }
 

@@ -8,8 +8,9 @@ module "observability" {
   prefix              = var.prefix
   environment         = var.environment
   notification_emails = var.notification_emails
-  # Canales de avisos de 1-base (notification_channel_ids): reciben también las alertas del
-  # entorno, además de los correos de notification_emails.
+  # Canal de operaciones de 1-base (notification_channel_ids["operations"], si existe): recibe
+  # también las alertas del entorno, además de los correos de notification_emails. El canal
+  # security de 1-base no: es solo para las alertas de auditoría.
   extra_notification_channel_ids = local.base_notification_channel_ids
 
   # Verificación de disponibilidad sobre el primer dominio del balanceador externo (si existe).

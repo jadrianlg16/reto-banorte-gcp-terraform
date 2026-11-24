@@ -2,12 +2,12 @@
 # fijos.
 
 output "kms_key_ids" {
-  description = "Mapa entorno → llave → ID de la llave KMS. Llave: <uso> en primary_region, <uso>_dr en dr_region y <uso>_us en la multirregión us (formato de la etapa 2 anterior; el uso es la primera palabra y la ubicación sale del ID). Usos: gke, compute, sql, storage, filestore, redis, secrets, backup, run y artifacts (en us solo storage, backup y artifacts)."
+  description = "Mapa entorno → llave → ID de la llave KMS. Llave: <uso> en primary_region, <uso>_dr en dr_region y <uso>_us en la multirregión us (formato de la etapa 2 anterior; el uso es la primera palabra y la ubicación sale del ID). Solo las llaves que alguien usa: en la primaria gke, compute, run, sql, storage, redis, filestore y secrets; en dr_region (solo entornos de dr_environments) gke, compute, run, sql, backup y secrets; en us storage (solo dr_environments); y artifacts solo en artifact_registry_location."
   value = {
-    for e in var.environments : e => merge([
+    for e in var.environments : e => merge({}, [
       for l in local.kms_locations : {
         for use, id in module.kms["${e}/${l}"].key_ids : "${use}${local.location_suffix[l]}" => id
-      }
+      } if contains(keys(module.kms), "${e}/${l}")
     ]...)
   }
 }
@@ -59,10 +59,11 @@ output "security_alert_email" {
 }
 
 output "notification_channel_ids" {
-  description = "Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security_alert_email (alertas de auditoría)."
-  value = {
-    security = module.audit_alerts.notification_channel_id
-  }
+  description = "Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security_alert_email (alertas de auditoría, solo de 1-base). operations: canal de operations_alert_email, que 3-workloads agrega a las alertas de su entorno; solo existe con operations_alert_email."
+  value = merge(
+    { security = module.audit_alerts.notification_channel_id },
+    { for k, c in google_monitoring_notification_channel.operations : "operations" => c.id },
+  )
 }
 
 output "log_bucket" {

@@ -258,6 +258,29 @@ variable "security_alert_email" {
   }
 }
 
+variable "dr_environments" {
+  description = "Entornos con recuperación ante desastres (enable_dr en su raíz de 3-workloads): solo ellos tienen llaves en dr_region (<uso>_dr), la llave storage de la multirregión us y la segunda réplica de sus secretos. Por defecto prod. Un entorno de 3-workloads con enable_dr que no esté aquí falla en su plan por falta de llaves."
+  type        = list(string)
+  default     = ["prod"]
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for e in var.dr_environments : contains(var.environments, e)])
+    error_message = "Cada entorno de dr_environments debe estar en environments."
+  }
+}
+
+variable "operations_alert_email" {
+  description = "Correo (de preferencia una lista de grupo) del canal de operaciones: recibe las alertas de los entornos que crea 3-workloads (disponibilidad, SLO, recursos), además de los notification_emails de cada entorno. null (por defecto): sin canal de operaciones. Las alertas de auditoría van siempre a security_alert_email, nunca a este canal."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.operations_alert_email == null || can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.operations_alert_email))
+    error_message = "operations_alert_email debe ser un correo válido o null."
+  }
+}
+
 variable "groups" {
   description = "Grupos de personas con roles de solo lectura en el proyecto (ADR 0029 §4). Llaves opcionales: readers (viewer, logging.viewer, monitoring.viewer), security_admins (viewer, iam.securityReviewer, logging.viewer, cloudkms.viewer) y auditors (viewer, iam.securityReviewer, logging.privateLogViewer y lectura del bucket de logs). Valor: correo del grupo, sin group:. Solo grupos: las políticas de Conftest rechazan user:."
   type        = map(string)

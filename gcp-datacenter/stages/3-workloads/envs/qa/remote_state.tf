@@ -116,9 +116,10 @@ locals {
 
   # 1-base: runtime_service_accounts y gke_workload_identity_members (service_accounts.tf).
 
-  # 1-base: notification_channel_ids (map(string)): canales que ya existen y reciben también las
-  # alertas del entorno (operations.tf).
-  base_notification_channel_ids = sort(distinct(compact(try(values(local.base.notification_channel_ids), []))))
+  # 1-base: notification_channel_ids (map(string)). Solo el canal operations (operations_alert_email
+  # de 1-base) recibe también las alertas del entorno (operations.tf); security queda para las
+  # alertas de auditoría. Sin canal de operaciones, la lista queda vacía.
+  base_notification_channel_ids = compact([try(local.base.notification_channel_ids["operations"], null)])
 
   # 2-networks/<env>: VPC del spoke en el proyecto único (sin host_project_id).
   network_self_link = data.terraform_remote_state.network.outputs.network_self_link

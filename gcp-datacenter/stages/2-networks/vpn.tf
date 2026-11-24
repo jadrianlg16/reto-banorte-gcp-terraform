@@ -83,7 +83,20 @@ resource "random_password" "vpn_shared_secret" {
 # Secreto del modo real: lo carga el equipo de red en Secret Manager fuera de Terraform. Se
 # lee una vez por versión distinta en uso (versiones numéricas fijas: una rotación entra con
 # un PR que cambia la versión, nunca sola). La cuenta de servicio del hub (<prefix>-tf-net)
-# necesita roles/secretmanager.secretAccessor sobre el secreto.
+# necesita roles/secretmanager.secretAccessor sobre el secreto (lo da una persona; ninguna raíz).
+#
+# LIMITACIÓN (hallazgo H1 de R1): una fuente de datos se lee en cada plan, también en el trabajo
+# plan sin entorno de _terraform-root.yml, pr.yml y drift.yml, que usan tf-read. tf-read no tiene
+# secretAccessor y la regla 3 de la política de denegación de 0-bootstrap le niega
+# secretmanager.versions.access, así que con simulate_onprem = false el plan del hub falla en el
+# pipeline (falla cerrado: el secreto no sale). Leerlo solo en el apply con tf-net exige que el
+# plan revisado y el del apply tengan la misma huella, que el valor nunca entre al plan
+# (un atributo de solo escritura, Terraform >= 1.11; el repositorio admite 1.9) o que el plan del
+# hub corra con tf-net en el entorno common. Las tres opciones cambian el pipeline o la versión
+# mínima: queda como propuesta. Con simulate_onprem = true (por defecto) no se lee ningún
+# secreto.
+# VERIFICAR-EN-APPLY: con simulate_onprem = false, que el plan con tf-read falle por la denegación
+# (y no por otra causa). Mientras siga así, el modo real no se puede aplicar desde el pipeline.
 data "google_secret_manager_secret_version" "vpn_shared_secret" {
   for_each = var.simulate_onprem ? toset([]) : toset(concat([var.onprem_vpn_secret_version], values(local.vpn_secret_versions)))
 
