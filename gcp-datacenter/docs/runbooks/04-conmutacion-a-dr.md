@@ -34,6 +34,10 @@ No conmutar ante:
   `stages/3-workloads/envs/prod` (réplica `<prefix>-prod-data-sql-use4`, bucket de doble región
   `<prefix>-prod-data-<application>-usc1-use4`, plan de Backup for GKE en `us-east4`). Es el
   valor de los dos ejemplos de prod.
+- `prod` en `dr_environments` de `1-base` (el valor por defecto): solo esos entornos tienen las
+  llaves de `us-east4` (`gke`, `compute`, `run`, `sql`, `backup`, `secrets`), la llave `storage`
+  de la multirregión y la segunda réplica de sus secretos ([runbook 03](03-rotacion-de-llaves.md)).
+  Sin eso, el plan de `3-workloads/envs/prod` con `enable_dr` falla por falta de llaves.
 - Lo que Terraform necesita durante la caída no depende de `us-central1` (ADR 0022): el bucket de
   estado y su llave están en la multirregión `US`/`us`; el hub tiene una segunda HA VPN en
   `us-east4` (`enable_vpn_dr = true` en el ejemplo); el balanceador interno es uno por región con
@@ -53,7 +57,9 @@ No conmutar ante:
 
   Esperado: `ACTIVE`. Si no lo está, el paso 7 suma la emisión del certificado al RTO.
 - **Identidad.** Este runbook usa `-target` y `gcloud`, que el pipeline no admite: se corre fuera
-  de él. La cuenta `<prefix>-tf-wl-prod` solo la obtiene un trabajo del entorno `prod` de GitHub.
+  de él. La cuenta `<prefix>-tf-wl-prod` solo la obtiene un trabajo de `main`, de un flujo del
+  repositorio, en el entorno `prod` de GitHub (`attribute.deploy`,
+  [`pipeline.md`](../pipeline.md) §5): no sirve para un apply a mano.
   La única identidad humana con permisos suficientes es hoy la persona dueña del proyecto
   (`owner`), que además puede leer el estado del hub y ver sus túneles (paso 1). El acceso de
   emergencia formal **no está construido** ([pendientes](../pendientes-apply.md), §5): definirlo
@@ -67,13 +73,14 @@ No conmutar ante:
 
   ```bash
   R=stages/3-workloads/envs/prod
-  cp "$R/terraform.tfvars.example" "$R/terraform.tfvars"
-  gh variable get GCP_TFVARS_JSON |
-    jq --arg r "$R" '(.common // {}) + (.[$r] // {})' > "$R/zz-ci.auto.tfvars.json"
+  TFVARS_JSON="$(gh variable get GCP_TFVARS_JSON)" python3 scripts/root-tfvars.py "$R"
   ```
 
-  Con `dr_active = false` y `dr_teardown = false`: los comandos de abajo pasan `-var`, que tiene
-  precedencia sobre los dos archivos. Ninguno de los dos archivos se sube al repositorio.
+  El script escribe `terraform.tfvars` (copia del ejemplo) y `zz-ci.auto.tfvars.json`, y sale con
+  2 sin escribir nada si falta `project_id` o si una variable queda con un marcador de los
+  ejemplos ([`pipeline.md`](../pipeline.md) §2). Con `dr_active = false` y
+  `dr_teardown = false`: los comandos de abajo pasan `-var`, que tiene precedencia sobre los dos
+  archivos. Ninguno de los dos archivos se sube al repositorio.
 - Variables de la sesión, desde `gcp-datacenter/`:
 
   ```bash
@@ -162,25 +169,30 @@ Anotar la hora UTC de cada paso en la tabla del simulacro.
    **no aplicar** y revisar.
 
    Si el plan también cambia o reemplaza `module.cloud_sql.google_sql_database_instance.replica["dr"]`
-   (esperado después de la promoción, punto 24), **no aplicar ese plan**. Aplicar solo cómputo,
-   balanceadores y el enlace de Workload Identity:
+   (esperado después de la promoción, punto 24), **no aplicar ese plan**. Aplicar solo cómputo y
+   balanceadores:
 
    ```bash
    terraform -chdir="$R" plan -var="dr_active=true" \
      -target=module.gke -target=module.mig -target=module.cloud_run \
-     -target=module.external_lb -target=module.internal_lb \
-     -target=google_service_account_iam_member.workload_identity -out=tfplan
+     -target=module.external_lb -target=module.internal_lb -out=tfplan
    terraform -chdir="$R" apply tfplan
    ```
 
    Si el plan no termina porque no puede leer recursos de la región caída, repetirlo con
-   `-refresh=false` (pendiente de verificar en el simulacro). HYPOTHESIS: el enlace de Workload
-   Identity toma el pool de `module.gke["primary"]`; si leer ese clúster falla, es uno de los casos
-   que `-refresh=false` debería cubrir (punto 46).
+   `-refresh=false` (pendiente de verificar en el simulacro).
+
+   El enlace de Workload Identity ya no está en esta raíz: lo crea `1-base`
+   (`gke_workload_identity_bindings`) sobre el pool del proyecto `<ID>.svc.id.goog`, que no es de
+   un clúster ni de una región (documentación citada en `stages/1-base/runtime_accounts.tf`). El
+   clúster de DR no necesita un enlace nuevo; que un pod del namespace `<application>-prod` en el
+   clúster de DR obtenga el token de la cuenta `workload` se comprueba en el simulacro
+   (pendiente 135).
 
 6. **GKE** (si `enable_gke`). El clúster de DR nace vacío. Desplegar la carga con el proceso de la
-   aplicación (fuera de este repositorio), con la cuenta de Kubernetes `app` del namespace
-   `<application>-prod` anotada para Workload Identity
+   aplicación (fuera de este repositorio), con la cuenta de Kubernetes `gke_workload_ksa_name`
+   de `1-base` (`app` por defecto) del namespace `<application>-prod` anotada para Workload
+   Identity
    ([runbook 02](02-alta-proyecto-aplicacion.md), paso A.4) y la imagen del repositorio de prod.
    Si hace falta estado del clúster, restaurar el último respaldo de Backup for GKE (el plan
    existe; la restauración no está construida en Terraform). Después, poner los NEG zonales del
