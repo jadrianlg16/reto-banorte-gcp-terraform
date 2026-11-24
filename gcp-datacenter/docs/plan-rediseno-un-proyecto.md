@@ -131,8 +131,8 @@ recalcula con los registros de acceso a datos en los tres entornos.
 | Riesgo | Mitigación |
 |---|---|
 | Nadie tiene el proyecto a tiempo | Sin organización, cualquier integrante lo crea en minutos con su cuenta y facturación de pago |
-| El primer apply de la historia del repositorio encuentra muchas fallas (131 marcadores `VERIFICAR-EN-APPLY` en 53 archivos `.tf` de `modules/` y `stages/`, sin pruebas ni ejemplos, según `git grep -c` del 24 nov 2026; hay más en scripts, pruebas de Go y flujos) | Rebanada vertical primero (R4) y recortes (§3) |
-| Una cuenta de dev puede tocar Compute, GKE, Cloud Run o Cloud SQL de prod | Riesgo aceptado (ADR 0029 §9): la cuenta solo la obtiene el entorno `dev` de GitHub y los cambios pasan por PR |
+| El primer apply de la historia del repositorio encuentra muchas fallas (136 marcadores `VERIFICAR-EN-APPLY` en 53 archivos `.tf` de `modules/` y `stages/`, sin pruebas ni ejemplos, según `git grep -c` del 24 nov 2026; hay más en scripts, pruebas de Go y flujos) | Rebanada vertical primero (R4) y recortes (§3) |
+| Una cuenta de dev puede tocar Compute, Cloud Run, Memorystore o Filestore de prod (Cloud SQL, GKE y Backup and DR ya están condicionados al entorno) | Riesgo aceptado (ADR 0029 §9): la cuenta solo la obtiene `_terraform-root.yml` en `main` con el entorno `dev` y los cambios pasan por PR |
 | El destroy de un entorno borra algo compartido | Regla de recursos únicos y `destroy-plan-check.py` que rechaza nombres sin `<prefix>-<env>-` |
 | Cuotas del proyecto | Revisarlas el primer día; pedir aumentos de inmediato |
 | Prueba gratuita sin aumentos de cuota | Cuenta de facturación de pago |
