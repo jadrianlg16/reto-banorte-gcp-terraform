@@ -37,7 +37,11 @@
 #                                   ...}. Para cada raíz se combinan "common" y la llave de la
 #                                   raíz (scripts/root-tfvars.py). "common" debe traer
 #                                   project_id, el proyecto único (ADR 0029 §1): sin él, el plan
-#                                   de una raíz que lo declara falla.
+#                                   de una raíz que lo declara falla. También falla si un valor
+#                                   resuelto (del JSON o del terraform.tfvars.example) lleva un
+#                                   marcador de los ejemplos: example.com, example-...,
+#                                   REEMPLAZAR, <...> o un ID de solo ceros; el mensaje nombra las
+#                                   variables que faltan, sin mostrar valores.
 # Secreto opcional: INFRACOST_API_KEY (sin él se omite el costo).
 
 name: pr
@@ -275,7 +279,8 @@ jobs:
           tar -xzf "${file}" conftest
           sudo install -m 0755 conftest /usr/local/bin/conftest
 
-      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1) o
+      # si un valor resuelto es de los ejemplos (marcadores en scripts/root-tfvars.py).
       - name: Variables del plan
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}

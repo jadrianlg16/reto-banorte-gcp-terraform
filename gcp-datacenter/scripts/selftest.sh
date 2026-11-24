@@ -279,13 +279,13 @@ printf 'variable "otra" {\n  type = string\n}\n' >"$rt/stages/sin-proyecto/varia
 tfv() { # tfv <TFVARS_JSON> <raíz>: corre root-tfvars.py desde $rt; devuelve su código
   (cd "$rt" && TFVARS_JSON="$1" "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "$2" >/dev/null 2>&1)
 }
-tfv '{"common": {"project_id": "example-landing-zone", "prefix": "bnt"}, "stages/1-base": {"prefix": "otro"}}' stages/1-base
+tfv '{"common": {"project_id": "bnt-lz-pruebas", "prefix": "bnt"}, "stages/1-base": {"prefix": "otro"}}' stages/1-base
 check "root-tfvars: con common.project_id escribe las variables" 0 $?
 "$PY" -c '
 import json, sys
 v = json.load(open(sys.argv[1], encoding="utf-8"))
 same = open(sys.argv[2], encoding="utf-8").read() == open(sys.argv[3], encoding="utf-8").read()
-sys.exit(0 if v == {"project_id": "example-landing-zone", "prefix": "otro"} and same else 1)
+sys.exit(0 if v == {"project_id": "bnt-lz-pruebas", "prefix": "otro"} and same else 1)
 ' "$rt/stages/1-base/zz-ci.auto.tfvars.json" "$rt/stages/1-base/terraform.tfvars" \
   "$rt/stages/1-base/terraform.tfvars.example" 2>/dev/null
 check "root-tfvars: common + la llave de la raíz (gana la raíz) y terraform.tfvars copiado del ejemplo" 0 $?
@@ -306,8 +306,87 @@ tfv '{"common": "x"}' stages/1-base
 check "root-tfvars: una llave que no es un objeto es error" 2 $?
 tfv '{}' stages/sin-proyecto
 check "root-tfvars: una raíz sin la variable project_id no lo exige" 0 $?
-tfv '{"common": {"project_id": "example-landing-zone"}}' stages/no-existe
+tfv '{"common": {"project_id": "bnt-lz-pruebas"}}' stages/no-existe
 check "root-tfvars: una raíz que no existe es error" 2 $?
+# Marcadores de los ejemplos (H6): un valor resuelto de una variable declarada con example.com,
+# example-..., REEMPLAZAR, <...> o un ID de solo ceros es error (2) y no escribe nada. Resuelto:
+# el del JSON si la variable está en common o en la llave de la raíz; si no, el del ejemplo sin
+# comentarios. Las variables que la raíz no declara no se revisan.
+mkdir -p "$rt/stages/marcas"
+for v in project_id security_alert_email essential_contacts labels cloud_run_image github_id secret_id; do
+  printf 'variable "%s" {}\n' "$v"
+done >"$rt/stages/marcas/variables.tf"
+printf '%s\n' '# Ejemplo con marcadores; los comentarios no cuentan: x@example.com' \
+  'project_id           = "REEMPLAZAR"' \
+  'security_alert_email = "seguridad@example.com"' \
+  'essential_contacts = {' \
+  '  "admin@example.com" = ["LEGAL", "SECURITY"]' \
+  '}' \
+  'labels = {' \
+  '  app   = "red"' \
+  '  owner = "example-team"' \
+  '}' \
+  '# cloud_run_image = "us-docker.pkg.dev/example-lz-000000/bnt-dev-app/api:1.0.0"' \
+  'cloud_run_image = "us-docker.pkg.dev/bnt-lz-pruebas/bnt-dev-app/api:1.0.0" # no example.com' \
+  'github_id = "000000000"' \
+  'secret_id = "projects/<proyecto>/secrets/<nombre>"' \
+  'no_declarada = "otro@example.com"' >"$rt/stages/marcas/terraform.tfvars.example"
+tfv_err() { # tfv_err <TFVARS_JSON> <raíz>: como tfv, pero guarda stderr en $tmp/rt-err.txt
+  (cd "$rt" && TFVARS_JSON="$1" "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "$2" >/dev/null 2>"$tmp/rt-err.txt")
+}
+tfv_err '{"common": {"project_id": "bnt-lz-pruebas"}}' stages/marcas
+rc=$?
+[ "$rc" = 2 ] && [ ! -e "$rt/stages/marcas/zz-ci.auto.tfvars.json" ] && [ ! -e "$rt/stages/marcas/terraform.tfvars" ]
+check "root-tfvars: marcadores que llegan del ejemplo son error (2) y no escriben nada" 0 $?
+[ "$(grep -oE '^  [a-z_]+ \(de terraform\.tfvars\.example\)' "$tmp/rt-err.txt" | awk '{print $1}' | tr '\n' ' ')" = \
+  "essential_contacts github_id labels secret_id security_alert_email " ]
+check "root-tfvars: nombra las 5 variables con marcador (ni comentarios, ni project_id del JSON, ni no declaradas)" 0 $?
+! grep -qE 'seguridad@|admin@|example-team|000000000|<proyecto>' "$tmp/rt-err.txt"
+check "root-tfvars: el mensaje no muestra los valores" 0 $?
+real='"security_alert_email": "seguridad@banorte-lz.test", "essential_contacts": {"admin@banorte-lz.test": ["LEGAL"]}, "labels": {"app": "red", "owner": "redes"}, "github_id": "123456789", "secret_id": "projects/bnt-lz-pruebas/secrets/vpn"'
+tfv "{\"common\": {\"project_id\": \"bnt-lz-pruebas\", \"labels\": {\"owner\": \"example-team\"}}, \"stages/marcas\": {${real}}}" stages/marcas
+check "root-tfvars: con los valores reales en el JSON pasa (la llave de la raíz pisa labels de common)" 0 $?
+rm -f "$rt/stages/marcas/zz-ci.auto.tfvars.json" "$rt/stages/marcas/terraform.tfvars"
+tfv_err "{\"common\": {\"project_id\": \"bnt-lz-pruebas\"}, \"stages/marcas\": {${real}, \"cloud_run_image\": \"us-docker.pkg.dev/example-lz-000000/bnt-dev-app/api:1.0.0\"}}" stages/marcas
+[ $? = 2 ] && grep -q "cloud_run_image (de GCP_TFVARS_JSON\['stages/marcas'\]): nombre de ejemplo" "$tmp/rt-err.txt"
+check "root-tfvars: un marcador en el JSON también es error y dice de qué llave viene" 0 $?
+tfv_err "{\"common\": {\"project_id\": \"example-landing-zone\"}, \"stages/marcas\": {${real}}}" stages/marcas
+[ $? = 2 ] && grep -q "project_id (de GCP_TFVARS_JSON\['common'\])" "$tmp/rt-err.txt"
+check "root-tfvars: el proyecto de los ejemplos (example-landing-zone) es error" 0 $?
+tfv_err "{\"common\": {\"project_id\": \"bnt-lz-pruebas\"}, \"stages/marcas\": {${real}, \"essential_contacts\": {\"x@example.com\": [\"LEGAL\"]}}}" stages/marcas
+[ $? = 2 ] && grep -q '^  essential_contacts (de GCP_TFVARS_JSON' "$tmp/rt-err.txt"
+check "root-tfvars: un marcador en una llave de un mapa del JSON (correo de essential_contacts) es error" 0 $?
+# Los terraform.tfvars.example reales (copiados a la carpeta temporal: root-tfvars.py escribe en
+# la raíz si pasa): con solo project_id, cada raíz del pipeline falla y nombra lo que hay que
+# poner en GCP_TFVARS_JSON; el hub con esos valores pasa.
+for r in 1-base 2-networks 2-networks/envs/dev 2-networks/envs/qa 2-networks/envs/prod \
+  3-workloads/envs/dev 3-workloads/envs/qa 3-workloads/envs/prod; do
+  mkdir -p "$rt/real/stages/$r"
+  cp stages/"$r"/*.tf stages/"$r"/terraform.tfvars.example "$rt/real/stages/$r/"
+done
+missing_marks=""
+while read -r r want; do
+  (cd "$rt/real" && TFVARS_JSON='{"common": {"project_id": "bnt-lz-pruebas"}}' \
+    "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "stages/$r" >/dev/null 2>"$tmp/rt-real.txt")
+  [ $? = 2 ] || missing_marks="$missing_marks [$r no falla]"
+  for v in $want; do
+    grep -q "^  $v (de terraform.tfvars.example)" "$tmp/rt-real.txt" || missing_marks="$missing_marks [$r $v]"
+  done
+done <<'EOF'
+1-base security_alert_email essential_contacts groups
+2-networks onprem_dns_domain labels
+2-networks/envs/dev onprem_dns_domain labels
+2-networks/envs/qa onprem_dns_domain labels
+2-networks/envs/prod onprem_dns_domain labels
+3-workloads/envs/dev cloud_run_image domain_names notification_emails
+3-workloads/envs/qa cloud_run_image domain_names notification_emails mig_image
+3-workloads/envs/prod cloud_run_image domain_names notification_emails mig_image gke_authenticator_security_group internal_domain_names
+EOF
+[ -z "$missing_marks" ]
+check "root-tfvars: los marcadores de los terraform.tfvars.example reales se detectan${missing_marks:+ (faltan:$missing_marks)}" 0 $?
+(cd "$rt/real" && TFVARS_JSON='{"common": {"project_id": "bnt-lz-pruebas", "labels": {"app": "network", "owner": "redes", "cost_center": "ti-001"}}, "stages/2-networks": {"onprem_dns_domain": "corp.banorte-lz.internal."}}' \
+  "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" stages/2-networks >/dev/null 2>&1)
+check "root-tfvars: el hub real con onprem_dns_domain y labels reales pasa (sin falsos positivos en su ejemplo)" 0 $?
 n=0
 for f in pr.yml drift.yml _terraform-root.yml; do
   n=$((n + $(grep -cF 'python3 scripts/root-tfvars.py "${ROOT}"' "$WF/$f")))
