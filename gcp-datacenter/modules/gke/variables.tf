@@ -39,6 +39,21 @@ variable "name" {
   }
 }
 
+variable "cluster_name" {
+  description = "Nombre completo del clúster, en lugar del que se arma con name y la región. Sirve cuando otra etapa necesita conocer el nombre por convención (en el proyecto único, la regla por clúster de Binary Authorization de 1-base usa <prefix>-<env>-<app>-gke[-dr], ADR 0029 §4). Debe empezar con <prefix>-<environment>-. null: <prefix>-<environment>-app-<name>-<código de región>."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cluster_name == null || can(regex("^[a-z][a-z0-9-]{0,38}[a-z0-9]$", coalesce(var.cluster_name, "x")))
+    error_message = "cluster_name debe tener de 2 a 40 caracteres: minúsculas, dígitos y guiones, empezando con letra y sin terminar en guion."
+  }
+  validation {
+    condition     = var.cluster_name == null || startswith(coalesce(var.cluster_name, "x"), "${var.prefix}-${var.environment}-")
+    error_message = "cluster_name debe empezar con <prefix>-<environment>- (§4.2; en el proyecto único es lo que separa los recursos de cada entorno, ADR 0029 §4)."
+  }
+}
+
 variable "location" {
   description = "Ubicación del clúster: una región (clúster regional) o una zona (clúster zonal, solo fuera de prod)."
   type        = string

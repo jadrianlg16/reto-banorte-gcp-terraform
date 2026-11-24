@@ -6,7 +6,7 @@ locals {
   # Región de la ubicación: "us-central1-a" → "us-central1"; una región queda igual.
   region       = regex("^[a-z]+-[a-z]+[0-9]+", var.location)
   region_code  = lookup(var.region_codes, local.region, "")
-  cluster_name = "${var.prefix}-${var.environment}-app-${var.name}-${local.region_code}"
+  cluster_name = coalesce(var.cluster_name, "${var.prefix}-${var.environment}-app-${var.name}-${local.region_code}")
 
   subnet_region = regex("regions/([^/]+)/subnetworks/", var.subnet)[0]
   kms_location  = regex("locations/([^/]+)/keyRings/", var.kms_key)[0]
@@ -172,7 +172,7 @@ resource "google_container_cluster" "this" {
     }
     precondition {
       condition     = length(local.cluster_name) <= 40
-      error_message = "El nombre del clúster supera 40 caracteres; acorta prefix o name."
+      error_message = "El nombre del clúster supera 40 caracteres; acorta prefix, name o cluster_name."
     }
     precondition {
       condition     = local.subnet_region == local.region

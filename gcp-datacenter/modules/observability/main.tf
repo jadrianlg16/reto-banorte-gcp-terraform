@@ -4,20 +4,40 @@ locals {
 
   emails = { for e in var.notification_emails : lower(e) => lower(e) }
 
-  channel_ids = [for c in google_monitoring_notification_channel.email : c.id]
+  # Canales creados aquí más los que ya existen (por ejemplo, los de 1-base en el proyecto único).
+  channel_ids = concat([for c in google_monitoring_notification_channel.email : c.id], var.extra_notification_channel_ids)
 
-  url_map_filter = var.lb_url_map_name == null ? "" : " AND resource.label.url_map_name=\"${var.lb_url_map_name}\""
+  # Alcance del entorno. En el proyecto único (ADR 0029) varios entornos comparten el proyecto de
+  # métricas: cada filtro se limita a los recursos del entorno, por nombre (<prefix>-<env>-, §4.2)
+  # o por la etiqueta env (§4.3). Con un proyecto por entorno el alcance no cambia nada.
+  # VERIFICAR-EN-APPLY: que Cloud Monitoring acepte starts_with() sobre url_map_name,
+  # cluster_name y database_id, y metadata.user_labels.env en gce_instance, en alertas, SLO y
+  # tablero, y que cada entorno vea solo sus series.
+  env_prefix = "${var.prefix}-${var.environment}-"
+
+  url_map_filter = (
+    var.lb_url_map_name == null
+    ? " AND resource.label.url_map_name=starts_with(\"${local.env_prefix}\")"
+    : " AND resource.label.url_map_name=\"${var.lb_url_map_name}\""
+  )
+  vm_scope_filter  = " AND metadata.user_labels.env=\"${var.environment}\""
+  gke_scope_filter = " AND resource.label.cluster_name=starts_with(\"${local.env_prefix}\")"
+  sql_scope_filter = " AND resource.label.database_id=starts_with(\"${var.project_id}:${local.env_prefix}\")"
+  uptime_hosts     = distinct([for c in values(var.uptime_checks) : c.host])
 
   lb_requests_filter = "resource.type=\"https_lb_rule\" AND metric.type=\"loadbalancing.googleapis.com/https/request_count\"${local.url_map_filter}"
   lb_5xx_filter      = "${local.lb_requests_filter} AND metric.label.response_code_class=500"
   lb_latency_filter  = "resource.type=\"https_lb_rule\" AND metric.type=\"loadbalancing.googleapis.com/https/total_latencies\"${local.url_map_filter}"
 
-  vm_cpu_filter    = "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/utilization\""
-  vm_memory_filter = "resource.type=\"gce_instance\" AND metric.type=\"agent.googleapis.com/memory/percent_used\" AND metric.label.state=\"used\""
-  gke_cpu_filter   = "resource.type=\"k8s_node\" AND metric.type=\"kubernetes.io/node/cpu/allocatable_utilization\""
-  gke_mem_filter   = "resource.type=\"k8s_node\" AND metric.type=\"kubernetes.io/node/memory/allocatable_utilization\" AND metric.label.memory_type=\"non-evictable\""
-  sql_lag_filter   = "resource.type=\"cloudsql_database\" AND metric.type=\"cloudsql.googleapis.com/database/replication/replica_lag\""
+  vm_cpu_filter    = "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/utilization\"${local.vm_scope_filter}"
+  vm_memory_filter = "resource.type=\"gce_instance\" AND metric.type=\"agent.googleapis.com/memory/percent_used\" AND metric.label.state=\"used\"${local.vm_scope_filter}"
+  gke_cpu_filter   = "resource.type=\"k8s_node\" AND metric.type=\"kubernetes.io/node/cpu/allocatable_utilization\"${local.gke_scope_filter}"
+  gke_mem_filter   = "resource.type=\"k8s_node\" AND metric.type=\"kubernetes.io/node/memory/allocatable_utilization\" AND metric.label.memory_type=\"non-evictable\"${local.gke_scope_filter}"
+  sql_lag_filter   = "resource.type=\"cloudsql_database\" AND metric.type=\"cloudsql.googleapis.com/database/replication/replica_lag\"${local.sql_scope_filter}"
   uptime_filter    = "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\""
+  # Tablero: solo las verificaciones de este módulo (por dominio); sin verificaciones no hay
+  # mosaico de disponibilidad.
+  uptime_dashboard_filter = "${local.uptime_filter} AND resource.label.host=one_of(${join(",", [for h in local.uptime_hosts : "\"${h}\""])})"
 
   # Umbrales de tasa de consumo del presupuesto de errores (práctica estándar de SRE para una
   # ventana de ~30 días): rápido 14.4x en 1 h (2 % del presupuesto) y lento 6x en 6 h (5 %).
@@ -370,7 +390,7 @@ resource "google_monitoring_dashboard" "baseline" {
     displayName = "${local.name}-dashboard-baseline"
     mosaicLayout = {
       columns = 48
-      tiles = [
+      tiles = concat([
         {
           xPos = 0, yPos = 0, width = 24, height = 16
           widget = {
@@ -476,6 +496,7 @@ resource "google_monitoring_dashboard" "baseline" {
             }
           }
         },
+        ], length(local.uptime_hosts) == 0 ? [] : [
         {
           xPos = 24, yPos = 32, width = 24, height = 16
           widget = {
@@ -485,7 +506,7 @@ resource "google_monitoring_dashboard" "baseline" {
                 plotType = "LINE"
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = local.uptime_filter
+                    filter = local.uptime_dashboard_filter
                     aggregation = {
                       alignmentPeriod    = "300s"
                       perSeriesAligner   = "ALIGN_NEXT_OLDER"
@@ -498,7 +519,7 @@ resource "google_monitoring_dashboard" "baseline" {
             }
           }
         },
-      ]
+      ])
     }
   })
 }
