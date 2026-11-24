@@ -107,9 +107,10 @@ forma de su tabla de interfaces. Comprueba la configuración de auditoría, el s
 su exclusión, los llaveros y sus agentes, los repositorios, su IAM y la política de Binary
 Authorization, los roles de grupos y agentes, los nombres de llave de `kms_key_ids`, las
 variantes con organización y perímetro, con SCC y
-atestadores y sin prod; y que se rechazan entradas inválidas (proyecto distinto del de
-0-bootstrap, contactos que no cubren las categorías obligatorias, grupo desconocido, publicador
-`user:`, política de acceso sin organización y secretos fuera de dev, qa y prod).
+atestadores, sin prod y con patrones de imagen válidos; y que se rechazan entradas inválidas
+(proyecto distinto del de 0-bootstrap, contactos que no cubren las categorías obligatorias, grupo
+desconocido, publicador `user:`, política de acceso sin organización, secretos fuera de dev, qa y
+prod y un patrón de imagen que admite un registro entero).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -172,7 +173,7 @@ atestadores y sin prod; y que se rechazan entradas inválidas (proyecto distinto
 | <a name="input_applications"></a> [applications](#input\_applications) | Aplicaciones con repositorio de imágenes en cada entorno (<prefix>-<env>-<app>) y regla de Binary Authorization en sus clústeres de prod (<prefix>-prod-<app>-gke[-dr]). Como en 3-workloads: hasta 8 caracteres. | `set(string)` | <pre>[<br/>  "app"<br/>]</pre> | no |
 | <a name="input_artifact_registry_location"></a> [artifact\_registry\_location](#input\_artifact\_registry\_location) | Ubicación de los repositorios de Artifact Registry: la multirregión us (por defecto; sobrevive a la pérdida de una región) o primary\_region o dr\_region. Se cifran con la llave artifacts de esa ubicación. | `string` | `"us"` | no |
 | <a name="input_artifact_registry_publishers"></a> [artifact\_registry\_publishers](#input\_artifact\_registry\_publishers) | Mapa entorno → aplicación → miembros que publican imágenes (roles/artifactregistry.writer solo sobre ese repositorio), por ejemplo la cuenta del CI de la aplicación. Sin user:. | `map(map(list(string)))` | `{}` | no |
-| <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado). Globales: valen para todos los clústeres y Cloud Run. | `list(string)` | `[]` | no |
+| <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado), con la forma <registro>/<ruta>[/*\|/**\|*]: comodines solo al final, * al final del nombre o después de una /, ** solo después de una /. Globales: valen para todos los clústeres y Cloud Run. | `list(string)` | `[]` | no |
 | <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y las reglas de los clústeres de prod. Vacío (por defecto): sin atestaciones, se niega todo lo que no esté en la lista de permitidos. | `list(string)` | `[]` | no |
 | <a name="input_directory_customer_id"></a> [directory\_customer\_id](#input\_directory\_customer\_id) | Solo con org\_id: ID de cliente de Cloud Identity (Cxxxxxxxx), único dominio admitido en las políticas de IAM (iam.allowedPolicyMemberDomains). null: esa política no se crea. | `string` | `null` | no |
 | <a name="input_enable_scc_notification"></a> [enable\_scc\_notification](#input\_enable\_scc\_notification) | Si es true, crea el tema de Pub/Sub con CMEK y la notificación de hallazgos de Security Command Center del proyecto. SCC se activa a mano en el proyecto antes (ADR 0029 §7); por eso es false por defecto. | `bool` | `false` | no |
