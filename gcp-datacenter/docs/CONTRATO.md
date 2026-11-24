@@ -58,12 +58,12 @@ para el proyecto único o si lo reemplazó el ADR 0029.
 | [0004](adr/0004-cloud-nat-en-cada-spoke.md) | Cloud NAT en cada spoke y región, no en el hub | Un Cloud NAT no da salida a redes unidas por peering | Desviación del diagrama | Vigente |
 | [0005](adr/0005-balanceador-y-cloud-armor-en-el-proyecto-de-servicio.md) | Balanceador HTTPS global y Cloud Armor en la raíz de cargas de cada entorno (`3-workloads/envs/<env>`) | Ponerlo en el hub crearía una dependencia inversa (`2-networks` leería `3-workloads`), separaría al dueño de la aplicación de su política de Cloud Armor (que se asocia al servicio de backend) y mezclaría entornos en un estado común. El tráfico on-premises sí entra solo por el hub | Desviación del diagrama | Enmendado 24 nov |
 | [0006](adr/0006-on-premises-simulado-con-ha-vpn-entre-vpc.md) | On-premises simulado con una VPC `onprem-sim` y HA VPN entre VPC, activable con `simulate_onprem`, y VM DNS opcional (`onprem_dns_vm`) | No hay sitio on-premises real para el equipo. Con `simulate_onprem = false` el mismo módulo apunta a un gateway externo, pero el plan del hub debe fallar en el pipeline (punto 151, por verificar) | Supuesto | Enmendado 24 nov (2) |
-| [0007](adr/0007-ci-cd-con-github-actions.md) | CI/CD con GitHub Actions; las cuentas que escriben solo se toman desde `main` (`attribute.deploy`) | El equipo ya usa GitHub; la especificación lo deja a elección | Conforme | Enmendado 24 nov (2) |
+| [0007](adr/0007-ci-cd-con-github-actions.md) | CI/CD con GitHub Actions; las cuentas que escriben solo se toman desde `_terraform-root.yml` en `main`, con `push` o `workflow_dispatch` (`attribute.deploy`) | El equipo ya usa GitHub; la especificación lo deja a elección | Conforme | Enmendado 24 nov (3) |
 | [0008](adr/0008-llave-kms-propia-de-la-etapa-0.md) | `0-bootstrap` crea su propia llave KMS para cifrar el bucket de estado | La especificación pide CMEK en el bucket de estado (etapa 0); las llaves de los entornos las crea `1-base` después. Sin llave propia habría una ventana sin CMEK | Aclaración | Enmendado 24 nov |
 | [0009](adr/0009-perimetro-vpc-sc-en-dos-etapas-y-dry-run.md) | Perímetro de VPC-SC opcional: solo con `org_id` y `access_policy_id`, lo crea la persona de `0-bootstrap` alrededor de todo el proyecto y queda en dry-run | Sin proyectos de prod separados el perímetro no puede separar entornos, y sin organización no hay política de acceso | Aclaración | Reemplazado por 0029 |
 | [0010](adr/0010-bucket-de-estado-unico-con-iam-por-prefijo.md) | Un solo bucket de estado con un prefijo por raíz. Cada cuenta escribe solo su prefijo y lee los prefijos que su raíz usa, con condiciones de IAM | La especificación pide a la vez "solo su prefijo" y leer las salidas de la etapa anterior; leer aguas arriba es la interpretación mínima que cumple ambas | Aclaración | Enmendado 24 nov |
 | [0011](adr/0011-construccion-en-paralelo-y-despliegue-en-orden.md) | Los módulos y etapas se construyen en paralelo y sin GCP; se aplican en orden 0 → 1 → 2 → 3 cuando exista el proyecto | La regla "ningún sprint empieza sin cerrar el anterior" quedó bloqueada por la falta de acceso a GCP. Se cambia el orden de construcción, no el de despliegue | Desviación del plan | Enmendado 24 nov |
-| [0012](adr/0012-gke-mig-y-cloud-run.md) | GKE para las cargas en contenedores y MIG para las que requieran VM; Cloud Run para servicios sin estado. Los tres módulos existen; cada entorno activa los que use en `3-workloads`, con las cuentas de ejecución de `1-base` | La especificación exige los tres y pide este ADR | Conforme | Enmendado 24 nov (2) |
+| [0012](adr/0012-gke-mig-y-cloud-run.md) | GKE para las cargas en contenedores y MIG para las que requieran VM; Cloud Run para servicios sin estado. Los tres módulos existen; cada entorno activa los que use en `3-workloads`, con las cuentas de ejecución de `1-base` y Workload Identity por clúster | La especificación exige los tres y pide este ADR | Conforme | Enmendado 24 nov (3) |
 | [0013](adr/0013-modulos-propios-sin-modulos-de-terceros.md) | Módulos propios escritos con recursos del proveedor, sin envolver módulos de terceros | Permite pruebas con `mock_provider` sin descargar dependencias y deja cada recurso a la vista del revisor. La especificación permite ambos caminos | Conforme | Vigente |
 | [0014](adr/0014-raiz-del-hub-y-raices-de-spoke.md) | La raíz del hub vive en `stages/2-networks/` y cada spoke en `stages/2-networks/envs/<env>/` | El árbol de la especificación solo muestra `envs/`; el hub necesita su propia raíz y su propio estado | Aclaración | Enmendado 24 nov |
 | [0015](adr/0015-sin-contrasenas-ni-valores-de-secretos-en-terraform.md) | Sin contraseñas de base de datos: Cloud SQL usa autenticación IAM. El módulo `secrets` crea contenedores y permisos, nunca valores | "Secretos sin texto plano en Terraform": un valor generado por Terraform quedaría en el estado | Aclaración | Enmendado 24 nov (2) |
@@ -74,19 +74,21 @@ para el proyecto único o si lo reemplazó el ADR 0029.
 | [0020](adr/0020-cloud-run-publico-detras-del-balanceador.md) | Cloud Run detrás del balanceador: entrada fija a "interno y balanceador" y verificación de invocador de IAM desactivada solo con `public_via_load_balancer = true`; nunca `allUsers` | Con organización, `iam.allowedPolicyMemberDomains` impide `allUsers`; sin ella la regla se mantiene por validación del módulo. El control de acceso público queda en el balanceador y Cloud Armor | Aclaración | Enmendado 24 nov |
 | [0021](adr/0021-pruebas-con-terraform-1-11-y-codigo-con-1-9.md) | El código sigue en `>= 1.9`; las pruebas (`*.tftest.hcl`) usan `override_during = plan` y exigen Terraform 1.11 o mayor. `pr.yml` comprueba el código con 1.9.8 sin `terraform test` y todo con 1.16.5 | Las pruebas necesitan valores conocidos en el plan para afirmar sobre atributos calculados; subir el mínimo del código contradiría la convención | Aclaración | Enmendado 24 nov |
 | [0022](adr/0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md) | Bucket de estado y su llave en la multirregión `US`/`us` (o doble región), segunda HA VPN en la región de DR, balanceador interno uno por región con acceso global y GKE fuera del balanceador externo mientras no haya NEG de DR | La conmutación a DR corre Terraform con la región primaria caída: nada de lo que necesita puede vivir solo ahí | Aclaración | Enmendado 24 nov (2) |
-| [0023](adr/0023-endurecimiento-de-la-identidad-del-pipeline.md) | WIF por IDs numéricos del repositorio y del dueño; las cuentas que escriben solo desde `main`, un flujo del repositorio y su entorno de GitHub (`attribute.deploy`); política de denegación del proyecto con la etiqueta `<prefix>-proteccion` y tres reglas; sin `serviceAccountAdmin` ni `tagUser` de proyecto; cuatro roles personalizados; roles de proyecto de las cuentas solo desde `0-bootstrap`, condicionados por nombre donde el servicio lo admite | Las revisiones encontraron caminos para que una cuenta ampliara su acceso; con los tres entornos en un proyecto, la cuenta de un entorno no debe alcanzar el estado ni las cuentas de otro | Aclaración | Enmendado 24 nov (2) |
+| [0023](adr/0023-endurecimiento-de-la-identidad-del-pipeline.md) | WIF por IDs numéricos del repositorio y del dueño; las cuentas que escriben solo desde `_terraform-root.yml` en `main`, con `push` o `workflow_dispatch` y su entorno de GitHub (`attribute.deploy`); política de denegación del proyecto con la etiqueta `<prefix>-proteccion` y cuatro reglas (la cuarta, sin llaves de cuentas de servicio para nadie); sin `serviceAccountAdmin` ni `tagUser` de proyecto; cuatro roles personalizados; roles de proyecto de las cuentas solo desde `0-bootstrap`, condicionados por nombre donde el servicio lo admite | Las revisiones encontraron caminos para que una cuenta ampliara su acceso; con los tres entornos en un proyecto, la cuenta de un entorno no debe alcanzar el estado ni las cuentas de otro | Aclaración | Enmendado 24 nov (3) |
 | [0024](adr/0024-artifact-registry-y-binary-authorization-por-proyecto.md) | Un repositorio de Artifact Registry multirregional por entorno y aplicación, y una sola política de Binary Authorization del proyecto, en `1-base`, con dos modos: lista de permitidos global (riesgo aceptado: no limita los clústeres de prod a su repositorio) o un atestador por entorno (`binary_authorization_env_attestors`) | GKE y Cloud Run exigen Binary Authorization; la imagen debe sobrevivir a la región primaria; un proyecto tiene una sola política | Aclaración | Enmendado 24 nov (2) |
 | [0025](adr/0025-plan-aprobacion-y-apply-separados.md) | Plan, aprobación y apply separados: plan sin entorno con la cuenta de lectura `tf-read` y `-lock=false`; apply en el entorno de GitHub con la cuenta de la raíz y la misma huella del plan; `common` protegido como `prod`; `plan-gate` y prueba de humo de dev | La aprobación debe ver el plan que se aplica | Aclaración | Enmendado 24 nov |
 | [0026](adr/0026-api-de-google-por-el-vip-restringido-en-todos-los-entornos.md) | `googleapis.com`, `gcr.io`, `pkg.dev` y `run.app` resuelven al VIP de `google_apis_vip` (`restricted` por defecto en los tres entornos) | Imágenes y Cloud Run salían por IP públicas sin pasar por el VIP | Aclaración | Enmendado 24 nov |
-| [0027](adr/0027-desviaciones-aceptadas-del-cis.md) | Desviaciones aceptadas del CIS v5.0 (1.1.3, 1.6, 2.1, 2.3, 2.4, 3.8, 3.9, 3.10 en dev y qa, 4.7, 4.11, 4.12, 6.9), cada una con su riesgo y lo que la cierra; flow logs al 100 % en prod, hub y `onprem-sim` y 0.5 en dev y qa; novena métrica de auditoría para políticas de firewall | El mapa CIS separa lo que falta construir de lo que se decidió no cumplir | Desviación del CIS | Enmendado 24 nov (2) |
-| [0028](adr/0028-apagado-fuera-de-horario-de-dev-y-qa.md) | Apagado fuera de horario opcional de dev y qa (`off_hours_shutdown`, rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler que llaman a la API; MIG con programa de escalado. El rol mínimo `<prefix>OffHoursScheduler` lo crea `0-bootstrap` y lo publica `1-base`; la cuenta de los trabajos la crea `1-base` en `off_hours_environments` | Mitigación de costo de §8, sin deriva falsa en `drift.yml` y sin dar a ninguna cuenta del pipeline permisos para crear roles | Aclaración | Enmendado 24 nov (2) |
-| [0029](adr/0029-un-solo-proyecto.md) | Toda la landing zone en un solo proyecto de GCP: cuatro etapas, organización opcional (la aplica la persona de `0-bootstrap`), nueve cuentas del pipeline, cuentas de ejecución en `1-base`, regla de recursos únicos y destroy sin borrar proyectos; riesgos aceptados con la lista exacta de roles sin condición | Pedido del cliente en la junta del 23 nov 2026 | Desviación (pedido del cliente) | Enmendado 24 nov (2) |
+| [0027](adr/0027-desviaciones-aceptadas-del-cis.md) | Desviaciones aceptadas del CIS v5.0 (1.1.3, 1.6, 2.1, 2.3, 2.4, 3.8, 3.9, 3.10 en dev y qa, 4.7, 4.11, 4.12, 6.9), cada una con su riesgo y lo que la cierra; flow logs al 100 % en prod, hub y `onprem-sim` y 0.5 en dev y qa; novena métrica de auditoría para políticas de firewall | El mapa CIS separa lo que falta construir de lo que se decidió no cumplir | Desviación del CIS | Enmendado 24 nov (3) |
+| [0028](adr/0028-apagado-fuera-de-horario-de-dev-y-qa.md) | Apagado fuera de horario opcional de dev y qa (`off_hours_shutdown`, rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler que llaman a la API; MIG con programa de escalado. El rol mínimo `<prefix>OffHoursScheduler` lo crea `0-bootstrap` y lo publica `1-base`; la cuenta de los trabajos la crea `1-base` en `off_hours_environments`, con el rol condicionado a su entorno | Mitigación de costo de §8, sin deriva falsa en `drift.yml` y sin dar a ninguna cuenta del pipeline permisos para crear roles | Aclaración | Enmendado 24 nov (3) |
+| [0029](adr/0029-un-solo-proyecto.md) | Toda la landing zone en un solo proyecto de GCP: cuatro etapas, organización opcional (la aplica la persona de `0-bootstrap`), nueve cuentas del pipeline, cuentas de ejecución en `1-base`, regla de recursos únicos y destroy sin borrar proyectos; riesgos aceptados: los cuatro residuales de la re-revisión y la lista exacta de roles sin condición | Pedido del cliente en la junta del 23 nov 2026 | Desviación (pedido del cliente) | Enmendado 24 nov (3) |
 
 Los ADR 0001, 0002, 0005 a 0010, 0012, 0013, 0015 y 0018 se enmendaron el 21 nov 2026 y el 0009
 otra vez el 23 nov. El 24 nov 2026 se enmendaron para el proyecto único los que dicen
 "Enmendado 24 nov" en la tabla, y el 0009 y el 0019 quedaron reemplazados por el 0029 (ver la
 línea de estado de cada uno). Ese mismo día, con el código final de las revisiones de seguridad e
-integración (ramas `r2/*`), se enmendaron otra vez los que dicen "Enmendado 24 nov (2)".
+integración (ramas `r2/*`), se enmendaron otra vez los que dicen "Enmendado 24 nov (2)", y con
+el arreglo de la re-revisión de seguridad (rama `r2/seg2`) una tercera vez los que dicen
+"Enmendado 24 nov (3)".
 
 ### 2.1 Decisiones de construcción sobre el ADR 0029
 
@@ -101,11 +103,11 @@ qué cambió y por qué.
 | `DEPRIVILEGE` de la cuenta de Compute por defecto en `0-bootstrap` | `stages/0-bootstrap/main.tf` | En `1-base` (§4) | Quitar un rol básico pide `setIamPolicy` sin condición, y ninguna cuenta del pipeline lo tiene |
 | El rol `<prefix>OffHoursScheduler` lo crea `0-bootstrap`; `1-base` lo publica como `off_hours_role_id` | `stages/0-bootstrap/custom_roles.tf`, `stages/1-base/outputs.tf` | En `1-base` (§4) | Ninguna cuenta del pipeline tiene `iam.roleAdmin` |
 | Políticas de organización y perímetro de VPC-SC en `0-bootstrap`, aplicados por la persona con `roles/orgpolicy.policyAdmin` y `roles/accesscontextmanager.policyAdmin`; `org_id`, `access_policy_id`, `directory_customer_id`, `additional_allowed_locations` y `vpc_sc_restricted_services` son variables de `0-bootstrap` | `stages/0-bootstrap/org.tf` | En `1-base`, con roles de organización para `tf-base` (§1) | `orgpolicy.policyAdmin` solo se da en la organización y alcanza a toda ella; quien edita la política de acceso cambia cualquier perímetro (puntos 125 y 126) |
-| Las cuentas que escriben aceptan `attribute.deploy`, que vale el entorno de GitHub solo con `ref == refs/heads/main` y un `job_workflow_ref` de `.github/workflows/` del repositorio | `stages/0-bootstrap/wif.tf`, `service_accounts.tf` | `attribute.environment` (§3) | Cualquier rama que declarara el entorno obtenía la cuenta (puntos 123 y 124) |
-| Las cuentas de ejecución (`gke_nodes`, `workload`, `mig`, `run` y `sched`), sus roles, la lectura de secretos y repositorios, Cloud SQL condicionado y Workload Identity los crea `1-base`; `tf-wl-<env>` solo recibe `serviceAccountUser` sobre las que adjunta | `stages/1-base/runtime_accounts.tf` | Cada raíz de entorno crea sus principales (§4) | Con `TfServiceAccountManager`, `serviceAccountUser` y `projectIamAdmin` delegado a nivel de proyecto, la cuenta de cargas alcanzaba las cuentas de otros entornos (puntos 131 a 135) |
+| Las cuentas que escriben aceptan `attribute.deploy`, que vale el entorno de GitHub solo con `ref == refs/heads/main`, `job_workflow_ref == <repo>/.github/workflows/_terraform-root.yml@refs/heads/main` y `event_name` `push` o `workflow_dispatch` | `stages/0-bootstrap/wif.tf`, `service_accounts.tf` | `attribute.environment` (§3) | Cualquier rama que declarara el entorno obtenía la cuenta (puntos 123 y 124); la re-revisión encontró que el prefijo `.github/workflows/` dejaba pasar cualquier flujo, también uno con `pull_request_target` (hallazgo N3, punto 156) |
+| Las cuentas de ejecución (`gke_nodes`, `workload`, `mig`, `run` y `sched`), sus roles, la lectura de secretos y repositorios, Cloud SQL condicionado y Workload Identity por clúster los crea `1-base`; `tf-wl-<env>` solo recibe `serviceAccountUser` sobre las que adjunta | `stages/1-base/runtime_accounts.tf` | Cada raíz de entorno crea sus principales (§4) | Con `TfServiceAccountManager`, `serviceAccountUser` y `projectIamAdmin` delegado a nivel de proyecto, la cuenta de cargas alcanzaba las cuentas de otros entornos (puntos 131 a 135) |
 | `tf-base` recibe `<prefix>TfServiceAccountManager` en lugar de `iam.serviceAccountAdmin`; ninguna cuenta tiene `serviceAccountAdmin` | `stages/0-bootstrap/custom_roles.tf` | — | `serviceAccountAdmin` incluye `deleteTagBinding`, que no se puede negar: con `tagUser` dejaría quitar la etiqueta de protección |
 | Ninguna cuenta del pipeline tiene `tagUser` ni `tagAdmin` de proyecto: los spokes usan `<prefix>TfNetworkTagManager` y dan a `tf-wl-<env>` `tagUser` solo sobre sus valores `lb_backend` e `iap_ssh`; el `tagUser` de los agentes de GKE y de `cloudservices` lo da `0-bootstrap` | `stages/0-bootstrap/custom_roles.tf`, `main.tf`, `stages/2-networks/envs/<env>/firewall.tf` | — (el primer código daba `tagAdmin` a los spokes y `tagUser` de proyecto a las cargas) | `tagUser` trae `iam.serviceAccounts.deleteTagBinding` (puntos 136 y 137) |
-| La denegación tiene tres reglas: con etiqueta; sin condición (tokens y firmas de cualquier cuenta, WIF, roles, `serviceAccountKeys.create` y `projects.delete`); y valores de secretos para todas salvo `tf-net`. La etiqueta se liga también al llavero del estado y a las nueve cuentas | `stages/0-bootstrap/deny_policy.tf` | WIF y roles; etiqueta en el bucket (§5) | Ninguna cuenta del pipeline los necesita; `actAs` no se niega porque adjuntar una cuenta lo pide (punto 127) |
+| La denegación tiene cuatro reglas: con etiqueta; sin condición (tokens y firmas de cualquier cuenta, WIF, roles, `serviceAccountKeys.create`, `projects.delete` y los servicios habilitados); valores de secretos para todas salvo `tf-net`; y `serviceAccountKeys.create` para `principalSet://goog/public:all`, sin excepción. La etiqueta se liga también al llavero del estado y a las nueve cuentas | `stages/0-bootstrap/deny_policy.tf` | WIF y roles; etiqueta en el bucket (§5) | Ninguna cuenta del pipeline los necesita; `actAs` no se niega porque adjuntar una cuenta lo pide (punto 127). Sin organización nada impedía que `tf-base` diera a otro principal el poder de crear llaves (hallazgos N2 y N4, puntos 154 y 155) |
 | Binary Authorization con dos modos: sin atestadores por entorno, lista de permitidos global (las reglas de prod no limitan a su repositorio); con `binary_authorization_env_attestors`, cada clúster `<prefix>-<env>-<app>-gke[-dr]` exige el atestador de su entorno | `stages/1-base/artifacts.tf` | Una regla por clúster de prod que solo admite el repositorio de prod (§4) | Una imagen de la lista se admite sin importar las reglas; limitar prod exige atestaciones (ADR 0024, punto 139) |
 | Solo las llaves KMS que alguien usa; las de `dr_region` y la `storage` de `us` solo en `dr_environments` (por defecto prod) | `stages/1-base/kms.tf` | — (el primer código creaba todas las llaves en las tres ubicaciones) | Costo (`estimacion-de-costos.md`) |
 | Formatos de salida de `1-base`: `kms_key_ids` con llaves `<uso>`, `<uso>_dr` y `<uso>_us`; repositorios como URL; `notification_channel_ids = { security, operations }` (`operations` solo con `operations_alert_email`) | `stages/1-base/outputs.tf` | `kms_key_ids` entorno → uso; repositorios `{id, url}` | Mismo formato que leía la raíz de cargas anterior. `3-workloads` acepta también las otras formas y solo usa el canal `operations` (punto 138) |
@@ -115,7 +117,12 @@ qué cambió y por qué.
 | La llave `backup` es solo para Backup for GKE; la bóveda de Backup and DR no usa llave | `stages/1-base/kms.tf` | — | — |
 | `cloudscheduler.admin` solo para `tf-wl-dev` y `tf-wl-qa` | `stages/0-bootstrap/service_accounts.tf` | — | Prod no admite el apagado (ADR 0028) |
 | Las nueve cuentas reciben `serviceusage.serviceUsageConsumer` | `stages/0-bootstrap/service_accounts.tf` | No lo lista (§3) | Proyecto de cuota de las llamadas |
-| La regla sin etiqueta de la denegación niega además `serviceAccountKeys.create` y `projects.delete`; la etiqueta se liga también al llavero del estado | `stages/0-bootstrap/deny_policy.tf` | WIF y roles; etiqueta en el bucket (§5) | Ninguna cuenta del pipeline los necesita |
+| La regla sin etiqueta de la denegación niega además `serviceAccountKeys.create`, `projects.delete` y `serviceusage.services.enable`, `services.disable` y `consumerpolicy.update`; la etiqueta se liga también al llavero del estado | `stages/0-bootstrap/deny_policy.tf` | WIF y roles; etiqueta en el bucket (§5) | Ninguna cuenta del pipeline los necesita; las APIs las habilita `0-bootstrap`, que aplica una persona (hallazgo N2, punto 154) |
+| `tf-wl-<env>` tiene `container.clusterAdmin` en lugar de `container.admin`; `cloudsql.admin`, `container.clusterAdmin` y `backupdr.admin` van condicionados a los recursos de su entorno (`resource.type != <tipo> \|\| resource.name.startsWith(<prefijo>)`); Monitoring va con cinco roles finos en lugar de `monitoring.editor` | `stages/0-bootstrap/service_accounts.tf` | Compute, GKE, Cloud SQL y los demás servicios sin condición (§3) | `container.admin` trae permisos sobre los objetos de Kubernetes de todos los clústeres, también los secretos y tokens de prod; `monitoring.editor` trae permisos de Service Usage (hallazgos N1 y N2, puntos 152 y 153) |
+| La cuenta `sched` recibe `<prefix>OffHoursScheduler` condicionado a la instancia de Cloud SQL y a los clústeres de su entorno | `stages/1-base/runtime_accounts.tf` | La raíz de entorno lo daba como permiso de proyecto, sin condición (§4) | El rol de un entorno alcanzaba las instancias y los clústeres de prod (hallazgo N4, punto 157) |
+| Workload Identity por clúster: `1-base` enlaza la cuenta `workload` al `principalSet` de todos los pods de `<prefix>-<env>-<app>-gke[-dr]`; ya no existe `gke_workload_ksa_name` y la salida `gke_workload_identity_members` es entorno → aplicación → clúster | `stages/1-base/runtime_accounts.tf`, `outputs.tf` | Namespace `<app>-<env>` validado (§9) | El principal de un namespace vale desde cualquier clúster del proyecto: otro entorno con un namespace del mismo nombre tomaba la cuenta (hallazgo N1, punto 158) |
+| Conftest (`env_root_scope`) rechaza todo `google_project_iam_member`, `google_project_iam_member_remove` y `google_service_account_iam_*` en las raíces de entorno; el IAM de recursos sigue permitido | `policies/env_root_scope.rego` | Solo el IAM de proyecto para principales que la raíz no creó (§4) | Las raíces de entorno ya no crean cuentas (hallazgo N5, punto 146) |
+| La bóveda de Backup and DR lleva `access_restriction` por variable, `WITHIN_PROJECT` por defecto | `modules/backup-dr/main.tf`, `variables.tf` | — | Sin el campo la API usa `WITHIN_ORGANIZATION`, y el valor no se cambia después (punto 159) |
 | `1-base` recibe `project_id` por variable, con una precondición que lo compara con `0-bootstrap` | `stages/1-base/main.tf` | — | Mismo origen que las demás raíces (`GCP_TFVARS_JSON.common`) |
 | Las raíces de red no leen `1-base`; el hub no lee ningún estado | `stages/2-networks/`, `stages/0-bootstrap/service_accounts.tf` | Hub y spokes leen `1-base` (§2) | No usan ninguna salida de `1-base`, y `tflint` rechaza un dato remoto sin uso |
 | El hub ya no publica `hub_project_id`; `spoke_supernets` es interfaz y el spoke la lee sin `try` | `stages/2-networks/outputs.tf`, `envs/<env>/remote_state.tf` | — | Todo vive en `project_id` |
@@ -421,11 +428,25 @@ Condiciones de IAM que se usan
   documentación limita la lista a 10 roles
   ([límites](https://cloud.google.com/iam/docs/setting-limits-on-granting-roles)), así que son
   dos asignaciones, una por lista.
-- Compute, GKE, Cloud Run, Cloud SQL, Memorystore, Filestore, Backup and DR, Certificate
-  Manager, Monitoring, red, cuentas de servicio y etiquetas van **sin condición**: una condición
-  por nombre sobre un tipo que no la admite niega todo, y eso no se puede probar sin GCP. La
-  lista exacta de lo que eso deja alcanzar en otro entorno está en el ADR 0029 §9 (riesgo
-  aceptado).
+- **Cloud SQL, GKE y Backup and DR por entorno** (`tf-wl-<env>`, `local.workloads_conditions`):
+  `resource.type != <tipo> || resource.name.startsWith(<prefijo>)`, que limita el nombre solo
+  cuando el permiso se evalúa sobre ese tipo y deja pasar lo que se evalúa sobre otro (por
+  ejemplo, el proyecto):
+  - `cloudsql.admin`: tipos `sqladmin.googleapis.com/Instance` y `BackupRun`, prefijo
+    `projects/<id>/instances/<prefix>-<env>-data-`;
+  - `container.clusterAdmin`: tipo `container.googleapis.com/Cluster`, prefijo
+    `projects/<id>/locations/<primary_region o dr_region>/clusters/<prefix>-<env>-`;
+  - `backupdr.admin`: tipo `backupdr.googleapis.com/BackupVaults`, prefijo
+    `projects/<id>/locations/<primary_region o dr_region>/backupVaults/<prefix>-<env>-`.
+
+  La referencia de permisos de GKE evalúa `container.clusters.create` sobre el proyecto, así que
+  la condición no limita el nombre de un clúster nuevo; la documentación de Cloud SQL no dice
+  cómo se evalúa crear una instancia (ADR 0029 §9, riesgo 3; `VERIFICAR-EN-APPLY`, punto 152).
+- Compute, Cloud Run, Memorystore, Filestore, Backup for GKE, Certificate Manager, Monitoring,
+  red, cuentas de servicio y etiquetas van **sin condición**: no admiten `resource.name`, o su
+  rol abarca tipos que no lo admiten, y una condición por nombre sobre un tipo que no la admite
+  niega todo. La lista exacta de lo que eso deja alcanzar en otro entorno está en el ADR 0029 §9
+  (riesgo aceptado).
 
 Roles en el proyecto (`base_roles`, `hub_roles`, `net_env_roles`, `workloads_roles` y
 `read_roles` de `stages/0-bootstrap/service_accounts.tf`):
@@ -435,7 +456,7 @@ Roles en el proyecto (`base_roles`, `hub_roles`, `net_env_roles`, `workloads_rol
 | `<prefix>-tf-base` | `1-base` | `cloudkms.admin` (KMS sin el llavero del estado); `<prefix>TfSecretContainerAdmin`; `<prefix>TfServiceAccountManager` (cuentas de ejecución y de la VM DNS); `artifactregistry.admin`; `binaryauthorization.policyEditor`; `logging.configWriter`; `monitoring.alertPolicyEditor`; `monitoring.notificationChannelEditor`; `essentialcontacts.admin`; `pubsub.admin`; `securitycenter.notificationConfigEditor`; `storage.admin` (buckets `<prefix>-common-`); `resourcemanager.projectIamAdmin` dos veces, con concesión delegada: personas (`cloudkms.viewer`, `iam.securityReviewer`, `logging.privateLogViewer`, `logging.viewer`, `monitoring.viewer` y `viewer`, `base_grantable_roles`) y cuentas de ejecución (`autoscaling.metricsWriter`, `cloudsql.client`, `cloudsql.instanceUser`, `cloudtrace.agent`, `logging.logWriter`, `monitoring.metricWriter`, `monitoring.viewer`, `stackdriver.resourceMetadata.writer` y `<prefix>OffHoursScheduler`, `runtime_grantable_roles`) |
 | `<prefix>-tf-net` | hub de `2-networks` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin`; con `onprem_dns_vm = true`, además `compute.instanceAdmin.v1` (VM DNS de `onprem-sim`) |
 | `<prefix>-tf-net-<env>` | spoke de `<env>` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin`, `<prefix>TfNetworkTagManager` (etiquetas seguras del spoke y su IAM) y `servicenetworking.networksAdmin` (PSA) |
-| `<prefix>-tf-wl-<env>` | `3-workloads/envs/<env>` | Sin condición: `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin` y `run.admin`; en dev y qa, `cloudscheduler.admin`. Con condición: `storage.admin` (buckets `<prefix>-<env>-`). Ningún rol de cuentas de servicio, de IAM de proyecto, de KMS, de secretos ni de etiquetas en el proyecto |
+| `<prefix>-tf-wl-<env>` | `3-workloads/envs/<env>` | Con condición: `backupdr.admin` (bóvedas `<prefix>-<env>-`), `cloudsql.admin` (instancias `<prefix>-<env>-data-`), `container.clusterAdmin` (clústeres `<prefix>-<env>-`) y `storage.admin` (buckets `<prefix>-<env>-`). Sin condición: `certificatemanager.editor`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `file.editor`, `gkebackup.admin`, `monitoring.alertPolicyEditor`, `monitoring.dashboardEditor`, `monitoring.notificationChannelEditor`, `monitoring.servicesEditor`, `monitoring.uptimeCheckConfigEditor`, `redis.admin` y `run.admin`; en dev y qa, `cloudscheduler.admin`. Ni `container.admin` (trae permisos sobre los objetos de Kubernetes de todos los clústeres) ni `monitoring.editor` (trae permisos de Service Usage). Ningún rol de cuentas de servicio, de IAM de proyecto, de KMS, de secretos ni de etiquetas en el proyecto |
 | `<prefix>-tf-read` | ninguna: `plan` de `pr.yml` y `apply.yml`, `drift.yml`, prueba de humo y huérfanos | `viewer`, `iam.securityReviewer`, `cloudasset.viewer`, `networkmanagement.admin` (Connectivity Tests de la prueba de humo) y `storage.objectViewer` sobre todo el bucket de estado. Que `viewer` alcance para refrescar todo es HYPOTHESIS (`VERIFICAR-EN-APPLY`) |
 
 Las nueve reciben además `serviceusage.serviceUsageConsumer` (proyecto de cuota de las
@@ -469,7 +490,7 @@ del pipeline necesite `iam.roleAdmin`; que todos sus permisos se admitan en role
 | `<prefix>TfSecretContainerAdmin` | `secretmanager.secrets.{create,delete,get,getIamPolicy,list,setIamPolicy,update}` y `secretmanager.locations.{get,list}`; sin versiones (ADR 0015). Con `setIamPolicy` podría darse `secretAccessor`: la denegación le niega el valor (§6.5) | `tf-base` |
 | `<prefix>TfServiceAccountManager` | `iam.serviceAccounts.{create,delete,disable,enable,get,getIamPolicy,list,setIamPolicy,undelete,update}` y `resourcemanager.projects.get`; sin `createTagBinding` ni `deleteTagBinding` | `tf-base` |
 | `<prefix>TfNetworkTagManager` | `resourcemanager.tagKeys.{create,delete,get,getIamPolicy,list,setIamPolicy,update}` y `resourcemanager.tagValues.{create,delete,get,getIamPolicy,list,setIamPolicy,update}`; sin `tagValueBindings`, `*TagBinding` ni `tagHolds` | `tf-net-<env>` |
-| `<prefix>OffHoursScheduler` | `cloudsql.instances.{get,update}` y `container.clusters.update` | cuenta `<prefix>-<env>-<app>-sched` que crea `1-base` (dev y qa, `off_hours_environments`) |
+| `<prefix>OffHoursScheduler` | `cloudsql.instances.{get,update}` y `container.clusters.update` | cuenta `<prefix>-<env>-<app>-sched` que crea `1-base` (dev y qa, `off_hours_environments`), condicionado a la instancia `<prefix>-<env>-data-` y a los clústeres `<prefix>-<env>-` de su entorno (`local.off_hours_condition`) |
 
 ### 6.4 Workload Identity Federation
 
@@ -478,19 +499,40 @@ del pipeline necesite `iam.roleAdmin`; que todos sus permisos se admitan en role
 `assertion.repository_id == var.github_repository_id` y
 `assertion.repository_owner_id == var.github_repository_owner_id` (IDs numéricos, que no se
 reutilizan como un nombre; ADR 0023), y mapea `repository_id`, `repository_owner_id`,
-`repository`, `ref`, `environment` y `deploy`. `attribute.deploy` vale el entorno de GitHub del
-trabajo solo si el token trae `ref == 'refs/heads/main'` y un `job_workflow_ref` que empieza
-con `<github_repository>/.github/workflows/`; si no, `none`, que ninguna cuenta acepta. Los
-trabajos que escriben son el `apply` de `_terraform-root.yml`, que `apply.yml` y `destroy.yml`
-llaman como flujo reutilizable. Quién puede tomar cada cuenta (`roles/iam.workloadIdentityUser`):
+`repository`, `ref`, `environment` y `deploy`. `attribute.deploy` (`local.wif_deploy` de
+`stages/0-bootstrap/wif.tf`) es:
+
+```text
+('environment' in assertion
+ && assertion.ref == 'refs/heads/main'
+ && 'job_workflow_ref' in assertion
+ && assertion.job_workflow_ref == '<github_repository>/.github/workflows/_terraform-root.yml@refs/heads/main'
+ && 'event_name' in assertion
+ && (assertion.event_name == 'push' || assertion.event_name == 'workflow_dispatch'))
+? assertion.environment : 'none'
+```
+
+Es decir: vale el entorno de GitHub del trabajo solo si el token viene de `main`, del archivo
+exacto `_terraform-root.yml` en `main` (`local.wif_deploy_workflow`) y de un evento `push` o
+`workflow_dispatch` (`local.wif_deploy_events`, los únicos de los bloques `on:` de `apply.yml` y
+`destroy.yml`); si no, `none`, que ninguna cuenta acepta. Otro archivo de flujo, el mismo archivo
+en otra rama o un flujo nuevo con `pull_request_target`, `workflow_run` o `issue_comment` (cuyo
+`ref` también es la rama por defecto) no obtiene una cuenta que escribe. Los trabajos que
+escriben son el `apply` de `_terraform-root.yml`, que `apply.yml` y `destroy.yml` llaman como
+flujo reutilizable; si esos flujos cambian de eventos o el archivo se renombra, la lista o el
+nombre se cambian en `wif.tf` y se vuelve a aplicar `0-bootstrap`. Quién puede tomar cada cuenta
+(`roles/iam.workloadIdentityUser`):
 
 - `tf-base` y `tf-net`: solo `principalSet://iam.googleapis.com/<pool>/attribute.deploy/common`.
 - `tf-net-<env>` y `tf-wl-<env>`: solo `…/attribute.deploy/<env>`.
 - `tf-read`: `…/attribute.repository_id/<id>`, cualquier trabajo del repositorio.
 
-Un trabajo sin entorno de GitHub, de otra rama o fuera de un flujo reutilizable del repositorio
-solo obtiene `tf-read`. El valor real de `job_workflow_ref` y que el mapeo no falle en trabajos
-sin entorno son `VERIFICAR-EN-APPLY` (`stages/0-bootstrap/wif.tf`, puntos 123 y 124). La regla
+Un trabajo sin entorno de GitHub, de otra rama, de otro archivo de flujo o de otro evento solo
+obtiene `tf-read`. El valor real de `job_workflow_ref` y de `event_name` en el trabajo `apply`
+llamado con `uses: ./.github/workflows/…` (GitHub no documenta el `ref` de una llamada con ruta
+local: si fuera el SHA, `attribute.deploy` queda en `none` y el apply falla en la autenticación)
+y que el mapeo no falle en trabajos sin entorno son `VERIFICAR-EN-APPLY`
+(`stages/0-bootstrap/wif.tf`, puntos 123, 124 y 156). La regla
 "Deployment branches: main" y los revisores de cada entorno de GitHub
 ([`pipeline.md`](pipeline.md) §4) quedan como segunda barrera. `github_repository` tiene que
 coincidir con la afirmación `repository`: si el repositorio se renombra, `attribute.deploy` queda
@@ -513,19 +555,33 @@ etiqueta, porque las condiciones de denegación solo admiten funciones de etique
   con padre `projects/<id>` y valor `etapa-0`, ligada al bucket de estado, al llavero del estado
   y a las nueve cuentas del pipeline.
 - **Política de denegación** `<prefix>-bootstrap-sec-deny-pipeline` (con `enable_deny_policy`,
-  `true` por defecto) contra las nueve cuentas, con tres reglas:
-  - sobre lo que tiene la etiqueta: borrar el bucket o cambiar su configuración, su IAM y sus
-    etiquetas; cambiar el IAM del llavero o de la llave, cambiar la llave o destruir versiones;
-    cambiar el IAM de las cuentas del pipeline, suplantarlas (`actAs`, `getAccessToken`,
-    `getOpenIdToken`, `implicitDelegation`, `signBlob`, `signJwt`), cambiarlas, borrarlas o
-    deshabilitarlas;
-  - en todo el proyecto, sin condición: pedir tokens o firmas de **cualquier** cuenta de
-    servicio (`getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, `signJwt`);
-    crear, cambiar o borrar pools y proveedores de WIF y roles personalizados; crear llaves de
-    cuentas de servicio y borrar el proyecto. `actAs` no se niega: adjuntar una cuenta de
-    ejecución a un recurso lo pide (punto 127);
-  - valores de secretos: `secretmanager.versions.access` para las nueve salvo `tf-net`, que lee
-    la llave de la VPN real.
+  `true` por defecto), con cuatro reglas; las tres primeras contra las nueve cuentas:
+  1. sobre lo que tiene la etiqueta (solo con `enable_protection_tags`): borrar el bucket o
+     cambiar su configuración, su IAM y sus etiquetas; cambiar el IAM del llavero o de la llave,
+     cambiar la llave o destruir versiones; cambiar el IAM de las cuentas del pipeline,
+     suplantarlas (`actAs`, `getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`,
+     `signJwt`), cambiarlas, borrarlas o deshabilitarlas;
+  2. en todo el proyecto, sin condición (`untagged_denied_permissions`): pedir tokens o firmas
+     de **cualquier** cuenta de servicio (`getAccessToken`, `getOpenIdToken`,
+     `implicitDelegation`, `signBlob`, `signJwt`); crear, cambiar o borrar pools y proveedores de
+     WIF y roles personalizados; crear llaves de cuentas de servicio
+     (`serviceAccountKeys.create`); borrar el proyecto (`projects.delete`); y habilitar,
+     deshabilitar o cambiar la política de consumidor de los servicios
+     (`serviceusage.googleapis.com/services.enable`, `services.disable` y
+     `consumerpolicy.update`), porque las APIs solo las habilita `0-bootstrap`.
+     `serviceusage.services.use` no se niega: las nueve cuentas usan el proyecto como proyecto de
+     cuota. `actAs` tampoco: adjuntar una cuenta de ejecución a un recurso lo pide (punto 127);
+  3. valores de secretos: `secretmanager.versions.access` para las nueve salvo `tf-net`, que lee
+     la llave de la VPN real;
+  4. llaves de cuentas de servicio para **todos**: `serviceAccountKeys.create` negado a
+     `principalSet://goog/public:all`, sin excepción. Sin organización no existe
+     `iam.disableServiceAccountKeyCreation`, y `tf-base` administra el IAM de las cuentas de
+     ejecución: podría dar a otro principal el poder de crear llaves. La persona de la etapa 0
+     puede quitar o cambiar la regla con `iam.denyAdmin` si alguna vez necesita una llave. Que
+     ningún agente de servicio necesite crear llaves administradas por el usuario es HYPOTHESIS
+     (`VERIFICAR-EN-APPLY`, punto 155). Que la regla impida también subir una llave pública es
+     HYPOTHESIS: la documentación de la subida no nombra el permiso que pide. Con organización,
+     la subida la bloquearía `iam.disableServiceAccountKeyUpload`, que `modules/org` no aplica.
 - Quien aplica `0-bootstrap` necesita `roles/iam.denyAdmin` en el proyecto (el rol `owner` no lo
   incluye; `VERIFICAR-EN-APPLY`).
 
@@ -655,11 +711,15 @@ Crea:
   por defecto; prod se rechaza), `<prefix>-<env>-<app>-sched`. Les da, por la concesión
   delegada de `tf-base`, sus roles de proyecto (telemetría, `cloudsql.client` y
   `cloudsql.instanceUser` condicionados a las instancias `<prefix>-<env>-data-`, y el rol del
-  apagado a `sched`); `secretAccessor` sobre los secretos de su entorno a `workload` y `run`;
-  `artifactregistry.reader` sobre su repositorio a `gke_nodes` y `mig`; el enlace de Workload
-  Identity de `<app>-<env>/<gke_workload_ksa_name>` a `workload` (con
-  `gke_workload_identity_bindings = true`, después del primer clúster); y a `tf-wl-<env>`
-  `iam.serviceAccountUser` solo sobre `gke_nodes`, `mig`, `run` y `sched` (puntos 131 a 135).
+  apagado a `sched`, condicionado a la instancia y a los clústeres de su entorno,
+  `local.off_hours_condition`); `secretAccessor` sobre los secretos de su entorno a `workload` y
+  `run`; `artifactregistry.reader` sobre su repositorio a `gke_nodes` y `mig`; el enlace de
+  Workload Identity por clúster a `workload` (con `gke_workload_identity_bindings = true`,
+  después del primer clúster): `roles/iam.workloadIdentityUser` para
+  `principalSet://iam.googleapis.com/projects/<número>/locations/global/workloadIdentityPools/<proyecto>.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/<proyecto>/locations/<ubicación>/clusters/<prefix>-<env>-<app>-gke[-dr]`,
+  todos los pods del clúster primario y, en `dr_environments`, del de DR (ADR 0012, punto 158);
+  y a `tf-wl-<env>` `iam.serviceAccountUser` solo sobre `gke_nodes`, `mig`, `run` y `sched`
+  (puntos 131 a 135).
 - **Cuenta de la VM DNS** (`onprem_dns.tf`, solo con `onprem_dns_vm_enabled` de `0-bootstrap`):
   `<prefix>-common-net-dns` con `logging.logWriter`, y `serviceAccountUser` para `tf-net` solo
   sobre ella.
@@ -672,7 +732,7 @@ Lee: `0-bootstrap` (`project_id` para la precondición, `project_number`,
 Entradas obligatorias: `project_id`, `state_bucket`, `prefix`, `primary_region`, `dr_region`,
 `security_alert_email`, `essential_contacts`, `labels`. Con valor por defecto: `name_suffix`,
 `location_short_codes`, `environments`, `applications`, `off_hours_environments`,
-`gke_workload_ksa_name`, `gke_workload_identity_bindings`, `artifact_registry_location`,
+`gke_workload_identity_bindings`, `artifact_registry_location`,
 `artifact_registry_publishers`, `binary_authorization_allowlist_patterns`,
 `binary_authorization_attestors`, `binary_authorization_env_attestors`, `secret_names`,
 `key_rotation_period`, `dr_environments`, `operations_alert_email`, `groups`,
@@ -686,7 +746,7 @@ ya no están aquí: son de `0-bootstrap` (§7.0).
 | `secret_ids` | map(map(string)) | entorno → nombre corto → ID del secreto (ninguna raíz la lee hoy) |
 | `artifact_registry_repositories` | map(map(string)) | entorno → aplicación → URL `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>` |
 | `runtime_service_accounts` | map(map(map(string))) | entorno → aplicación → uso (`gke_nodes`, `workload`, `mig`, `run` y, en `off_hours_environments`, `scheduler`) → correo |
-| `gke_workload_identity_members` | map(map(string)) | entorno → aplicación → `serviceAccount:<proyecto>.svc.id.goog[<app>-<env>/<cuenta>]`, o null sin el enlace |
+| `gke_workload_identity_members` | map(map(map(string))) | entorno → aplicación → clúster (`primary` y, en `dr_environments`, `dr`) → `principalSet://…/kubernetes.cluster/…/clusters/<prefix>-<env>-<app>-gke[-dr]`; mientras `gke_workload_identity_bindings` sea `false`, el valor de cada aplicación es null |
 | `onprem_dns_service_account` | string o null | cuenta de la VM DNS; ninguna raíz la lee (el hub arma el correo por nombre) |
 | `off_hours_role_id` | string | `projects/<id>/roles/<prefix>OffHoursScheduler` (lo crea `0-bootstrap`; ninguna raíz la lee hoy) |
 | `security_alert_email` | string | destino de las alertas de auditoría |
@@ -830,18 +890,19 @@ da sobre cada una (ADR 0029 §4).
   registros A de la región activa. `dr_teardown = true` (exige `dr_active`) quita la protección
   contra borrado solo del clúster de GKE y del servicio de Cloud Run de DR, para que la vuelta
   (`dr_active = false`) los pueda destruir en prod.
-- **Workload Identity:** el enlace de `<app>-<env>/<gke_workload_ksa_name>` con la cuenta
-  `workload` lo crea `1-base` (el pool `<proyecto>.svc.id.goog` es el mismo en los tres
-  entornos,
+- **Workload Identity:** el enlace de la cuenta `workload` con todos los pods de cada clúster
+  `<prefix>-<env>-<app>-gke[-dr]` lo crea `1-base` (el pool `<proyecto>.svc.id.goog` es el
+  mismo en los tres entornos y el principal de un namespace valdría desde cualquier clúster,
   [Workload Identity](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity),
-  y el namespace es fijo, ADR 0029 §9). Esta raíz solo lo lee
-  (`gke_workload_identity_members`) y avisa con un `check` si hay GKE sin enlace.
+  ADR 0029 §9). Esta raíz solo lo lee (`gke_workload_identity_members`) y el
+  `check "workload_identity_enlazada"` avisa si hay GKE sin enlace en algún clúster activo
+  (`local.compute_regions`). El namespace `<app>-<env>` queda solo como convención.
 - **Apagado fuera de horario:** con `off_hours_shutdown.enabled` (dev y qa; se rechaza en prod y
   con `enable_dr`, ADR 0028), trabajos de Cloud Scheduler (módulo `off-hours-shutdown`) con la
-  cuenta `scheduler` de `1-base` (que tiene el rol del apagado sin condición; riesgo aceptado:
-  podría actuar sobre otro entorno), que detienen y encienden Cloud SQL y llevan a 0 y devuelven
-  los pools de GKE; programa de escalado en el MIG; y la ventana de Backup and DR dentro del
-  horario encendido.
+  cuenta `scheduler` de `1-base` (que tiene el rol del apagado condicionado a la instancia y a
+  los clústeres de su entorno), que detienen y encienden Cloud SQL y llevan a 0 y devuelven los
+  pools de GKE; programa de escalado en el MIG; y la ventana de Backup and DR dentro del horario
+  encendido.
 
 Las subredes y los rangos reservados salen del estado del spoke (`subnets`, `reserved_cidrs`); la
 raíz no tiene `subnet_cidrs`.
@@ -862,7 +923,8 @@ defecto, entre otras: `application`, `primary_region`, `dr_region`, `enable_dr`,
 `cloud_run_image`, `sql_tier`, `sql_instance_name`, `sql_database_version`,
 `internal_domain_names`, `off_hours_shutdown` (lista completa en el README de la raíz). Ya no
 existen `application_secrets`, `gke_workload_namespace` ni `gke_workload_ksa_name`: los secretos
-y la cuenta de Kubernetes se configuran en `1-base`.
+se configuran en `1-base` y el enlace de Workload Identity es por clúster, sin cuenta de
+Kubernetes fija (en `1-base` tampoco existe ya `gke_workload_ksa_name`).
 
 | Salida | Tipo | Contenido |
 |---|---|---|
@@ -874,7 +936,7 @@ y la cuenta de Kubernetes se configuran en `1-base`.
 | `internal_lb_ip_addresses` | map(string) | región → IP de cada balanceador interno |
 | `internal_lb_dns_authorization_records_by_region` | map | región → registros DNS de autorización del certificado interno (con `enable_dr`, las dos regiones) |
 | `internal_lb_dns_records` | map | dominio de `internal_domain_names` → registro A (`type`, `rrdatas`) con la IP del balanceador interno de la región activa |
-| `gke_workload_identity_member` | string | miembro de Workload Identity enlazado a la cuenta `workload` (lo repite de `1-base`; null sin GKE o sin enlace) |
+| `gke_workload_identity_member` | map(string) | clúster (`primary` y, en los `dr_environments` de `1-base`, `dr`) → `principalSet` de todos los pods de `<prefix>-<env>-<app>-gke[-dr]` enlazado a la cuenta `workload` (lo repite de `1-base`; null sin `enable_gke` o mientras `1-base` no lo enlace) |
 | `service_accounts` | map(string) | uso (`gke_nodes`, `workload`, `mig`, `run`) → correo de la cuenta de ejecución (de `1-base`) |
 | `scheduler_service_account` | string | correo de la cuenta `-sched` (de `1-base`); null sin apagado |
 
@@ -893,9 +955,11 @@ Una raíz de entorno (`2-networks/envs/<env>`, `3-workloads/envs/<env>`) **no pu
    esenciales, sinks y buckets de logs, el presupuesto y la notificación de SCC; roles
    personalizados y políticas de organización; llaveros y llaves KMS, secretos y repositorios
    de Artifact Registry.
-2. Permisos de proyecto (`google_project_iam_member`) para cualquier principal: cuentas del
-   pipeline, grupos, agentes de servicio, la cuenta de Compute por defecto y también las cuentas
-   de ejecución, que ahora crea `1-base`.
+2. Permisos de proyecto (`google_project_iam_member` y `_member_remove`) para cualquier
+   principal (cuentas del pipeline, grupos, agentes de servicio, la cuenta de Compute por
+   defecto y también las cuentas de ejecución, que ahora crea `1-base`) e IAM de cuentas de
+   servicio (`google_service_account_iam_*`, también el enlace de Workload Identity). El IAM de
+   un recurso propio del entorno sí se permite.
 3. Recursos cuyo nombre no lleve `<prefix>-<env>-` (o `<env>` dentro de los nombres cortos que
    limita GCP), salvo lo que GCP nombra dentro de un padre propio del entorno (reglas de la
    política de firewall, valores de etiqueta, registros DNS, la conexión de PSA).
@@ -904,8 +968,7 @@ Por eso lo único del proyecto vive en `0-bootstrap` y `1-base` (§7.0 y §7.1),
 cada entorno (llaves, contenedores de secretos, repositorios y cuentas de ejecución) también vive
 en `1-base`: el destroy de un entorno no lo toca. Lo hacen cumplir la regla de Conftest
 `env_root_scope` en el plan de cada raíz cuyo `environment` es `dev`, `qa` o `prod` (§9.1;
-punto 146; todavía admite permisos de proyecto para cuentas `<prefix>-<env>-…`, que el punto 2
-no deja y que `tf-wl-<env>` no podría aplicar sin `projectIamAdmin`), la revisión del plan y, en
+punto 146), la revisión del plan y, en
 el destroy, `scripts/destroy-plan-check.py`, que rechaza
 `google_project`, los tipos únicos del proyecto (`PROJECT_SINGLETONS`) y todo recurso sin
 `<prefix>-<env>-` cuyo padre no esté también en el plan (§2.1).
@@ -993,18 +1056,22 @@ Se evalúan sobre el plan en JSON (`terraform show -json`). Doce reglas, una por
 10. Bucket sin `uniform_bucket_level_access = true`: rechazado (`bucket_uniform_access`).
 11. Ubicación fuera de `us-central1`, `us-east4` (y sus zonas), `us` y `global`: rechazada
     (`resource_locations`; las regiones están escritas en la regla, backlog).
-12. En una raíz de entorno (`environment` = `dev`, `qa` o `prod`): tipos únicos del proyecto,
-    llaves, secretos y repositorios, roles de proyecto para principales que la raíz no crea y
-    nombres sin `<prefix>-<env>-` (`env_root_scope`, ADR 0029 §4; con la diferencia anotada ahí).
+12. En una raíz de entorno (`environment` = `dev`, `qa` o `prod`): tipos únicos del proyecto;
+    llaves, secretos y repositorios; todo `google_project_iam_member` y
+    `google_project_iam_member_remove` (sea cual sea el principal) y todo
+    `google_service_account_iam_*`; y nombres sin `<prefix>-<env>-` (`env_root_scope`, ADR 0029
+    §4). El IAM de un recurso (secretos, repositorios, valores de etiqueta, servicios de Cloud
+    Run, buckets) sí se permite.
 
 Sin organización, las reglas 1, 2, 4, 5 y 8 a 11 cubren en cada PR lo que harían las políticas de
 organización (ADR 0029 §1); con organización corren igual y revisan el plan antes de que la API
 lo rechace. Cada regla tiene pruebas en Rego (`conftest verify`) y al menos dos planes de ejemplo
 en `policies/fixtures/` (uno que pasa y uno que viola). Comprobado el 24 nov 2026 desde
-`gcp-datacenter/` con `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh`: "134 tests, 134
-passed, 0 warnings, 0 failures, 0 exceptions, 0 skipped" y "RESULTADO: 42 planes con el resultado
-esperado." (21 con resultado esperado `pasa` y 21 con `rechaza`); 18 de los 42 son recortes de un
-`terraform show -json` real sin GCP (`_real_` en el nombre; por ejemplo, la regla de IP pública
+`gcp-datacenter/` (código de `r3/cierre`) con `PATH="$HOME/go/bin:$PATH" bash
+scripts/policy-check.sh`: "138 tests, 138 passed, 0 warnings, 0 failures, 0 exceptions, 0
+skipped" y "RESULTADO: 43 planes con el resultado esperado." (21 con resultado esperado `pasa` y
+22 con `rechaza`, contados en la tabla que imprime el mismo script); 18 de los 43 son recortes de
+un `terraform show -json` real sin GCP (`_real_` en el nombre; por ejemplo, la regla de IP pública
 sobre un MIG de doble pila y sobre nodos de GKE públicos). Así el criterio "el pipeline bloquea un
 PR que viola una política" se demuestra sin GCP en las pruebas; que bloquee un PR de verdad
 depende de configurar `plan-gate` y las comprobaciones de §9.3 como obligatorias en GitHub. Que

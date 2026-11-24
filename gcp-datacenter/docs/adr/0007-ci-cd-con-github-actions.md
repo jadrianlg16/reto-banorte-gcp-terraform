@@ -15,6 +15,12 @@ su entorno de GitHub (`attribute.deploy`, ADR 0023), no de cualquier rama que de
 `pr.yml` tiene un trabajo de Go sin GCP; dev y qa se pueden dejar fuera con `GCP_DISABLED_ENVS`;
 `apply.yml` no corre por cambios solo de documentación.
 
+Enmendado una tercera vez el 2026-11-24, con el arreglo de la re-revisión de seguridad (rama
+`r2/seg2`, hallazgo N3): `attribute.deploy` exige el `job_workflow_ref` exacto de
+`_terraform-root.yml` en `main` y `event_name` igual a `push` o `workflow_dispatch`, no
+cualquier flujo de `.github/workflows/`; la política de denegación impide a todos crear llaves de
+cuentas de servicio (regla 4, ADR 0029 §5).
+
 Tipo: Conforme.
 
 ## Contexto
@@ -23,7 +29,7 @@ La especificación pide un pipeline que valide, planee y aplique la infraestruct
 aprobaciones, y deja la herramienta a elección del equipo. El repositorio ya vive en GitHub.
 Los trabajos que tocan GCP no usan llaves JSON: con organización lo impide
 `iam.disableServiceAccountKeyCreation`, y en todo caso la política de denegación del proyecto
-niega a las cuentas del pipeline crear llaves (ADR 0023).
+niega a todos crear llaves de cuentas de servicio (ADR 0023 y ADR 0029 §5).
 
 ## Decisión
 
@@ -47,8 +53,12 @@ un proveedor OIDC de GitHub con `attribute_condition` sobre `assertion.repositor
 `assertion.repository_owner_id` (IDs numéricos, ADR 0023). Las cuentas que escriben (ADR 0017)
 aceptan `roles/iam.workloadIdentityUser` solo del `principalSet` `attribute.deploy/<entorno>` de
 su raíz (`common` para `tf-base` y `tf-net`, `<env>` para las de entorno). `attribute.deploy` vale
-el entorno de GitHub solo en un trabajo de `refs/heads/main` cuyo `job_workflow_ref` es un flujo
-de `.github/workflows/` del repositorio; si no, `none`. `tf-read` se toma con el `principalSet`
+el entorno de GitHub solo en un trabajo de `refs/heads/main` cuyo `job_workflow_ref` es
+`<dueño>/<repo>/.github/workflows/_terraform-root.yml@refs/heads/main` y cuyo `event_name` es
+`push` o `workflow_dispatch` (los eventos de `apply.yml` y `destroy.yml`); si no, `none`. Un flujo
+nuevo que llame a `_terraform-root.yml` con otro evento no obtiene una cuenta que escribe; si
+`apply.yml` o `destroy.yml` cambian de eventos, la lista de `stages/0-bootstrap/wif.tf` cambia
+con ellos y la persona vuelve a aplicar la etapa 0. `tf-read` se toma con el `principalSet`
 `attribute.repository_id/<id>`. `CODEOWNERS`
 asigna revisión por etapa a los equipos de red, seguridad y plataforma; `.github/`,
 `stages/0-bootstrap/`, `scripts/`, `.checkov.yaml`, `.tflint.hcl` y `tests/e2e/` son solo de
@@ -72,8 +82,9 @@ seguridad.
   pipeline, las cuentas que escriben; la regla "Deployment branches: main" y los revisores de
   los entornos de GitHub quedan como segunda barrera. `tf-read` lo obtiene cualquier trabajo del
   repositorio. Son riesgos residuales del ADR 0023, descritos en
-  [`docs/pipeline.md`](../pipeline.md) §4 y §5. El valor real de `job_workflow_ref` y el mapeo
-  en trabajos sin entorno son `VERIFICAR-EN-APPLY` (puntos 123 y 124).
+  [`docs/pipeline.md`](../pipeline.md) §4 y §5. El valor real de `job_workflow_ref` y
+  `event_name` y el mapeo en trabajos sin entorno son `VERIFICAR-EN-APPLY` (puntos 123, 124 y
+  156): si GitHub pusiera un SHA en lugar de `@refs/heads/main`, el apply falla al autenticar.
 - La protección de rama no bloquea nada por sí sola: hay que configurarla a mano con
   `plan-gate` y las demás comprobaciones como obligatorias ([`docs/pipeline.md`](../pipeline.md)
   §4), y tanto ella como los revisores obligatorios de entornos dependen del plan de GitHub en
