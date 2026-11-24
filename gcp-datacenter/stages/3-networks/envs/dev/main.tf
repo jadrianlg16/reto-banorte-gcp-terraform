@@ -3,7 +3,8 @@
 # con etiquetas seguras y DNS. Las tres raíces envs/{dev,qa,prod} son idénticas salvo
 # backend.tf y terraform.tfvars.example.
 #
-# Archivos: main.tf (proyecto y red), firewall.tf (política de red) y dns.tf (zonas).
+# Archivos: main.tf (proyecto y red), firewall.tf (política de red), dns.tf (zonas) y
+# audit_alerts.tf (métricas y alertas de auditoría, CIS 2.5 a 2.12).
 #
 # Los spokes se aplican de uno en uno: cada uno crea su peering sobre la VPC hub y GCP no
 # admite dos operaciones de peering a la vez sobre la misma red.

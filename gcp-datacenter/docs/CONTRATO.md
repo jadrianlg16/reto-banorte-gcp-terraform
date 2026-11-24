@@ -70,6 +70,7 @@ su diagrama y deben decirlo.
 | 0024 | Un repositorio de Artifact Registry multirregional por aplicación y una política de Binary Authorization por proyecto de servicio que solo admite ese repositorio | GKE y Cloud Run ya exigían Binary Authorization sin política propia ni registro; la imagen debe sobrevivir a la región primaria | Aclaración |
 | 0025 | Plan, aprobación y apply separados: plan sin entorno, apply en el entorno de GitHub con la misma huella del plan; `common` protegido como `prod`; `plan-gate` y prueba de humo de dev | La aprobación debe ver el plan que se aplica | Aclaración |
 | 0026 | `googleapis.com`, `gcr.io`, `pkg.dev` y `run.app` resuelven al VIP de `google_apis_vip` (`restricted` por defecto en los tres entornos) | Imágenes y Cloud Run salían por IP públicas sin pasar por el VIP | Aclaración |
+| 0027 | Desviaciones aceptadas del CIS v5.0 (1.6, 2.1, 2.3, 2.4, 3.8, 3.9, 3.10 en dev y qa, 4.7, 4.11, 4.12, 6.9), cada una con su riesgo y lo que la cierra; flow logs al 100 % en prod, hub y `onprem-sim` y 0.5 en dev y qa; novena métrica de auditoría para políticas de firewall | El mapa CIS separa lo que falta construir de lo que se decidió no cumplir | Desviación del CIS |
 | 0028 | Apagado fuera de horario opcional de dev y qa (`off_hours_shutdown`, rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler que llaman a la API; MIG con programa de escalado; la cuenta de los trabajos y su rol mínimo los crea la etapa 4 | Mitigación de costo de §8, sin deriva falsa en `drift.yml` y sin dar a la etapa 5 permisos para crear roles | Aclaración |
 
 Los ADR 0001, 0002, 0005 a 0008, 0010, 0012, 0013, 0015 y 0018 se enmendaron el 21 nov 2026
@@ -347,12 +348,13 @@ carpeta y de proyecto de `common` los da la etapa 1); roles
 personalizados de organización `<prefix>TfKmsSecretIamGranter` (IAM de llaves y secretos, para
 la etapa 4) y `<prefix>TfSecretContainerAdmin` (contenedores de secretos sin acceso a valores,
 para la etapa 2); política de denegación de la carpeta `bootstrap` (§6.3); pool y proveedor de
-WIF; permisos de §6.2.
+WIF; permisos de §6.2; métricas y alertas de auditoría del proyecto semilla (módulo
+`audit-alerts`, CIS 2.5 a 2.12) hacia `security_alert_email`.
 
 Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `primary_region`,
 `location_short_codes`, `state_bucket_location`, `state_bucket_dual_regions`,
 `github_repository` (informativa), `github_repository_id`, `github_repository_owner_id`,
-`state_versions_to_keep`, `labels`.
+`state_versions_to_keep`, `security_alert_email`, `labels`.
 
 | Salida | Tipo | Contenido |
 |---|---|---|
@@ -380,7 +382,9 @@ presupuesto con alertas; IAM de las cuentas de etapa sobre los proyectos de `com
 carpetas de entorno (en `security`: a 2-security `cloudkms.admin`, el rol personalizado
 `secret_container_admin` y `serviceusage.serviceUsageAdmin`, sin `projectIamAdmin`; a 4-projects
 el rol personalizado `kms_secret_iam_role_id`; a 5-workloads nada, sus roles los da la etapa 4
-sobre cada proyecto de servicio).
+sobre cada proyecto de servicio); contactos esenciales de la organización por grupo
+(`essential_contacts`, CIS 1.17); métricas y alertas de auditoría en cada proyecto de `common`
+(módulo `audit-alerts`, CIS 2.5 a 2.12) hacia el grupo `security_admins`.
 
 Políticas de organización (las nueve del diagrama 1): `compute.vmExternalIpAccess`,
 `iam.disableServiceAccountKeyCreation`, `gcp.resourceLocations`, `compute.requireShieldedVm`,
@@ -395,8 +399,8 @@ solo en dev y qa.
 Entradas: `org_id`, `billing_account`, `prefix`, `project_suffix`, `primary_region`,
 `dr_region`, `directory_customer_id`, `groups`, `log_retention_days`, `log_retention_locked`,
 `budget_amount`, `labels`, `state_bucket` (más `additional_allowed_locations`,
-`location_short_codes`, `budget_alert_thresholds` y `scc_notification_filter`, con valor por
-defecto).
+`location_short_codes`, `budget_alert_thresholds`, `scc_notification_filter`,
+`essential_contacts` y `essential_contacts_language`, con valor por defecto).
 
 | Salida | Tipo | Contenido |
 |---|---|---|
@@ -404,6 +408,7 @@ defecto).
 | `common_project_ids` | map(string) | llaves `net_hub`, `logging`, `security`, `backup` |
 | `common_project_numbers` | map(string) | mismas llaves |
 | `log_bucket` | string | bucket de logs de auditoría |
+| `security_alert_email` | string | correo del grupo `security_admins`: destino de las alertas de auditoría de las etapas 3 y 4 |
 
 Salidas adicionales (no son interfaz de otra etapa): `log_sink_writer_identity`,
 `org_policy_names`, `logging_kms_key_ids`, `scc_findings_topic`, `budget_name`.
@@ -455,8 +460,10 @@ dejaría sin efecto la etiqueta `iap_ssh`);
 DNS: zona de reenvío hacia on-premises y política de servidor entrante; con
 `simulate_onprem = true`, la VPC `onprem-sim` con su gateway y router (y un router más en
 `dr_region` para la VPN de DR), la delegación `delegate-dns-onprem-sim` de 35.199.192.0/19 hacia
-esa VPC y su propia política de red (`module.firewall_onprem_sim`: DNS desde el reenvío de Cloud
-DNS y SSH por IAP) (ADR 0006); Interconnect solo si `enable_interconnect = true`.
+esa VPC, su propia política de red (`module.firewall_onprem_sim`: DNS desde el reenvío de Cloud
+DNS y SSH por IAP) y una política DNS solo con registro de consultas (CIS 2.13) (ADR 0006);
+Interconnect solo si `enable_interconnect = true`. Las subredes del hub y de `onprem-sim` usan
+el muestreo de flow logs por defecto de `network-hub` (1.0, ADR 0027).
 
 Entradas: `org_id`, `prefix`, `primary_region`, `dr_region`, `hub_supernet` (/16 del hub que
 se anuncia por BGP; contiene `hub_cidrs`), `hub_cidrs`, `spoke_supernets`
@@ -489,7 +496,9 @@ Salidas adicionales: `spoke_supernets`, `firewall_policy_rules`, `hub_routers`,
 ### 7.4 `3-networks/envs/<env>` (spoke)
 
 Crea: proyecto `net-spoke` como host de Shared VPC; VPC; subredes de §5 con Private Google
-Access y flow logs al 50 %; subredes proxy-only; rango y conexión de Private Service Access;
+Access y flow logs (`flow_log_sampling`: 1.0 por defecto y en prod, 0.5 en los ejemplos de dev
+y qa, ADR 0027); métricas y alertas de auditoría del proyecto (módulo `audit-alerts`) hacia
+`security_alert_email` de 1-org; subredes proxy-only; rango y conexión de Private Service Access;
 peering con el hub en ambos sentidos (el hub exporta rutas personalizadas, el spoke las
 importa); Cloud NAT por región (ADR 0004); zona privada `<env>.empresa.internal.`; zona de
 peering DNS hacia el hub para el dominio on-premises; zonas privadas de `googleapis.com`,
@@ -503,7 +512,7 @@ balanceador 35.191.0.0/16 y 130.211.0.0/22, e IAP 35.235.240.0/20) y, con
 Entradas: `billing_account`, `prefix`, `project_suffix`, `environment`,
 `primary_region`, `dr_region`, `enable_dr`, `spoke_supernet` (/16 del entorno; contiene
 `subnet_cidrs` y coincide con `spoke_supernets[environment]` del hub), `subnet_cidrs`,
-`onprem_cidrs`, `onprem_dns_domain`, `flow_log_sampling` (por defecto 0.5), `lb_backend_ports`,
+`onprem_cidrs`, `onprem_dns_domain`, `flow_log_sampling` (por defecto 1), `lb_backend_ports`,
 `enable_filestore_nfs_lock_callbacks`, `filestore_nfs_lock_ports`, `google_apis_vip`, `labels`,
 `state_bucket` (más `dns_domain_base`, `project_deletion_policy` y `region_short_names`, con
 valor por defecto).
@@ -547,7 +556,8 @@ prod, una regla de entrada del perímetro por aplicación con publicadores, limi
 cuenta de la etapa 5 sobre cada proyecto de servicio (`workloads_project_roles` y
 `projectIamAdmin` condicionado a `roles/cloudsql.client` y `roles/cloudsql.instanceUser`),
 `serviceAccountAdmin` solo sobre la cuenta `workload` (enlace de Workload Identity) y
-`compute.networkViewer` en el host (ADR 0023). Con `enable_off_hours_shutdown` (dev y qa; se
+`compute.networkViewer` en el host (ADR 0023); métricas y alertas de auditoría en cada proyecto
+de servicio (módulo `audit-alerts`) hacia `security_alert_email` de 1-org. Con `enable_off_hours_shutdown` (dev y qa; se
 rechaza en prod, ADR 0028): API de Cloud Scheduler, cuenta `<prefix>-<env>-<app>-sched` por
 aplicación con el rol personalizado `<prefix>OffHoursScheduler` (`cloudsql.instances.get`,
 `cloudsql.instances.update`, `container.clusters.update`) en su proyecto, y para la cuenta de la
@@ -632,10 +642,10 @@ que se pueda apagar en prod.
 |---|---|---|---|---|
 | `org` | Políticas de organización, sink agregado | Las nueve políticas de §7.1 | `org_id`, `allowed_regions`, `directory_customer_id`, `log_sink_destination` | `policy_names`, `sink_writer_identity` |
 | `folders` | Carpetas | Una por entorno | `parent`, `names` | `ids` (map) |
-| `project-factory` | Proyecto, APIs, facturación, alta como host o servicio de Shared VPC | Sin red default; etiquetas | `name`, `folder_id`, `billing_account`, `apis`, `shared_vpc_host`, `shared_vpc_host_project` | `project_id`, `project_number` |
+| `project-factory` | Proyecto, APIs, facturación, alta como host o servicio de Shared VPC | Sin red default; etiquetas; APIs `cloudasset`, `logging` y `monitoring` siempre (CIS 2.14); OS Login en los metadatos del proyecto si hay Compute Engine (CIS 4.4) | `name`, `folder_id`, `billing_account`, `apis`, `shared_vpc_host`, `shared_vpc_host_project` | `project_id`, `project_number` |
 | `iam` | Asignaciones aditivas de roles a grupos y cuentas de servicio | Rechaza miembros `user:` por validación | `bindings` (lista de `{ scope, resource, role, member }`) | `members`, `conditions` |
-| `network-hub` | VPC hub, subredes, routers | Subredes privadas, PGA, flow logs 0.5 | `project_id`, `subnets`, `router_asn`, `extra_router_regions` (routers sin subred, p. ej. el de DR de `onprem-sim`) | `network_self_link`, `network_name`, `routers` (map región → nombre) |
-| `network-spoke` | VPC spoke, subredes y rangos secundarios, proxy-only, PSA, peering, NAT | PGA; flow logs 0.5; NAT por región; sin IP públicas | `project_id`, `subnet_cidrs`, `regions`, `hub_network_self_link`, `enable_dr` | las de §7.4, `peerings` |
+| `network-hub` | VPC hub, subredes, routers | Subredes privadas, PGA, flow logs (1.0 por defecto, ADR 0027) | `project_id`, `subnets`, `router_asn`, `extra_router_regions` (routers sin subred, p. ej. el de DR de `onprem-sim`) | `network_self_link`, `network_name`, `routers` (map región → nombre) |
+| `network-spoke` | VPC spoke, subredes y rangos secundarios, proxy-only, PSA, peering, NAT | PGA; flow logs (1.0 por defecto, ADR 0027); NAT por región; sin IP públicas | `project_id`, `subnet_cidrs`, `regions`, `hub_network_self_link`, `enable_dr` | las de §7.4, `peerings` |
 | `firewall` | Política jerárquica o política de red con reglas y etiquetas seguras | Denegar todo por defecto; reglas por etiqueta segura | `parent` (organización o red), `rules`, `secure_tags`, `name_suffix` (más de una política por red) | `policy_id`, `secure_tag_ids`, `rules` |
 | `cloud-armor` | Política de seguridad | Reglas OWASP preconfiguradas (SQLi, XSS como mínimo) y límite de tasa | `project_id`, `owasp_rules`, `rate_limit` | `policy_self_link` |
 | `load-balancer` | Balanceador HTTPS global externo, o interno regional (`type`) | HTTPS con certificado administrado; redirección de HTTP; política de Cloud Armor obligatoria en el externo | `project_id`, `type`, `backends`, `domain_names`, `security_policy`, `network`, `subnet` | `ip_address`, `backend_service_ids`, `backend_groups` |
@@ -652,6 +662,7 @@ que se pueda apagar en prod.
 | `secrets` | Contenedores de secretos e IAM | Nunca recibe valores; CMEK | `project_id`, `names`, `kms_keys`, `accessors` | `secret_ids` (map) |
 | `vpc-sc` | Política de acceso (opcional), perímetro (ignora sus proyectos y reglas de entrada, que entran por recursos aparte), regla de entrada del pipeline como recurso aparte, reglas de salida | Perímetro para proyectos de prod con datos | `org_id`, `access_policy_id`, `perimeter_name`, `resources`, `restricted_services`, `ingress_identities`, `enforced` | `perimeter_name`, `access_policy_id`, `status_ingress_policies`, `spec_ingress_policies` |
 | `observability` | Canales de notificación, verificaciones de disponibilidad, alertas, tableros, SLO | Alertas y tableros base; SLO 99.9 % | `project_id`, `notification_emails`, `uptime_checks`, `slo_target` | `notification_channel_ids`, `dashboard_ids` |
+| `audit-alerts` | Métricas de log de auditoría, sus alertas y un canal de correo | Los ocho filtros del CIS 2.5 a 2.12 tal como los revisa Security Health Analytics, más cambios de políticas de firewall de red (ADR 0027) | `project_id`, `notification_email`, `alignment_period` | `metric_names`, `metric_filters`, `alert_policy_ids`, `notification_channel_id` |
 | `log-export` | Bucket de logs y sink | Retención bloqueada (por variable) | `project_id`, `parent` (organización, carpeta o proyecto), `filter`, `retention_days`, `retention_locked`, `kms_key` | `bucket_name`, `writer_identity` |
 | `backup-dr` | Bóveda y plan de Backup and DR; plan de Backup for GKE | Política diaria; retención de 30 días; región secundaria | `project_id`, `region`, `dr_region`, `retention_days`, `gke_cluster_id` (opcional), `sql_log_retention_days` (7 por defecto) | `vault_id`, `plan_ids` |
 | `off-hours-shutdown` | Trabajos de Cloud Scheduler que detienen y encienden Cloud SQL (`instances.patch`) y llevan a 0 y devuelven pools de GKE (`setAutoscaling`, `setSize`) | Solo dev y qa (validación); crons `M H * * D` con los mismos días; token OAuth de una cuenta administrada por el usuario (ADR 0028) | `project_id`, `environment`, `region`, `time_zone`, `start_schedule`, `stop_schedule`, `service_account_email`, `sql_instances`, `gke_node_pools` | `job_names`, `job_ids`, `window` |
@@ -750,10 +761,11 @@ versiones publicadas (ADR 0013).
 ## 10. Documentación entregable
 
 - `gcp-datacenter/README.md`: requisitos previos, orden de despliegue y comandos por etapa.
-- `docs/adr/`: los 26 de §2.
+- `docs/adr/`: los 27 de §2.
+- `docs/cumplimiento-cis.md`: mapa del CIS GCP Foundation Benchmark v5.0 contra el código.
 - `docs/pipeline.md`: flujos, variables, entornos y configuración manual de GitHub.
-- `docs/runbooks/`: arranque de la etapa 0; alta de un nuevo proyecto de aplicación; rotación
-  de llaves; conmutación a DR; respuesta a drift.
+- `docs/runbooks/`: arranque de la etapa 0 (con los controles manuales del CIS); alta de un
+  nuevo proyecto de aplicación; rotación de llaves; conmutación a DR; respuesta a drift.
 - `docs/diagramas/`: los cuatro diagramas, corregidos donde este contrato cambió el diseño
   (Cloud Storage se alcanza por Private Google Access, no por Private Service Access).
 - `docs/pendientes-apply.md` (§12).
@@ -811,5 +823,5 @@ código y qué hacer si falla.
     obligatorios de los entornos `common` y `prod` en un repositorio privado, según el plan de
     GitHub del equipo.
 
-La lista completa y vigente (51 puntos al 21 nov 2026, más los marcadores del código y el alcance
+La lista completa y vigente (79 puntos al 23 nov 2026: 1 a 62, 70 a 81 y 85 a 89; más los marcadores del código y el alcance
 no cubierto) está en [`pendientes-apply.md`](pendientes-apply.md).

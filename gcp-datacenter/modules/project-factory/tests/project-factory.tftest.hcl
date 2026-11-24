@@ -40,8 +40,14 @@ run "proyecto_con_nombre_y_exigencias" {
     error_message = "Por defecto el proyecto se protege contra borrado."
   }
   assert {
-    condition     = toset(keys(google_project_service.this)) == toset(["container.googleapis.com"])
-    error_message = "Cada API debe habilitarse con su nombre como llave."
+    condition = toset(keys(google_project_service.this)) == toset([
+      "container.googleapis.com", "cloudasset.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
+    ])
+    error_message = "Cada API debe habilitarse con su nombre como llave, más las de base (Cloud Asset, CIS 2.14; Logging y Monitoring, CIS 2.5 a 2.12)."
+  }
+  assert {
+    condition     = length(google_compute_project_metadata_item.os_login) == 0
+    error_message = "Sin la API de Compute no hay metadato de OS Login."
   }
   assert {
     condition     = alltrue([for s in google_project_service.this : s.disable_on_destroy == false])
@@ -88,6 +94,27 @@ run "host_de_shared_vpc" {
   assert {
     condition     = contains(keys(google_project_service.this), "compute.googleapis.com")
     error_message = "Shared VPC necesita la API de Compute."
+  }
+  assert {
+    condition     = google_compute_project_metadata_item.os_login["enable-oslogin"].key == "enable-oslogin" && google_compute_project_metadata_item.os_login["enable-oslogin"].value == "TRUE"
+    error_message = "Con Compute, el proyecto debe tener OS Login (enable-oslogin = TRUE, CIS 4.4)."
+  }
+}
+
+run "os_login_con_compute_por_lista" {
+  command = plan
+
+  variables {
+    apis = ["compute.googleapis.com"]
+  }
+
+  assert {
+    condition     = google_compute_project_metadata_item.os_login["enable-oslogin"].project == "bnt-dev-app" && google_compute_project_metadata_item.os_login["enable-oslogin"].value == "TRUE"
+    error_message = "Con la API de Compute en apis, el proyecto debe tener OS Login."
+  }
+  assert {
+    condition     = contains(keys(google_project_service.this), "cloudasset.googleapis.com")
+    error_message = "Todo proyecto habilita Cloud Asset (CIS 2.14)."
   }
 }
 

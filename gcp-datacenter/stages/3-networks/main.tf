@@ -3,7 +3,8 @@
 # envs/<env> y se unen al hub por peering (ADR 0003).
 #
 # Archivos: main.tf (red), vpn.tf (HA VPN, on-premises simulado e Interconnect),
-# firewall.tf (política jerárquica) y dns.tf (reenvío y política de servidor).
+# firewall.tf (política jerárquica) y dns.tf (reenvío, política de servidor y registro DNS de
+# onprem-sim).
 
 locals {
   # El hub vive en el entorno common (contrato §4.2).

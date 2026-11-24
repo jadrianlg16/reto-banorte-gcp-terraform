@@ -145,6 +145,10 @@ def build_managed(states):
                     raw.add("projects/%s/serviceAccounts/%s" % (project, ident))
         elif rtype == "google_project_service" and project and attrs.get("service"):
             raw.add("projects/%s/services/%s" % (project, attrs["service"]))
+        elif rtype == "google_logging_metric" and project and attrs.get("name"):
+            # El id de la métrica de log es solo su nombre (HIPÓTESIS: esquema de google 6.x);
+            # Cloud Asset la nombra projects/<proyecto>/metrics/<nombre> (modules/audit-alerts).
+            raw.add("projects/%s/metrics/%s" % (project, attrs["name"]))
         elif rtype in ("google_compute_region_instance_group_manager", "google_compute_instance_group_manager"):
             base = attrs.get("base_instance_name")
             if base and project:

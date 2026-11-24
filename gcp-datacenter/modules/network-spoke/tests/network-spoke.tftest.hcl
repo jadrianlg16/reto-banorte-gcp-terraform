@@ -52,8 +52,8 @@ run "spoke_sin_dr" {
   }
 
   assert {
-    condition     = alltrue([for s in google_compute_subnetwork.this : s.private_ip_google_access == true && s.log_config[0].flow_sampling == 0.5])
-    error_message = "Toda subred normal debe tener Private Google Access y flow logs al 0.5."
+    condition     = alltrue([for s in google_compute_subnetwork.this : s.private_ip_google_access == true && s.log_config[0].flow_sampling == 1 && s.log_config[0].aggregation_interval == "INTERVAL_5_SEC" && s.log_config[0].metadata == "INCLUDE_ALL_METADATA"])
+    error_message = "Toda subred normal debe tener Private Google Access y, por defecto, flow logs al 100 %, cada 5 s y con todos los metadatos (CIS 3.10, ADR 0027)."
   }
 
   assert {

@@ -12,6 +12,8 @@
   {"name": "//iam.googleapis.com/projects/example-dev-app/serviceAccounts/100000000000000000009", "assetType": "iam.googleapis.com/ServiceAccount", "displayName": "Compute Engine default service account"},
   {"name": "//serviceusage.googleapis.com/projects/111111111111/services/run.googleapis.com", "assetType": "serviceusage.googleapis.com/Service", "displayName": "run.googleapis.com"},
   {"name": "//logging.googleapis.com/projects/example-dev-app/locations/global/buckets/_Default", "assetType": "logging.googleapis.com/LogBucket", "displayName": "_Default"},
+  {"name": "//logging.googleapis.com/projects/111111111111/metrics/bnt-dev-ops-audit-owner", "assetType": "logging.googleapis.com/LogMetric", "displayName": "bnt-dev-ops-audit-owner"},
+  {"name": "//monitoring.googleapis.com/projects/111111111111/alertPolicies/1234567890", "assetType": "monitoring.googleapis.com/AlertPolicy", "displayName": "bnt-dev-ops-audit-owner"},
   {"name": "//container.googleapis.com/projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke", "assetType": "container.googleapis.com/Cluster", "displayName": "bnt-dev-app-gke"},
   {"name": "//container.googleapis.com/projects/example-dev-app/locations/us-central1/clusters/bnt-dev-app-gke/nodePools/general", "assetType": "container.googleapis.com/NodePool", "displayName": "general"},
   {"name": "//compute.googleapis.com/projects/example-dev-app/zones/us-central1-b/instances/gke-bnt-dev-app-gke-general-1a2b3c4d-x7k9", "assetType": "compute.googleapis.com/Instance", "displayName": "gke-bnt-dev-app-gke-general-1a2b3c4d-x7k9"},

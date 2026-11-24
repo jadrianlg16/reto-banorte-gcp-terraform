@@ -11,11 +11,17 @@ por variables (`environment`, `spoke_supernet`, `subnet_cidrs`, `enable_dr`).
   (`folder_ids[env]` de `1-org`), habilitado como host de Shared VPC (módulo
   `project-factory`), con las APIs de Compute, DNS, Service Networking, GKE (un clúster de un
   proyecto de servicio sobre Shared VPC exige la API también en el host) y Network Management
-  (las Connectivity Tests de la prueba de humo de dev se crean en este proyecto).
+  (las Connectivity Tests de la prueba de humo de dev se crean en este proyecto), más las de
+  base de `project-factory` (Cloud Asset, Logging y Monitoring) y el metadato de proyecto
+  `enable-oslogin = TRUE` (CIS 2.14 y 4.4).
+- Métricas de log y alertas de auditoría del proyecto (módulo `audit-alerts`, CIS 2.5 a 2.12)
+  hacia el grupo `security_admins` (salida `security_alert_email` de `1-org`). La cuenta de la
+  etapa no necesita un rol nuevo: es dueña del proyecto que crea (pendiente 30).
 - VPC `<prefix>-<env>-net-spoke` (módulo `network-spoke`): subredes `app` (rangos secundarios
   `pods` y `services`), `run` y `proxy` (proxy-only) en la región primaria, y sus `*_dr` en la
-  región de DR solo con `enable_dr = true`; Private Google Access y flow logs al 50 %
-  (`flow_log_sampling`); rango y conexión de Private Service Access; peering con el hub en
+  región de DR solo con `enable_dr = true`; Private Google Access y flow logs
+  (`flow_log_sampling`: 1 por defecto y en prod, 0.5 en los ejemplos de dev y qa por costo;
+  CIS 3.10, ADR 0027); rango y conexión de Private Service Access; peering con el hub en
   los dos sentidos (el hub exporta rutas personalizadas, el spoke las importa); rutas al VIP
   restringido y de salida por NAT; un Cloud Router con Cloud NAT por región activa (ADR 0004).
   `gke_master` y `gke_master_dr` quedan reservados, sin subred.
@@ -98,14 +104,14 @@ Para los spokes:
 | Bucket de estado | §6.2: escritura en `3-networks/<env>`, lectura de `1-org` y `3-networks/hub` | 0-bootstrap | Estado |
 | Carpetas `dev`, `qa`, `prod` | `roles/resourcemanager.projectCreator` | 1-org | Crear el proyecto net-spoke |
 | Carpetas `dev`, `qa`, `prod` | `roles/compute.xpnAdmin` | 1-org | Habilitar el host de Shared VPC |
-| Proyecto `net-spoke` | `roles/owner` (implícito) | GCP, al crear el proyecto | APIs, VPC, subredes, rutas, routers, NAT, PSA, política de firewall de red, etiquetas seguras y DNS dentro del proyecto: no hace falta ningún rol más en las carpetas |
+| Proyecto `net-spoke` | `roles/owner` (implícito) | GCP, al crear el proyecto | APIs, VPC, subredes, rutas, routers, NAT, PSA, política de firewall de red, etiquetas seguras, DNS, metadato de OS Login y métricas y alertas de auditoría dentro del proyecto: no hace falta ningún rol más en las carpetas |
 | Proyecto `net-hub` | `roles/compute.networkAdmin` | 1-org | Peering hub → spoke sobre la VPC hub |
 | Proyecto `net-hub` | `roles/dns.admin` | 1-org | Adjuntar la zona privada del entorno a la VPC hub y zona de peering hacia ella (`dns.networks.bindPrivateDNSZone`, `dns.networks.targetWithPeeringZone`) |
 
 `VERIFICAR-EN-APPLY`: que la cuenta que crea `net-spoke` quede como dueña del proyecto (lo hace
 GCP al crear un proyecto) y que la política de organización no lo impida.
 
-Lectura de estado: `1-org` (`folder_ids`) y `3-networks/hub` (`hub_network_self_link` y la
+Lectura de estado: `1-org` (`folder_ids` y `security_alert_email`) y `3-networks/hub` (`hub_network_self_link` y la
 salida adicional `spoke_supernets`). §6.1 permite además `0-bootstrap`, que el spoke no
 necesita.
 
@@ -128,6 +134,7 @@ necesita.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| <a name="module_audit_alerts"></a> [audit\_alerts](#module\_audit\_alerts) | ../../../../modules/audit-alerts | n/a |
 | <a name="module_dns"></a> [dns](#module\_dns) | ../../../../modules/dns | n/a |
 | <a name="module_firewall"></a> [firewall](#module\_firewall) | ../../../../modules/firewall | n/a |
 | <a name="module_project"></a> [project](#module\_project) | ../../../../modules/project-factory | n/a |
@@ -159,7 +166,7 @@ necesita.
 | <a name="input_enable_dr"></a> [enable\_dr](#input\_enable\_dr) | Crea las subredes, el router y el NAT de la región de DR. En dev y qa las llaves *\_dr se reservan pero no se crean (false). | `bool` | `false` | no |
 | <a name="input_enable_filestore_nfs_lock_callbacks"></a> [enable\_filestore\_nfs\_lock\_callbacks](#input\_enable\_filestore\_nfs\_lock\_callbacks) | Permite la entrada desde el rango de Private Service Access (donde viven las instancias de Filestore) hacia las cargas en los puertos de filestore\_nfs\_lock\_ports. Filestore llama de vuelta a los clientes para el bloqueo de archivos NFS (statd y nlockmgr); sin esta regla la denegación por defecto del spoke corta esas llamadas. | `bool` | `true` | no |
 | <a name="input_filestore_nfs_lock_ports"></a> [filestore\_nfs\_lock\_ports](#input\_filestore\_nfs\_lock\_ports) | Puertos de los clientes NFS a los que llama Filestore para el bloqueo de archivos: tcp = 111 (portmapper), el de statd (STATDOPTS) y el TCP de nlockmgr (nlm\_tcpport); udp = el UDP de nlockmgr (nlm\_udpport, niveles Zonal, Regional y Enterprise). Por defecto 2046 y 4045, los que usa la guía de Google para fijar esos puertos; deben coincidir con lo que se fije en las VM y nodos clientes. | <pre>object({<br/>    tcp = list(string)<br/>    udp = list(string)<br/>  })</pre> | <pre>{<br/>  "tcp": [<br/>    "111",<br/>    "2046",<br/>    "4045"<br/>  ],<br/>  "udp": [<br/>    "4045"<br/>  ]<br/>}</pre> | no |
-| <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs de las subredes. La especificación pide 0.5; solo se permite subirla. | `number` | `0.5` | no |
+| <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs de las subredes. La especificación pide 0.5; solo se permite subirla. Por defecto 1 (100 %, CIS 3.10); los ejemplos de dev y qa usan 0.5 por costo (ADR 0027). | `number` | `1` | no |
 | <a name="input_google_apis_vip"></a> [google\_apis\_vip](#input\_google\_apis\_vip) | VIP de Private Google Access al que resuelven las zonas privadas googleapis.com., gcr.io., pkg.dev. y run.app.: restricted (199.36.153.4/30, solo servicios compatibles con VPC Service Controls) o private (199.36.153.8/30, todos). Por defecto restricted en los tres entornos: prod tiene perímetro y dev/qa usan el mismo VIP para que una dependencia de una API sin soporte de VPC-SC falle antes de llegar a prod. | `string` | `"restricted"` | no |
 | <a name="input_lb_backend_ports"></a> [lb\_backend\_ports](#input\_lb\_backend\_ports) | Puertos TCP en los que los backends con la etiqueta lb\_backend reciben tráfico y verificaciones de salud de los balanceadores. | `list(string)` | <pre>[<br/>  "80",<br/>  "443",<br/>  "8080"<br/>]</pre> | no |
 | <a name="input_project_deletion_policy"></a> [project\_deletion\_policy](#input\_project\_deletion\_policy) | deletion\_policy del proyecto net-spoke: PREVENT (por defecto), ABANDON o DELETE. El módulo project-factory solo admite PREVENT en prod; DELETE sirve para desmontar dev en la prueba de extremo a extremo. | `string` | `"PREVENT"` | no |

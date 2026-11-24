@@ -56,7 +56,7 @@ flowchart TB
   subgraph GOV["Gobierno (etapa 1)"]
     pol["Nueve políticas de organización<br/>compute.vmExternalIpAccess · compute.requireShieldedVm<br/>compute.skipDefaultNetworkCreation · sql.restrictPublicIp<br/>iam.disableServiceAccountKeyCreation · iam.allowedPolicyMemberDomains<br/>storage.publicAccessPrevention · storage.uniformBucketLevelAccess<br/>gcp.resourceLocations: primary_region, dr_region y us"]
     grp["IAM solo por grupos y de solo lectura<br/>org_admins · billing_admins · security_admins<br/>network_admins · platform_devops · auditors<br/>developers solo en dev y qa · ningún rol a user:"]
-    obs["Sink agregado de la organización → bucket de logs<br/>notificación de SCC (activación manual)<br/>presupuesto con alertas"]
+    obs["Sink agregado de la organización → bucket de logs<br/>notificación de SCC (activación manual)<br/>presupuesto con alertas · contactos esenciales<br/>métricas y alertas de auditoría CIS en cada proyecto"]
   end
   GOV -. "se aplica a" .-> org
 

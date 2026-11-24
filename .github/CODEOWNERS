@@ -31,6 +31,7 @@
 /gcp-datacenter/modules/kms/                        @PENDIENTE-seguridad
 /gcp-datacenter/modules/secrets/                    @PENDIENTE-seguridad
 /gcp-datacenter/modules/vpc-sc/                     @PENDIENTE-seguridad
+/gcp-datacenter/modules/audit-alerts/               @PENDIENTE-seguridad
 
 # Seguridad: lo que decide quién puede aplicar y qué se revisa. Los flujos usan las cuentas de
 # servicio que pueden aplicar; 0-bootstrap crea esas cuentas, el WIF y el bucket de estado; los

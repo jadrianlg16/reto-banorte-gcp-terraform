@@ -108,7 +108,8 @@ override_data {
         security = "000000000013"
         backup   = "000000000014"
       }
-      log_bucket = "bnt-common-ops-audit-logs"
+      log_bucket           = "bnt-common-ops-audit-logs"
+      security_alert_email = "gcp-security-admins@example.com"
     }
   }
 }
@@ -201,6 +202,24 @@ run "dev_con_valores_de_ejemplo" {
       contains(module.project["app"].enabled_apis, api)
     ])
     error_message = "Deben habilitarse las APIs base y las de applications[app].apis."
+  }
+  assert {
+    condition     = contains(module.project["app"].enabled_apis, "cloudasset.googleapis.com")
+    error_message = "Cloud Asset debe quedar habilitada en cada proyecto de servicio (CIS 2.14)."
+  }
+
+  # Métricas de log y alertas de auditoría (CIS 2.5 a 2.12) en el proyecto de servicio.
+  assert {
+    condition = (
+      length(module.audit_alerts["app"].metric_names) == 9 &&
+      module.audit_alerts["app"].metric_names["owner"] == "bnt-dev-ops-audit-owner" &&
+      module.audit_alerts["app"].notification_email == "gcp-security-admins@example.com"
+    )
+    error_message = "Cada proyecto de servicio debe tener las nueve métricas de auditoría con aviso al grupo security_admins del estado de 1-org."
+  }
+  assert {
+    condition     = toset(keys(module.audit_alerts)) == toset(keys(output.service_project_ids))
+    error_message = "Debe haber un juego de métricas de auditoría por aplicación."
   }
   assert {
     condition = toset([for k, sa in google_service_account.runtime : sa.account_id]) == toset([

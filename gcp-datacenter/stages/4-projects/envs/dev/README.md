@@ -39,6 +39,14 @@ Por cada aplicación de `applications` (por defecto una, `app`):
   solo después de `/`). Con `binary_authorization_attestors` la regla
   pasa a `REQUIRE_ATTESTATION`. La usan GKE (`PROJECT_SINGLETON_POLICY_ENFORCE`) y Cloud Run
   (`use_default`).
+- **Métricas de log y alertas de auditoría** (módulo `audit-alerts`, CIS 2.5 a 2.12) en cada
+  proyecto de servicio: las ocho métricas del CIS más los cambios de políticas de firewall de
+  red, cada una con su política de alerta, y un canal de correo hacia `security_alert_email` de
+  1-org (grupo `security_admins`). Las crea esta etapa como creadora del proyecto; ni esta cuenta
+  ni la de 5-workloads reciben un rol nuevo por esto.
+- **OS Login** (CIS 4.4): `project-factory` pone `enable-oslogin = TRUE` en los metadatos del
+  proyecto (la API `compute` está en las base); los nodos de GKE lo heredan y las VM del MIG
+  ya lo fijan en su plantilla (`compute-mig`).
 - **Permisos** (todos aditivos, por el módulo `iam` salvo los de etiquetas seguras, que el
   módulo no cubre y van como `google_tags_tag_value_iam_member` en la raíz).
 - **En prod**: alta en el perímetro de VPC-SC de 2-security (`perimeter_name`) de cada proyecto
@@ -59,7 +67,8 @@ Por cada aplicación de `applications` (por defecto una, `app`):
 `artifactregistry`, `backupdr`, `binaryauthorization`, `certificatemanager`,
 `cloudresourcemanager`, `cloudtrace`, `compute`, `container`, `file`, `gkebackup`, `iam`,
 `iamcredentials`, `iap`, `logging`, `monitoring`, `oslogin`, `redis`, `run`, `secretmanager`,
-`sqladmin`, `storage` (todas `*.googleapis.com`).
+`sqladmin`, `storage` (todas `*.googleapis.com`). `project-factory` agrega siempre
+`cloudasset` (CIS 2.14), `logging` y `monitoring`.
 
 ### Cuentas de ejecución y sus roles (en el proyecto de servicio)
 
@@ -153,7 +162,7 @@ no existe).
 
 | Prefijo | Salidas |
 |---|---|
-| `1-org` | `folder_ids` (map(string)) |
+| `1-org` | `folder_ids` (map(string)), `security_alert_email` (string) |
 | `2-security` | `kms_key_ids` (map(map(map(string))); también `[<artifact_registry_location>]["artifacts"]`), `secret_ids` (map(map(string))), `perimeter_name` (string), `vpc_sc_enforced` (bool) |
 | `3-networks/<env>` | `host_project_id` (string), `subnets` (map(object)), `secure_tags` (map(string)) |
 
@@ -229,6 +238,9 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
   personalizados y basten para las llamadas de los trabajos (`iam.tf`, punto 73 de
   `docs/pendientes-apply.md`); y que apagar y volver a encender la variable recree el rol
   (punto 74).
+- Métricas, alertas y canal de `audit-alerts` creados por la cuenta de la etapa como creadora del
+  proyecto, y reconocidos por los detectores de Security Health Analytics (pendiente 58); OS
+  Login del proyecto heredado por los nodos de GKE (pendiente 59).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -251,6 +263,7 @@ llaves de etiqueta cuyo padre es el proyecto `net-spoke`.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| <a name="module_audit_alerts"></a> [audit\_alerts](#module\_audit\_alerts) | ../../../../modules/audit-alerts | n/a |
 | <a name="module_iam"></a> [iam](#module\_iam) | ../../../../modules/iam | n/a |
 | <a name="module_project"></a> [project](#module\_project) | ../../../../modules/project-factory | n/a |
 

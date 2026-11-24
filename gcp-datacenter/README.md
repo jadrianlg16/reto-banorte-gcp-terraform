@@ -46,6 +46,12 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
   CMEK en todo; las llaves de las cargas viven en el proyecto `security` y rotan cada 90 días.
 - Perímetro de VPC-SC de prod creado en la etapa 2 y ampliado en la 4, en dry-run por defecto
   ([0009](docs/adr/0009-perimetro-vpc-sc-en-dos-etapas-y-dry-run.md)).
+- Controles del CIS GCP Foundation Benchmark v5.0 mapeados en
+  [`docs/cumplimiento-cis.md`](docs/cumplimiento-cis.md): contactos esenciales, métricas y
+  alertas de auditoría en cada proyecto (módulo `audit-alerts`), Cloud Asset y OS Login en todo
+  proyecto, flow logs al 100 % en prod y en el hub; los pasos de Cloud Identity en el runbook 01
+  y las desviaciones aceptadas en el ADR
+  [0027](docs/adr/0027-desviaciones-aceptadas-del-cis.md).
 - DR de prod en `us-east4`: réplica de Cloud SQL, bucket de doble región con turbo replication,
   Backup and DR y Backup for GKE; conmutación con `dr_active`, sin depender de la región primaria
   para el estado, la VPN ni el balanceador interno
@@ -60,9 +66,9 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 
 | Ruta | Contenido |
 |---|---|
-| `modules/` | 25 módulos propios, cada uno con `README.md`, `examples/basic/` y `tests/` (contrato §8) |
+| `modules/` | 26 módulos propios, cada uno con `README.md`, `examples/basic/` y `tests/` (contrato §8) |
 | `stages/0-bootstrap` | Carpeta y proyecto semilla, llave y bucket de estado (multirregión), cuentas de etapa, roles personalizados, política de denegación, WIF |
-| `stages/1-org` | Carpetas, proyectos de `common`, políticas, sink de auditoría, SCC, presupuesto, IAM de grupos y de las cuentas de etapa en `common` y las carpetas |
+| `stages/1-org` | Carpetas, proyectos de `common`, políticas, sink de auditoría, SCC, contactos esenciales, presupuesto, IAM de grupos y de las cuentas de etapa en `common` y las carpetas |
 | `stages/2-security` | Llaves KMS (incluida `artifacts`), contenedores de secretos y perímetro de VPC-SC |
 | `stages/3-networks` | Raíz del hub (ADR 0014): VPN primaria y de DR, DNS, política jerárquica, `onprem-sim` |
 | `stages/3-networks/envs/{dev,qa,prod}` | Un spoke por entorno, con las zonas de las APIs de Google hacia el VIP |
@@ -71,7 +77,7 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 | `policies/` | Siete políticas de Conftest (Rego), sus pruebas y 27 planes de ejemplo en `fixtures/` |
 | `scripts/` | `check.sh`, `policy-check.sh`, `docs.sh`, `affected-roots.sh`, `selftest.sh`, `plan-fingerprint.py`, `unmanaged-resources.py` y otros auxiliares del pipeline |
 | `tests/` | Terratest y prueba de extremo a extremo (paquete 13: compilan y sus fixtures validan, sin ejecutar contra GCP) |
-| `docs/` | Contrato, ADR, pipeline, runbooks, diagramas y `pendientes-apply.md` |
+| `docs/` | Contrato, ADR, pipeline, runbooks, diagramas, `pendientes-apply.md`, `cumplimiento-cis.md` y `estimacion-de-costos.md` |
 | `../.github/workflows/` | `pr.yml`, `apply.yml`, `destroy.yml`, `drift.yml`, `terratest.yml` y el reutilizable `_terraform-root.yml` |
 
 ## Requisitos previos
@@ -137,7 +143,8 @@ Procedimiento completo, con verificaciones, en el
 ```bash
 cd stages/0-bootstrap
 cp terraform.tfvars.example terraform.tfvars          # org_id, billing_account, prefix, github_repository_id,
-                                                      # github_repository_owner_id, state_bucket_location, labels
+                                                      # github_repository_owner_id, state_bucket_location,
+                                                      # security_alert_email, labels
 cp backend_override.tf.example backend_override.tf    # backend local, solo esta primera vez
 terraform init
 terraform plan -out=tfplan
@@ -193,30 +200,31 @@ cd gcp-datacenter
 
 bash scripts/check.sh                 # fmt, validate, tflint, checkov y terraform test (Terraform >= 1.11)
 bash scripts/check.sh --skip test     # lo mismo sin terraform test (lo que corre con Terraform 1.9)
-bash scripts/check.sh --list          # objetivos: 25 módulos, 25 ejemplos y 13 raíces (63)
+bash scripts/check.sh --list          # objetivos: 26 módulos, 26 ejemplos y 13 raíces (65)
 bash scripts/check.sh --skip checkov stages/5-workloads/envs/prod
 bash scripts/policy-check.sh          # conftest verify y los 27 planes de ejemplo (15 pasan, 12 se rechazan)
 bash scripts/selftest.sh              # autopruebas de los scripts del pipeline
-bash scripts/docs.sh --check          # READMEs de terraform-docs al día (25 módulos y 13 raíces)
+bash scripts/docs.sh --check          # READMEs de terraform-docs al día (26 módulos y 13 raíces)
 bash scripts/docs.sh                  # regenerarlos
 ```
 
 Los números de los comentarios salen de correr estos comandos el 23 nov 2026 desde
 `gcp-datacenter/`, con `PATH="$HOME/go/bin:$PATH"` (Conftest instalado con Go):
 
-- `bash scripts/check.sh --list` → 63 líneas: 25 `modules/<m>`, 25 `.../examples/basic` y 13
-  `stages/...` (contadas con `grep -c`; 23 nov 2026, con el módulo `off-hours-shutdown`).
+- `bash scripts/check.sh --list` → 65 líneas: 26 `modules/<m>`, 26 `.../examples/basic` y 13
+  `stages/...` (contadas con `grep -c`; 23 nov 2026, con los módulos `audit-alerts` y `off-hours-shutdown`).
 - `bash scripts/policy-check.sh` → "83 tests, 83 passed, 0 warnings, 0 failures" y
   "RESULTADO: 27 planes con el resultado esperado." (15 con resultado `pasa` y 12 con
   `rechaza`; 13 de los 27 son recortes de planes reales sin GCP, `ls policies/fixtures | grep -c _real_` → 13).
 - `bash scripts/selftest.sh` → 111 líneas `OK` (`grep -c '^OK'`), 0 `FALLA` y "RESULTADO: todas
   las comprobaciones pasaron." (con las pruebas de `destroy.yml`; si no encuentra Conftest, una de
   esas líneas sale como `INFO`).
-- `bash scripts/docs.sh --check` → "Resultado: PASS (38)".
-- `ls modules/*/tests/*.tftest.hcl | wc -l` → 25.
+- `bash scripts/docs.sh --check` → "Resultado: PASS (39)".
+- `ls modules/*/tests/*.tftest.hcl | wc -l` → 26.
 
-`bash scripts/check.sh` completo (con `terraform test`) no se volvió a correr para este
-documento; su resultado lo reporta cada PR en la pata `estático (terraform 1.16.5)`.
+`bash scripts/check.sh` completo (con `terraform test`, Terraform 1.16.5) → "Resultado: PASS (63
+objetivo(s))" (23 nov 2026, después de los controles del CIS); en cada PR lo reporta la pata
+`estático (terraform 1.16.5)`.
 
 - `check.sh` lee el comando de checkov de `CHECKOV_CMD` (por defecto `checkov`). En Windows el
   lanzador `checkov.cmd` busca el Python del sistema y falla; con uv:
@@ -266,7 +274,7 @@ apply. Los números de pendientes remiten a [`docs/pendientes-apply.md`](docs/pe
 | `destroy` de dev sin huérfanos | `destroy.yml`: 5-workloads → 4-projects → 3-networks del entorno con plan guardado y huella, `scripts/destroy-plan-check.py` detiene una raíz con `deletion_protection` o `deletion_policy` que impidan borrar, y `scripts/destroy-orphans.py` falla si Cloud Asset Inventory muestra algo inesperado en la carpeta; `project_deletion_policy` / `deletion_policy = "DELETE"` y `deletion_protection = false` admitidos fuera de prod | **Construido y probado sin GCP** (`bash scripts/selftest.sh`, 23 nov 2026: guardias, comprobaciones de planes reales de destrucción y huérfanos con datos de ejemplo); **pendiente** correrlo contra dev (pendientes 11 y 85; la bóveda con retención forzada, la conexión de PSA y el bucket con objetos pueden bloquearlo: 86, 87 y 89; recrear el entorno pide un `project_suffix` nuevo: 88) |
 | El pipeline bloquea un PR que viola una política | Siete reglas Rego; `pr.yml` corre `policy-check.sh` siempre y Conftest sobre el plan real con `GCP_ENABLED`; `plan-gate` falla si falla un plan | **Demostrado sin GCP para las reglas:** `PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` (23 nov 2026) → 83 pruebas de Rego y 27 planes de ejemplo (13 recortados de planes reales sin GCP) con el resultado esperado. Que un PR real quede bloqueado depende de configurar en GitHub la protección de `main` con `plan-gate` y las demás comprobaciones como obligatorias, del plan de GitHub (pendiente 12) y de la primera corrida de `pr.yml` (pendiente 51) |
 | Una VM de prod alcanza on-premises y resuelve su DNS | Dos HA VPN con BGP, anuncios del hub, peering con exportación de rutas, zona de reenvío en el hub y de peering DNS en el spoke; en modo simulado, firewall de `onprem-sim` y delegación del rango de DNS ya construidos | **Pendiente del primer apply** (pendientes 6, 7, 36 y 37). En modo simulado falta crear a mano la VM DNS en `onprem-sim` |
-| Sin hallazgos críticos ni altos en Security Command Center | Políticas de organización, checkov en cada PR, notificación de hallazgos altos y críticos a Pub/Sub | **Pendiente del primer apply** y de activar SCC (pendiente 2). checkov sin GCP no equivale a SCC |
+| Sin hallazgos críticos ni altos en Security Command Center | Políticas de organización, checkov en cada PR, notificación de hallazgos altos y críticos a Pub/Sub; mapa del CIS v5.0 ([`docs/cumplimiento-cis.md`](docs/cumplimiento-cis.md)) con las desviaciones aceptadas del ADR 0027 | **Pendiente del primer apply** y de activar SCC (pendiente 2); procedimiento de evaluación en el pendiente 56. checkov sin GCP no equivale a SCC |
 | Simulacro de DR dentro del RTO | Réplica de Cloud SQL, bucket de doble región, `dr_active`; estado multirregional, VPN de DR y balanceador interno por región (ADR 0022); [runbook 04](docs/runbooks/04-conmutacion-a-dr.md) con tabla de tiempos | **Pendiente del primer apply.** RTO ≤ 4 h y RPO ≤ 15 min son objetivos sin medir |
 | Cero recursos creados a mano | Trabajo de recursos no administrados en `drift.yml` (Cloud Asset Inventory frente a los estados) | **Construido y probado con datos de ejemplo** (`bash scripts/selftest.sh`, 23 nov 2026 → 111 OK, 0 FALLA); **pendiente** correrlo contra una carpeta real (pendiente 49) |
-| Cada módulo tiene README, ejemplo y prueba | Estructura de §4.5 del contrato | **Demostrado sin GCP:** los 25 módulos tienen `README.md`, `examples/basic/main.tf` y `tests/*.tftest.hcl` (`ls modules/*/tests/*.tftest.hcl \| wc -l` → 25, 23 nov 2026); `bash scripts/docs.sh --check` → `PASS (38)` (23 nov 2026). Las pruebas exigen Terraform 1.11 o mayor |
+| Cada módulo tiene README, ejemplo y prueba | Estructura de §4.5 del contrato | **Demostrado sin GCP:** los 26 módulos tienen `README.md`, `examples/basic/main.tf` y `tests/*.tftest.hcl` (`ls modules/*/tests/*.tftest.hcl \| wc -l` → 26, 23 nov 2026); `bash scripts/docs.sh --check` → `PASS (39)` (23 nov 2026). Las pruebas exigen Terraform 1.11 o mayor |

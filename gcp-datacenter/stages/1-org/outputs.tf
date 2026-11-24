@@ -20,6 +20,11 @@ output "log_bucket" {
   value       = module.audit_logs.bucket_name
 }
 
+output "security_alert_email" {
+  description = "Correo del grupo security_admins: destino de las alertas de auditoría (CIS 2.5 a 2.12) que crean los spokes de 3-networks y 4-projects en sus proyectos."
+  value       = var.groups["security_admins"]
+}
+
 # --- Salidas adicionales ------------------------------------------------------------------
 
 output "log_sink_writer_identity" {

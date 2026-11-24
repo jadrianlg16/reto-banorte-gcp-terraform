@@ -17,6 +17,10 @@ github_repository_owner_id = "000000000"
 state_bucket_location = "US"
 # state_bucket_dual_regions = ["us-central1", "us-east4"]
 
+# Grupo security_admins (el mismo correo que groups.security_admins de la etapa 1): alertas de
+# auditoría del proyecto semilla (CIS 2.5 a 2.12).
+security_alert_email = "gcp-security-admins@example.com"
+
 labels = {
   app         = "landing-zone"
   owner       = "plataforma"

@@ -77,3 +77,8 @@ output "peerings" {
     }
   }
 }
+
+output "flow_log_sampling" {
+  description = "Mapa subred normal (llave de §5) → fracción de muestreo de sus flow logs (CIS 3.10, ADR 0027)."
+  value       = { for k, s in google_compute_subnetwork.this : k => s.log_config[0].flow_sampling }
+}

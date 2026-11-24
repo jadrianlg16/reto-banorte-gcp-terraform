@@ -38,3 +38,24 @@ module "dns" {
 
   depends_on = [google_project_service.hub]
 }
+
+# Registro de consultas de Cloud DNS también en la VPC onprem-sim (CIS 2.13: el detector
+# DNS_LOGGING_DISABLED busca, por red, una política DNS con registro). Solo registro: sin
+# reenvío entrante, porque onprem-sim no resuelve por Cloud DNS (simula on-premises). Una red
+# admite una sola política, y onprem-sim no tiene otra.
+# VERIFICAR-EN-APPLY: que el detector deje de marcar onprem-sim (pendiente 61).
+resource "google_dns_policy" "onprem_sim" {
+  count = var.simulate_onprem ? 1 : 0
+
+  project                   = local.hub_project_id
+  name                      = "${var.prefix}-${local.environment}-net-dns-onprem-sim-policy"
+  description               = "Registro de consultas DNS de la VPC onprem-sim (CIS 2.13)."
+  enable_inbound_forwarding = false
+  enable_logging            = true
+
+  networks {
+    network_url = module.onprem_sim[0].network_id
+  }
+
+  depends_on = [google_project_service.hub]
+}

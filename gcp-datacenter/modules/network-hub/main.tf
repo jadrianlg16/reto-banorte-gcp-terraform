@@ -24,7 +24,7 @@ resource "google_compute_network" "this" {
 }
 
 # Subredes privadas: sin IP externas (eso lo impone la política de organización), con
-# Private Google Access y flow logs con muestreo de al menos 0.5.
+# Private Google Access y flow logs con muestreo de al menos 0.5 (1 por defecto, ADR 0027).
 resource "google_compute_subnetwork" "this" {
   for_each = var.subnets
 

@@ -101,10 +101,12 @@ variable "router_asn" {
   }
 }
 
+# VERIFICAR-EN-APPLY: que VPC_FLOW_LOGS_SETTINGS_NOT_RECOMMENDED no marque las subredes con 1.0 y
+# el volumen de flow logs contra estimacion-de-costos.md (pendiente 62).
 variable "flow_log_sampling" {
-  description = "Fracción de muestreo de los flow logs. La especificación pide 0.5 como mínimo; solo se permite subirla."
+  description = "Fracción de muestreo de los flow logs. La especificación pide 0.5 como mínimo; solo se permite subirla. Por defecto 1 (100 %, lo que pide el detector de CIS 3.10; ADR 0027)."
   type        = number
-  default     = 0.5
+  default     = 1
 
   validation {
     condition     = var.flow_log_sampling >= 0.5 && var.flow_log_sampling <= 1

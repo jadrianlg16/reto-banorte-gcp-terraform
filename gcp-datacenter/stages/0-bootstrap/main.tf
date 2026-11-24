@@ -25,6 +25,10 @@ locals {
   # APIs del proyecto semilla. Además de las que usa esta etapa, las etapas 1 a 5 lo usan como
   # proyecto de cuota (billing_project con user_project_override) para las APIs de nivel
   # organización y facturación: por eso están aquí aunque sus recursos vivan en otros proyectos.
+  # essentialcontacts: contactos de la organización (etapa 1, CIS 1.17). Cloud Asset, Logging y
+  # Monitoring los agrega project-factory. Cloud Asset sirve además a drift.yml: su cuenta de
+  # auditoría vive aquí (pipeline.md §2) y una cuenta de servicio cobra a su proyecto la cuota.
+  # VERIFICAR-EN-APPLY: gcloud asset search-all-resources de drift.yml (pendiente 60).
   seed_apis = [
     "accesscontextmanager.googleapis.com",
     "billingbudgets.googleapis.com",
@@ -33,6 +37,7 @@ locals {
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
     "dns.googleapis.com",
+    "essentialcontacts.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",

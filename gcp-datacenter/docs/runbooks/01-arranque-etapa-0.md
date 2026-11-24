@@ -4,13 +4,15 @@
 
 Crear, una sola vez, la base que necesita el pipeline: carpeta `bootstrap`, proyecto semilla,
 llave KMS y bucket del estado, cuentas de servicio de las etapas 1 a 5, Workload Identity
-Federation para GitHub, los dos roles personalizados (etapas 2 y 4) y la política de denegación
-de la carpeta `bootstrap`; migrar el estado local de la etapa al bucket; activar Security
-Command Center y dejar GitHub listo para aplicar las etapas 1 a 5.
+Federation para GitHub, los dos roles personalizados (etapas 2 y 4), la política de denegación
+de la carpeta `bootstrap` y las métricas y alertas de auditoría del proyecto semilla; migrar el
+estado local de la etapa al bucket; activar Security Command Center; dejar hechos los controles
+del CIS que viven fuera de Terraform (Cloud Identity y consola) y GitHub listo para aplicar las
+etapas 1 a 5.
 
 Nada de esto se ha ejecutado todavía: los pasos son el procedimiento diseñado, pendiente de
 verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2, 13, 22, 23,
-27, 31, 32, 33, 50 y 55).
+27, 31, 32, 33, 50, 55, 56, 58 y 60).
 
 ## Cuándo usarlo
 
@@ -36,7 +38,12 @@ verificar en el primer apply ([pendientes](../pendientes-apply.md), puntos 1, 2,
   `roles/iam.organizationRoleAdmin` (roles personalizados) y `roles/iam.denyAdmin` (política de
   denegación de la carpeta `bootstrap`, ADR 0023), y en la cuenta de facturación
   `roles/billing.admin`. Para activar SCC además hace falta `roles/securitycenter.admin` en la
-  organización (pendiente de verificar el rol exacto que pide la consola).
+  organización (pendiente de verificar el rol exacto que pide la consola). Esa persona **no** es
+  superadministradora de Cloud Identity: el superadministrador queda fuera del trabajo diario en
+  Google Cloud (CIS 1.1.2; "Controles manuales del CIS", punto A).
+- Cuenta de superadministrador con dirección de rol y una de respaldo, 2SV obligatoria y llaves
+  de seguridad para administradores (CIS 1.1.1, 1.3 y 1.4): "Controles manuales del CIS",
+  puntos A y B, **antes** del paso 1.
 - Valores: `<org_id>`, `<billing_account>` (`XXXXXX-XXXXXX-XXXXXX`), `<prefix>` (2 a 6
   minúsculas o dígitos, empieza con letra; ejemplo `bnt`), `<project_suffix>` (opcional, para
   que el ID del proyecto semilla y el nombre del bucket sean únicos), `<dueño>/<repositorio>` y
@@ -76,6 +83,8 @@ Todas las rutas son relativas a `gcp-datacenter/`.
    #         github_repository (solo informativo), github_repository_id y
    #         github_repository_owner_id (los dos números de arriba, entre comillas),
    #         state_bucket_location y, si aplica, state_bucket_dual_regions,
+   #         security_alert_email (el grupo security_admins: recibe las alertas de
+   #         auditoría del proyecto semilla, CIS 2.5 a 2.12),
    #         labels (app, owner, cost_center en minúsculas)
    cp backend_override.tf.example backend_override.tf
    ```
@@ -103,13 +112,17 @@ Todas las rutas son relativas a `gcp-datacenter/`.
    `google_iam_deny_policy.bootstrap_folder`, pool `<prefix>-bootstrap-sec-wif-pool` y proveedor
    `<prefix>-bootstrap-sec-github` con `attribute_condition` sobre `assertion.repository_id` y
    `assertion.repository_owner_id`, y ningún rol `roles/owner`, `roles/editor` ni
-   `roles/resourcemanager.organizationAdmin`.
+   `roles/resourcemanager.organizationAdmin`. También: las APIs `cloudasset` y
+   `essentialcontacts` del proyecto semilla, el metadato `enable-oslogin` del proyecto y nueve
+   métricas de log `<prefix>-bootstrap-ops-audit-*` con su alerta y un canal de correo hacia
+   `security_alert_email`. Si una alerta falla porque su métrica todavía no existe, repetir
+   `terraform apply` (pendiente 58).
 
    Si la creación del bucket falla por permisos sobre la llave, repetir `terraform plan` y
    `terraform apply`: el permiso del agente de Cloud Storage puede tardar en propagarse
-   (`main.tf:194`). El agente se consulta con el número del proyecto semilla para que la
+   (`main.tf:199`). El agente se consulta con el número del proyecto semilla para que la
    lectura ocurra en el apply y no en el plan, cuando el proyecto aún no existe; que la API lo
-   acepte está por verificar (`main.tf:116`, pendiente 27). Si una API rechaza la llamada por
+   acepte está por verificar (`main.tf:121`, pendiente 27). Si una API rechaza la llamada por
    falta de proyecto de cuota (HYPOTHESIS, pendiente 22; la API de políticas de denegación es
    el punto 32): `gcloud auth application-default set-quota-project <proyecto-existente>`. En
    una organización nueva puede no haber ningún proyecto: si el apply ya creó el proyecto
@@ -156,7 +169,9 @@ Todas las rutas son relativas a `gcp-datacenter/`.
    Google Cloud, con la organización seleccionada: Security → Security Command Center →
    activar en el nivel de la organización (Standard o Premium, según lo que decida el equipo).
    Hacerlo antes de la etapa 1: la notificación de hallazgos que crea la etapa 1 probablemente
-   falla sin SCC activo (HYPOTHESIS, pendiente 23).
+   falla sin SCC activo (HYPOTHESIS, pendiente 23). En la misma sesión, los puntos C, D y E de
+   "Controles manuales del CIS" (datos de Cloud Identity hacia Google Cloud, Access Transparency
+   y Access Approval).
 
 8. Revisar si la organización ya tiene política de Access Context Manager.
 
@@ -242,6 +257,101 @@ Lo que la primera ejecución tiene de distinto (nada de esto se ha ejecutado; pe
     main`): planea todo otra vez, las raíces al día dan "sin cambios" y la que quedó a medias
     muestra solo lo que falta. Lo mismo si la corrección es un cambio de `GCP_TFVARS_JSON`.
   - Si la corrección es un cambio de código, el merge trae su propia ejecución desde `1-org`.
+
+## Controles manuales del CIS
+
+Controles del CIS GCP Foundation Benchmark v5.0 que viven en Cloud Identity o en la consola y que
+Terraform no puede fijar ([`cumplimiento-cis.md`](../cumplimiento-cis.md), estado **Manual**).
+Los hace una persona superadministradora de Cloud Identity (A a C) o administradora de la
+organización (D y E). **Evidencia:** una captura de cada configuración y la salida de cada
+comando, con fecha y quién lo hizo, en el expediente de cumplimiento del equipo, fuera del
+repositorio (las capturas muestran correos y el ID de la organización); la revisión del
+pendiente 56 la pide. Nada de esto se ha hecho todavía; las rutas de menú son las de las páginas
+de Google citadas, leídas el 23 nov 2026, y pueden cambiar.
+
+**A. Superadministrador (CIS 1.1.1 y 1.1.2).**
+
+- Requisito: el correo del superadministrador no pertenece a una persona (1.1.1) y el
+  superadministrador no se usa para administrar Google Cloud (1.1.2). Fuente de Google
+  ([buenas prácticas de cuentas de superadministrador](https://docs.cloud.google.com/resource-manager/docs/super-admin-best-practices)):
+  cuenta aparte con inicio de sesión propio, fuera del trabajo diario, fuera del grupo de
+  administradores de la organización, con llave de seguridad y sin recuperación por cuenta
+  propia. La página de Google muestra cuentas separadas con nombre de persona; la dirección de
+  rol (por ejemplo `gcp-superadmin@<dominio>`) es lo que pide el CIS.
+- Pasos: en la consola de administración, crear dos cuentas de superadministrador con dirección
+  de rol (principal y respaldo), guardar sus llaves de seguridad en un lugar físico seguro y
+  quitar el rol de superadministrador a las cuentas personales. La persona que corre la etapa 0
+  usa su cuenta normal con los roles de los prerrequisitos.
+- Evidencia: captura de la lista de administradores con el rol Super Admin (HYPOTHESIS de la
+  ruta: Menu > Account > Admin roles > Super Admin > Admins) y la salida de
+
+  ```bash
+  gcloud organizations get-iam-policy <org_id> --flatten="bindings[].members" \
+    --filter="bindings.members:user:<correo-superadministrador>" --format="value(bindings.role)"
+  ```
+
+  que debe salir vacía: el superadministrador no tiene roles de IAM en la organización.
+
+**B. 2SV obligatoria y llaves de seguridad para administradores (CIS 1.3 y 1.4).**
+
+- Fuente: [Deploy 2-Step Verification](https://knowledge.workspace.google.com/admin/security/deploy-2-step-verification)
+  (Google; la dirección anterior, `support.google.com/a/answer/9176657`, redirige ahí). Hace
+  falta ser superadministrador.
+- Pasos (nombres de la consola en inglés, como en la página): Menu > Security > Authentication >
+  2-step verification (`admin.google.com/ac/security/2sv`). En la unidad organizativa raíz:
+  "Allow users to turn on 2-Step Verification", Enforcement en **On** (o "Turn on enforcement
+  from date") y, si hace falta, "New user enrollment period" (de 1 día a 6 meses). En la unidad
+  organizativa (o grupo de configuración, HYPOTHESIS) de las cuentas administradoras, incluidos
+  los superadministradores de A: Methods en **Only security key**, después de comprobar en el
+  informe de seguridad de usuarios que todas tienen una (sus datos tardan hasta 48 horas).
+- Evidencia: captura de las dos configuraciones y del informe de inscripción en 2SV.
+- Detector: `MFA_NOT_ENFORCED` (heredado); el marco CIS v3.0 de Compliance Manager no lo
+  revisa.
+
+**C. Datos de Cloud Identity compartidos con Google Cloud (CIS 2.2).**
+
+- Fuente: [Share data with Google Cloud services](https://knowledge.workspace.google.com/admin/getting-started/share-data-with-google-cloud-services)
+  (Google). Hace falta ser superadministrador.
+- Pasos: Menu > Account > Account settings > Legal and compliance > Sharing options >
+  **Enabled** > Save. Se comparten los eventos de Admin, de usuarios y de
+  Groups Enterprise; los de OAuth y SAML solo con ediciones como Cloud Identity Premium.
+- Evidencia: captura de la opción y, unas horas después, que haya eventos de la consola de
+  administración en los registros de la organización (HYPOTHESIS del filtro):
+
+  ```bash
+  gcloud logging read 'protoPayload.serviceName="admin.googleapis.com"' \
+    --organization=<org_id> --limit=5 --freshness=1d
+  ```
+
+**D. Access Transparency (CIS 2.15).**
+
+- Fuente: [Enabling Access Transparency](https://docs.cloud.google.com/assured-workloads/access-transparency/docs/enable)
+  (Google): es un control activo por defecto en toda organización; la página no da pasos para
+  activarlo, solo para comprobarlo, ni pide un plan de soporte.
+- Pasos: con la organización seleccionada, IAM & Admin > IAM > Settings: confirmar que Access
+  Transparency está activo (rol `roles/axt.admin`), o Security > Access Approval > pestaña Home
+  (rol `roles/accessapproval.viewer` o `roles/axt.admin`). Si estuviera apagado,
+  activarlo en esa misma página (HYPOTHESIS: la página de Google no lo describe).
+- Evidencia: captura de cualquiera de las dos pantallas. Detector:
+  `ACCESS_TRANSPARENCY_DISABLED` (Premium).
+
+**E. Access Approval (CIS 2.16).**
+
+- Fuentes: [Overview of Access Approval](https://docs.cloud.google.com/assured-workloads/access-approval/docs/overview)
+  y [aprobación con la llave de firma de Google](https://docs.cloud.google.com/assured-workloads/access-approval/docs/review-approve-access-requests-google-keys)
+  (Google). Requisito: D (Access Transparency activo).
+- Pasos: con la organización seleccionada, abrir Access Approval
+  (`console.cloud.google.com/security/access-approval`) > **Enroll**, modo **Access Approval**,
+  servicios: todos los admitidos (valor por defecto) o solo los GA; luego **Manage settings** >
+  "Set up approval notifications" > el correo del grupo `security_admins`. Llave de firma: la de
+  Google (no pide configuración). Rol: `roles/accessapproval.configEditor`; la guía de Google lo
+  da para un proyecto, que alcance para la organización es HYPOTHESIS.
+- Antes de inscribirse, revisar en la página de precios de Access Approval si tiene costo o pide
+  un plan de soporte (HYPOTHESIS: la página de requisitos no lo dice). No se hace con Terraform
+  (`google_organization_access_approval_settings`) para no dar a `1-org` otro rol de
+  administración (CIS 1.6, ADR 0027).
+- Evidencia: captura de la pantalla de configuración y la salida de
+  `gcloud access-approval settings get --organization=<org_id>` (HYPOTHESIS de la sintaxis).
 
 ## Verificación
 

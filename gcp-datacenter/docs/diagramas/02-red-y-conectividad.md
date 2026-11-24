@@ -11,11 +11,11 @@ flowchart LR
   users -- "HTTPS" --> xlb
 
   subgraph ONP["On-premises · 192.168.0.0/16 · ASN 65001"]
-    onp["Sitio real con simulate_onprem = false<br/>o VPC bnt-common-net-onprem-sim 192.168.0.0/24<br/>con Cloud Router y gateway HA VPN en us-central1 y us-east4 (ADR 0006)<br/>política de red propia: DNS desde 35.199.192.0/19 y SSH por IAP"]
+    onp["Sitio real con simulate_onprem = false<br/>o VPC bnt-common-net-onprem-sim 192.168.0.0/24<br/>con Cloud Router y gateway HA VPN en us-central1 y us-east4 (ADR 0006)<br/>política de red propia: DNS desde 35.199.192.0/19 y SSH por IAP<br/>política DNS solo con registro de consultas"]
   end
 
   subgraph HUB["bnt-common-net-hub · VPC hub · 10.0.0.0/16"]
-    hsub["hub 10.0.0.0/24 (us-central1)<br/>hub_dr 10.0.1.0/24 (us-east4)<br/>Private Google Access · flow logs 0.5"]
+    hsub["hub 10.0.0.0/24 (us-central1)<br/>hub_dr 10.0.1.0/24 (us-east4)<br/>Private Google Access · flow logs al 100 %"]
     hcr["Cloud Router por región · ASN 64514"]
     hvpn["HA VPN primaria: 2 túneles IKEv2 con BGP<br/>router de us-central1 · prioridad 100 · Interconnect opcional"]
     hvpndr["HA VPN de DR: 2 túneles IKEv2 con BGP<br/>router de us-east4 · prioridad 200 (enable_vpn_dr, ADR 0022)"]

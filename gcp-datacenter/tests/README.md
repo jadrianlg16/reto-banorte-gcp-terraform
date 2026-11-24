@@ -26,7 +26,7 @@ tests/
   fixtures/<módulo>/      una raíz por módulo que lo llama con entradas de forma real
   fixtures/firewall-hierarchical/   segunda variante del módulo firewall
   fixtures/support/       project (proyecto efímero), cmek (llave de apoyo), network (VPC de apoyo)
-  integration/            pruebas de los 25 módulos
+  integration/            pruebas de los 26 módulos
   e2e/                    prueba de extremo a extremo, config.example.json y la prueba de humo
                           de dev (smoke_test.go)
 ```
@@ -63,7 +63,7 @@ correo ni secreto vive en el código.
 | `TEST_REGION` / `TEST_DR_REGION` | Regiones (por defecto `us-central1` / `us-east4`). Deben estar en los mapas de códigos cortos de los módulos | Opcional |
 | `TEST_DIRECTORY_CUSTOMER_ID` | Cliente de Cloud Identity (`C…`) | `TestOrg` |
 | `TEST_ACCESS_POLICY_ID` | Política de Access Context Manager existente (una organización solo tiene una) | `TestVPCSC` |
-| `TEST_NOTIFICATION_EMAIL` | Buzón real que recibe las alertas de prueba | `TestObservability` |
+| `TEST_NOTIFICATION_EMAIL` | Buzón real que recibe las alertas de prueba | `TestObservability`, `TestAuditAlerts` |
 | `TEST_GKE_SECURITY_GROUP` | `gke-security-groups@<dominio>` | `TestGKE` |
 | `TEST_MIG_IMAGE` | Imagen de la VM (por defecto `debian-cloud/debian-12`) | Opcional |
 | `TEST_CLOUD_RUN_IMAGE` | Imagen del contenedor (por defecto la de muestra `cloudrun/container/hello`) | Opcional |
@@ -85,7 +85,7 @@ facturación en el padre, y para las pruebas de organización, los roles de cada
 Sin compuerta (proyecto efímero y recursos baratos o gratuitos): `storage`, `kms`, `secrets`,
 `log-export`, `iam`, `folders`, `project-factory`, `network-hub`, `network-spoke`, `firewall` (de
 red), `dns`, `cloud-armor`, `cloud-run`, `compute-mig`, `load-balancer` (externo),
-`observability`.
+`observability`, `audit-alerts`.
 
 ## Advertencia de costo
 
@@ -163,8 +163,8 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestIAM` | iam | Rol de proyecto aditivo, rol condicionado en bucket |
 | `TestOrg` | org | Exactamente las nueve políticas con su valor; sink agregado con hijos |
 | `TestVPCSC` | vpc-sc | Dry-run explícito, proyecto en el perímetro, `storage` restringido, regla de entrada |
-| `TestNetworkHub` | network-hub | VPC personalizada, PGA y flow logs 0.5 en cada subred, router por región con ASN 64514 |
-| `TestNetworkSpoke` | network-spoke | PGA y flow logs 0.5, rangos secundarios, proxy-only, PSA, peering en ambos sentidos con rutas personalizadas, NAT |
+| `TestNetworkHub` | network-hub | VPC personalizada, PGA y flow logs al 100 % (valor por defecto) en cada subred, router por región con ASN 64514 |
+| `TestNetworkSpoke` | network-spoke | PGA y flow logs al 100 % (valor por defecto), rangos secundarios, proxy-only, PSA, peering en ambos sentidos con rutas personalizadas, NAT |
 | `TestFirewallNetwork` | firewall | Llave de etiqueta por etiqueta (`GCE_FIREWALL`), reglas por etiqueta, denegación por defecto, asociación a la VPC |
 | `TestFirewallHierarchical` | firewall | Asociación al padre, ninguna regla allow, salud, IAP y tráfico interno delegados con `goto_next` (§7.3), deny por defecto |
 | `TestDNS` | dns | Zonas privadas en la VPC, VIP restringido, reenvío por ruta privada, reenvío entrante |
@@ -178,6 +178,7 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestCloudArmor` | cloud-armor | Reglas OWASP de SQLi y XSS, límite de tasa |
 | `TestLoadBalancerExternal` | load-balancer | HTTPS 443 con certificado, HTTP 80 redirige, Cloud Armor y registro en el backend |
 | `TestObservability` | observability | Canal de correo, cuatro alertas base, SLO, tablero |
+| `TestAuditAlerts` | audit-alerts | Nueve métricas de log con el filtro publicado, una alerta por métrica, canal de correo (que SCC las reconozca: pendiente 58) |
 | `TestBackupDR` | backup-dr | Bóveda en DR con retención mínima de 30 días, planes diarios de 30 días |
 | `TestOffHoursShutdown` | off-hours-shutdown | Seis trabajos de Cloud Scheduler habilitados (Cloud SQL y un pool de GKE que no existen) con su horario, zona horaria, método, URI, cuerpo y token OAuth de la cuenta del fixture; no su efecto (ADR 0028, pendiente 81) |
 

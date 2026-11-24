@@ -258,6 +258,18 @@ run "hub_con_onprem_simulado" {
     )
     error_message = "La zona de reenvío debe apuntar a onprem_dns_servers y estar adjunta a la VPC hub."
   }
+
+  # CIS 2.13: la VPC onprem-sim también registra sus consultas DNS (política propia, sin
+  # reenvío entrante).
+  assert {
+    condition = (
+      google_dns_policy.onprem_sim[0].enable_logging == true &&
+      google_dns_policy.onprem_sim[0].enable_inbound_forwarding == false &&
+      google_dns_policy.onprem_sim[0].name == "bnt-common-net-dns-onprem-sim-policy" &&
+      length(google_dns_policy.onprem_sim[0].networks) == 1
+    )
+    error_message = "La VPC onprem-sim necesita una política DNS con registro de consultas (CIS 2.13)."
+  }
 }
 
 run "hub_sin_vpn_dr" {
@@ -298,6 +310,11 @@ run "hub_real_rotacion_por_tunel" {
   assert {
     condition     = toset(keys(data.google_secret_manager_secret_version.vpn_shared_secret)) == toset(["3", "4"])
     error_message = "Se lee una vez cada versión en uso (la común y la del túnel que rota)."
+  }
+
+  assert {
+    condition     = length(google_dns_policy.onprem_sim) == 0
+    error_message = "Sin onprem-sim no hay política DNS de onprem-sim."
   }
 
   assert {

@@ -160,3 +160,14 @@ variable "labels" {
     error_message = "Los valores de etiquetas van en minúsculas, dígitos, guion o guion bajo (ADR 0016)."
   }
 }
+
+variable "security_alert_email" {
+  description = "Correo del grupo security_admins (el mismo de groups.security_admins de la etapa 1): recibe las alertas de auditoría del proyecto semilla (CIS 2.5 a 2.12, módulo audit-alerts)."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.security_alert_email))
+    error_message = "security_alert_email debe ser un correo válido (el del grupo security_admins)."
+  }
+}

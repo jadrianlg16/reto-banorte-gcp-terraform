@@ -35,6 +35,7 @@ se cita solo por nombre de sección.
 | [0024](0024-artifact-registry-y-binary-authorization-por-proyecto.md) | Artifact Registry y Binary Authorization por proyecto | Aclaración | Un repositorio multirregional por aplicación y una política que solo admite ese repositorio. |
 | [0025](0025-plan-aprobacion-y-apply-separados.md) | Plan, aprobación y apply separados | Aclaración | Plan sin entorno, apply en el entorno con la misma huella; `common` protegido; `plan-gate` y prueba de humo de dev. |
 | [0026](0026-api-de-google-por-el-vip-restringido-en-todos-los-entornos.md) | API de Google por el VIP restringido | Aclaración | Zonas de `googleapis.com`, `gcr.io`, `pkg.dev` y `run.app` hacia el VIP de `google_apis_vip` (`restricted` en los tres entornos). |
+| [0027](0027-desviaciones-aceptadas-del-cis.md) | Desviaciones aceptadas del CIS | Desviación del CIS | Once recomendaciones del CIS v5.0 abiertas por decisión (1.6, 2.1, 2.3, 2.4, 3.8, 3.9, 3.10 en dev y qa, 4.7, 4.11, 4.12, 6.9), con su riesgo y lo que las cierra; novena métrica de firewall y límite de la política jerárquica. |
 | [0028](0028-apagado-fuera-de-horario-de-dev-y-qa.md) | Apagado fuera de horario de dev y qa | Aclaración | `off_hours_shutdown` (rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler, MIG con programa de escalado; sin deriva por `ignore_changes` y `postcondition`; cuenta y rol mínimos creados por la etapa 4. |
 
 ## Formato

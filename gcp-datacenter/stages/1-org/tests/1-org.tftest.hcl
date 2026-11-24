@@ -260,6 +260,83 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "El tema de SCC guarda mensajes solo en primary_region, con imposición en tránsito."
   }
+
+  # CIS 1.17: contactos esenciales de la organización, a grupos, con las cuatro categorías que
+  # revisa el detector.
+  assert {
+    condition = alltrue([
+      for c in values(google_essential_contacts_contact.org) :
+      c.parent == "organizations/000000000000" && endswith(c.email, "@example.com") && c.language_tag == "es"
+    ])
+    error_message = "Los contactos esenciales van en la organización, hacia grupos de groups."
+  }
+  assert {
+    condition = alltrue([
+      for cat in ["LEGAL", "SECURITY", "SUSPENSION", "TECHNICAL"] :
+      contains(flatten([for c in values(google_essential_contacts_contact.org) : c.notification_category_subscriptions]), cat)
+    ])
+    error_message = "Los contactos deben cubrir LEGAL, SECURITY, SUSPENSION y TECHNICAL."
+  }
+  assert {
+    condition     = google_essential_contacts_contact.org["security_admins"].email == "gcp-security-admins@example.com" && contains(google_essential_contacts_contact.org["security_admins"].notification_category_subscriptions, "SECURITY")
+    error_message = "security_admins recibe la categoría SECURITY."
+  }
+
+  # CIS 2.5 a 2.12: métricas y alertas de auditoría en los cuatro proyectos de common, hacia
+  # security_admins; la salida que leen los spokes y la etapa 4.
+  assert {
+    condition = toset(keys(module.audit_alerts)) == toset(["net_hub", "logging", "security", "backup"]) && alltrue([
+      for m in values(module.audit_alerts) : length(m.metric_names) == 9
+    ])
+    error_message = "Cada proyecto de common debe tener las métricas y alertas de auditoría."
+  }
+  assert {
+    condition     = output.security_alert_email == "gcp-security-admins@example.com"
+    error_message = "security_alert_email debe ser el correo de groups.security_admins."
+  }
+  assert {
+    condition     = alltrue([for p in values(module.common_project) : contains(p.enabled_apis, "cloudasset.googleapis.com")])
+    error_message = "Los proyectos de common habilitan Cloud Asset (CIS 2.14)."
+  }
+}
+
+run "contactos_sin_suspension" {
+  command = plan
+
+  variables {
+    essential_contacts = {
+      org_admins      = ["LEGAL", "TECHNICAL"]
+      security_admins = ["SECURITY"]
+    }
+  }
+
+  expect_failures = [var.essential_contacts]
+}
+
+run "contactos_con_categoria_desconocida" {
+  command = plan
+
+  variables {
+    essential_contacts = {
+      org_admins      = ["LEGAL", "SUSPENSION", "TECHNICAL", "OUTAGES"]
+      security_admins = ["SECURITY"]
+    }
+  }
+
+  expect_failures = [var.essential_contacts]
+}
+
+run "contactos_con_grupo_desconocido" {
+  command = plan
+
+  variables {
+    essential_contacts = {
+      org_admins = ["LEGAL", "SUSPENSION", "TECHNICAL"]
+      seguridad  = ["SECURITY"]
+    }
+  }
+
+  expect_failures = [var.essential_contacts]
 }
 
 run "grupos_incompletos" {

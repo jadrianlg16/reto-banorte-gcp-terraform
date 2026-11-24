@@ -16,6 +16,7 @@ locals {
       writes      = ["1-org"]
       reads       = ["0-bootstrap"]
       org_roles = [
+        "roles/essentialcontacts.admin", # contactos esenciales de la organización (CIS 1.17)
         "roles/iam.securityAdmin",
         "roles/logging.configWriter",
         "roles/orgpolicy.policyAdmin",

@@ -18,6 +18,8 @@ Contenido:
    puntos 31 a 54; y
    [3.6 Agregados por la revisión del 23 nov 2026](#36-agregados-por-la-revisión-del-23-nov-2026),
    punto 55; y
+   [3.7 Agregados por los controles del CIS del 23 nov 2026](#37-agregados-por-los-controles-del-cis-del-23-nov-2026),
+   puntos 56 a 62; y
    [3.8 Apagado fuera de horario (ADR 0028)](#38-apagado-fuera-de-horario-adr-0028),
    puntos 70 a 81; y
    [3.9 Agregados por el flujo de destroy](#39-agregados-por-el-flujo-de-destroy),
@@ -40,7 +42,7 @@ nuevo.
 Qué: que `terraform init`, `plan` y `apply` de cada raíz funcionen con `objectAdmin` sobre su
 prefijo y `objectViewer` sobre los prefijos que lee, con la cláusula
 `resource.type == "storage.googleapis.com/Bucket"` que permite listar.
-Dónde: `stages/0-bootstrap/service_accounts.tf` (`local.stages` y las condiciones, línea 91);
+Dónde: `stages/0-bootstrap/service_accounts.tf` (`local.stages` y las condiciones, línea 92);
 ADR 0010; contrato §6.2.
 Si falla: pasar a carpetas administradas de Cloud Storage con IAM propio por prefijo; plan B, un
 bucket por etapa (ADR 0010).
@@ -74,7 +76,7 @@ VPC-SC del modo dry-run qué servicio se bloqueó y agregar la regla de entrada 
 
 **5. Regla de entrada del perímetro para las cuentas del pipeline.**
 Qué: que las cinco cuentas `<prefix>-tf-<etapa>` sigan operando dentro del perímetro forzado.
-Dónde: `modules/vpc-sc/main.tf:134`; `stages/2-security` (`ingress_identities`).
+Dónde: `modules/vpc-sc/main.tf:147`; `stages/2-security` (`ingress_identities`).
 Si falla: volver a `vpc_sc_enforced = false` (aplicar 2-security y luego 4-projects de prod),
 leer las violaciones registradas y ajustar la regla.
 
@@ -82,7 +84,7 @@ leer las violaciones registradas y ajustar la regla.
 Qué: que las rutas aprendidas por BGP en el hub lleguen a los spokes por el peering (el hub
 exporta rutas personalizadas, el spoke las importa) y que on-premises reciba y alcance los /16
 de los spokes.
-Dónde: `modules/network-spoke/main.tf:181`; anuncios en `stages/3-networks/vpn.tf` (las dos
+Dónde: `modules/network-spoke/main.tf:182`; anuncios en `stages/3-networks/vpn.tf` (las dos
 VPN: punto 37); ADR 0003.
 Si falla: revisar `bgp_advertised_ranges` (salida del hub) y la exportación del peering
 `hub_to_spoke` (propuesta).
@@ -125,7 +127,7 @@ lo hace con la cuenta de cada etapa, el mismo plan, huella y aprobación que `ap
 termina buscando huérfanos en la carpeta de dev con Cloud Asset Inventory
 ([`pipeline.md`](pipeline.md) §1.5). Lo que queda por comprobar en GCP está en los puntos 85 a 89.
 Dónde: todas las raíces; marcadores de `modules/gke/main.tf:145`, `modules/backup-dr/main.tf:21`,
-`modules/network-spoke/main.tf:158`; `.github/workflows/destroy.yml`,
+`modules/network-spoke/main.tf:159`; `.github/workflows/destroy.yml`,
 `scripts/destroy-guard.sh`, `scripts/destroy-plan-check.py`, `scripts/destroy-orphans.py`.
 Si falla: cada diferencia perpetua se corrige en el módulo (no con `ignore_changes` a ciegas);
 para el destroy, antes de lanzarlo, `deletion_policy = "DELETE"` (4-projects),
@@ -154,7 +156,7 @@ Los ADR proponen estas entradas porque no tenían una propia en §12.
 Qué: que `terraform init -migrate-state` copie el estado local al bucket y que el agente de Cloud
 Storage del proyecto semilla tenga `cryptoKeyEncrypterDecrypter` sobre la llave `state` antes de
 crear el bucket.
-Dónde: `stages/0-bootstrap/main.tf:194`; runbook [01](runbooks/01-arranque-etapa-0.md).
+Dónde: `stages/0-bootstrap/main.tf:199`; runbook [01](runbooks/01-arranque-etapa-0.md).
 La consulta del agente por número de proyecto es el punto 27.
 Si falla: el permiso puede tardar en propagarse: repetir el apply (lo dice el código). La
 migración se repite mientras exista el `terraform.tfstate` local.
@@ -285,7 +287,7 @@ la lectura correría en el plan del primer apply contra un proyecto que todavía
 número solo se conoce al crearlo, así que la lectura se pospone al apply. Verificar que la API
 de Cloud Storage acepte el número en `projects/<proyecto>/serviceAccount` y devuelva el mismo
 agente.
-Dónde: `stages/0-bootstrap/main.tf:116` (proyecto semilla); `modules/log-export/main.tf:29`
+Dónde: `stages/0-bootstrap/main.tf:121` (proyecto semilla); `modules/log-export/main.tf:29`
 (variable opcional `project_number`, que la etapa 1 pasa para el proyecto `logging`);
 `stages/4-projects/envs/*/service_agents.tf:59`.
 Si falla: sin indicación en el código. Propuesta: volver a consultar con el ID y crear el
@@ -339,7 +341,7 @@ Lo que dejaron por comprobar en GCP las correcciones de la revisión independien
 Qué: si se usa `state_bucket_dual_regions`, que las dos regiones formen una doble región
 configurable válida dentro de `state_bucket_location`, con `rpo = "ASYNC_TURBO"` y la llave del
 llavero `us`. Con el valor por defecto (`US`, multirregión) no aplica.
-Dónde: `stages/0-bootstrap/main.tf:191`.
+Dónde: `stages/0-bootstrap/main.tf:196`.
 Si falla: la API lo valida al crear; dejar `state_bucket_dual_regions = []` (multirregión). La
 ubicación no se cambia después de crear el bucket.
 
@@ -356,7 +358,7 @@ Si falla: sin indicación en el código. Para la cuota, ver punto 22.
 Qué: que todos los permisos de `<prefix>TfKmsSecretIamGranter` (`kms_secret_iam_granter`) y de
 `<prefix>TfSecretContainerAdmin` (`secret_container_admin`) se admitan en roles personalizados
 de organización, y que basten a las etapas 4 y 2.
-Dónde: `stages/0-bootstrap/service_accounts.tf:211` y `:237`.
+Dónde: `stages/0-bootstrap/service_accounts.tf:212` y `:238`.
 Si falla: sin indicación en el código; quitar el permiso rechazado y revisar si la etapa lo
 necesita (propuesta).
 
@@ -594,6 +596,112 @@ aplicadas dan "sin cambios"). Un apply que falla a medias deja en el estado lo q
 
 ---
 
+## 3.7 Agregados por los controles del CIS del 23 nov 2026
+
+Puntos que deja el cierre de los huecos del CIS que no dependen de GCP
+([`cumplimiento-cis.md`](cumplimiento-cis.md), ADR 0027).
+
+**56. Evaluación del CIS después del primer apply.**
+Qué: el procedimiento de [`cumplimiento-cis.md`](cumplimiento-cis.md) §6. Con SCC activo
+(punto 2): en Compliance, activar el marco "CIS GCP Foundations Benchmark v3.0" en la
+organización y revisar la pestaña Monitor; en Findings, filtrar `state="ACTIVE" AND
+(severity="HIGH" OR severity="CRITICAL")` y traducir cada control a la 5.0 con la columna "3.0"
+del mapa. Para los controles que el marco no cubre, juntar la evidencia que lista §6 (salidas de
+`gcloud` y capturas) y la de los controles manuales del runbook
+[01](runbooks/01-arranque-etapa-0.md) ("Controles manuales del CIS"). El resultado se anota en el
+mapa: cada fila "Código" o "Manual" que se confirme y cada hallazgo nuevo.
+Dónde: [`cumplimiento-cis.md`](cumplimiento-cis.md) §6; runbook 01; criterio "Sin hallazgos
+críticos ni altos en Security Command Center" del README.
+Si falla: un hallazgo de un control que el mapa da por cubierto se corrige en el código; uno de
+una desviación del ADR 0027 se documenta ahí (con una regla de silencio acotada si se decide,
+propuesta).
+
+**57. Contactos esenciales de la organización (CIS 1.17).**
+Qué: que `1-org` cree un contacto por grupo de `essential_contacts` en la organización con
+`roles/essentialcontacts.admin` y el proyecto semilla como proyecto de cuota (la API
+`essentialcontacts` está en `seed_apis`); que la API acepte correos de grupo y el idioma
+`essential_contacts_language` (`es`); y que el detector `ESSENTIAL_CONTACTS_NOT_CONFIGURED`
+(Premium, sin escaneo en tiempo real) no marque la organización en el siguiente escaneo.
+Dónde: `stages/1-org/essential_contacts.tf:8`; `stages/0-bootstrap/service_accounts.tf`
+(`org_roles` de `1-org`); `stages/0-bootstrap/main.tf` (`seed_apis`).
+Si falla: sin indicación en el código. Si la API rechaza un grupo, usar un buzón de rol por
+categoría (propuesta); si rechaza el idioma, `essential_contacts_language = "en"`.
+
+**58. Métricas de log y alertas de auditoría (CIS 2.5 a 2.12).**
+Qué: en los 11 proyectos del diseño con una aplicación (semilla, cuatro de `common`, tres
+`net-spoke` y tres de servicio):
+- que los detectores `OWNER_NOT_MONITORED`, `AUDIT_CONFIG_NOT_MONITORED`,
+  `CUSTOM_ROLE_NOT_MONITORED`, `FIREWALL_NOT_MONITORED`, `ROUTE_NOT_MONITORED`,
+  `NETWORK_NOT_MONITORED`, `BUCKET_IAM_NOT_MONITORED` y `SQL_INSTANCE_NOT_MONITORED` no marquen
+  ningún proyecto: los filtros reproducen el texto de la página de hallazgos de SHA, pero en una
+  sola línea (la página los muestra en varias), y la coincidencia exacta es HYPOTHESIS;
+- que cada serie llegue con el tipo de recurso de la condición (`global`, salvo `gcs_bucket` en
+  `bucket_iam` y `cloudsql_database` en `sql_instance`), con un evento de prueba en dev (por
+  ejemplo, crear y borrar con `gcloud` una política de firewall de red vacía y un rol
+  personalizado de prueba) que dispare la alerta y llegue el correo;
+- que la API acepte cada alerta justo después de crear su métrica;
+- que el grupo de `security_alert_email` acepte correo de Cloud Monitoring;
+- que los cambios a la política de firewall **jerárquica** (de la organización) no llegan a la
+  métrica `firewall_policy` de ningún proyecto (HYPOTHESIS: su registro de auditoría es de la
+  organización); el ADR 0027 lo deja como límite.
+Dónde: `modules/audit-alerts/main.tf:11`, `:22`, `:150`, `:182`;
+`stages/0-bootstrap/audit_alerts.tf:5`; `stages/1-org/audit_alerts.tf`;
+`stages/3-networks/envs/*/audit_alerts.tf`; `stages/4-projects/envs/*/audit_alerts.tf`.
+Si falla: filtro no reconocido: escribirlo con los saltos de línea de la página de SHA (el
+módulo lo arma con `join(" ", …)`); tipo de recurso distinto: corregir `resource_type` en
+`local.metrics`; alerta rechazada: repetir el apply (lo dice el código); correo rechazado:
+permitir remitentes externos en el grupo (propuesta).
+
+**59. OS Login en los metadatos del proyecto (CIS 4.4).**
+Qué: que `OS_LOGIN_DISABLED` no marque los proyectos con Compute Engine (el metadato
+`enable-oslogin = TRUE` lo pone `project-factory` donde la API `compute` está habilitada); que SSH
+por IAP a una VM del MIG funcione con `roles/compute.osLogin` (hoy nadie lo tiene: es un acceso
+de emergencia que se otorga y se retira a mano); y que los nodos de GKE Standard hereden el
+metadato sin romper el clúster. HYPOTHESIS: un proyecto sin Compute Engine no se evalúa.
+Dónde: `modules/project-factory/main.tf:93`; `gcloud compute project-info describe
+--project=<proyecto>` (metadato `enable-oslogin`).
+Si falla: si el detector sigue marcando, la alternativa documentada es la política
+`compute.requireOsLogin` (serían diez políticas de organización; `modules/project-factory/README.md`).
+
+**60. Cloud Asset para `drift.yml` (CIS 2.14).**
+Qué: el trabajo de recursos no administrados de `drift.yml` corre `gcloud asset
+search-all-resources` con la cuenta `GCP_AUDIT_SERVICE_ACCOUNT` y sin `--billing-project`. Para
+una cuenta de servicio, el proyecto de cuota es el proyecto donde vive
+([documentación de Google](https://docs.cloud.google.com/docs/quotas/quota-project)), y la API
+tiene que estar habilitada ahí. Antes de este cambio ningún código habilitaba
+`cloudasset.googleapis.com` (solo lo pedía a mano `pipeline.md` §3, paso 4): con la cuenta en el
+proyecto semilla, ahora la habilita la etapa 0. Verificar en la primera ejecución diaria que el
+listado de las cuatro carpetas termina sin "API not enabled", y que
+`scripts/unmanaged-resources.py` reconoce como administradas las métricas de log de
+`audit-alerts` (HYPOTHESIS: el `id` de `google_logging_metric` es solo el nombre y Cloud Asset
+la nombra `projects/<proyecto>/metrics/<nombre>`; el script arma esa forma).
+Dónde: `stages/0-bootstrap/main.tf:31`; `modules/project-factory/main.tf` (`baseline_apis`);
+`.github/workflows/drift.yml`, trabajo `unmanaged`; `pipeline.md` §3, paso 4.
+Si falla: si el error nombra otro proyecto, habilitar la API ahí o pasar
+`--billing-project=<proyecto-semilla>` en `drift.yml` con `serviceusage.serviceUsageConsumer`
+para la cuenta (propuesta); si las métricas salen como no administradas, ajustar la forma
+construida en `build_managed` del script.
+
+**61. Registro de Cloud DNS en `onprem-sim` (CIS 2.13).**
+Qué: que `google_dns_policy.onprem_sim` se adjunte a la VPC `onprem-sim` del proyecto
+`net-hub` sin chocar con la política del hub (cada red admite una sola), que
+`DNS_LOGGING_DISABLED` no marque ninguna red (hub, spokes y `onprem-sim`) y que la VM DNS de
+`onprem-sim` siga resolviendo igual (HYPOTHESIS: una política solo con registro no cambia la
+resolución).
+Dónde: `stages/3-networks/dns.tf:46`.
+Si falla: sin indicación en el código; con `simulate_onprem = false` la política no existe.
+
+**62. Flow logs al 100 % en prod, hub y `onprem-sim` (CIS 3.10).**
+Qué: que `VPC_FLOW_LOGS_SETTINGS_NOT_RECOMMENDED` (hay que activarlo, es Premium) no marque las
+subredes de prod, del hub ni de `onprem-sim` (muestreo 1.0, intervalo de 5 s, todos los
+metadatos) y que sí marque las de dev y qa (0.5, desviación aceptada en el ADR 0027); y medir
+durante una semana el volumen de flow logs de prod contra el supuesto de
+[`estimacion-de-costos.md`](estimacion-de-costos.md) §1.
+Dónde: `modules/network-hub/variables.tf:104` y `modules/network-spoke/variables.tf:115`
+(`flow_log_sampling = 1` por defecto); `stages/3-networks/envs/*/terraform.tfvars.example`.
+Si falla: si el costo de prod no se sostiene, bajar el muestreo y reabrir la decisión del ADR
+0027.
+
 ## 3.8 Apagado fuera de horario (ADR 0028)
 
 Todo lo de esta sección se probó solo con proveedores simulados (`terraform test` del módulo `off-hours-shutdown`, de
@@ -791,20 +899,23 @@ aplicado antes del destroy.
 
 ## 4. Marcadores `VERIFICAR-EN-APPLY` del código
 
-Conteo al 23 nov 2026 (con el apagado fuera de horario, ADR 0028), desde `gcp-datacenter/`:
+Conteo al 23 nov 2026 (con los controles del CIS, ADR 0027, y el apagado fuera de horario, ADR
+0028), desde `gcp-datacenter/`:
 
 ```bash
-grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 119
-grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                      # 52 archivos
-grep -rn "VERIFICAR-EN-APPLY" modules --include=*.tf | wc -l                              # 49
-grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep -v /envs/ | wc -l              # 19
+grep -rn "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                       # 130
+grep -rln "VERIFICAR-EN-APPLY" modules stages --include=*.tf | wc -l                      # 57 archivos
+grep -rn "VERIFICAR-EN-APPLY" modules --include=*.tf | wc -l                              # 56
+grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep -v /envs/ | wc -l              # 23
 grep -rn "VERIFICAR-EN-APPLY" stages --include=*.tf | grep /envs/ | wc -l                 # 51 (17 por entorno)
 ```
 
 Las raíces de `envs/{dev,qa,prod}` tienen sus marcadores en las mismas líneas (comprobado el
 23 nov 2026 comparando archivo y línea de los tres entornos: 17 líneas, cada una presente en los
-tres), así que se listan una vez con `envs/*` y "(x3)": las 119 líneas son 85 marcadores
-distintos (49 en módulos y 36 en etapas). Fuera de los `.tf`, los README de algunas raíces
+tres), así que se listan una vez con `envs/*` y "(x3)": las 130 líneas son 96 marcadores
+distintos (56 en módulos y 40 en etapas). Cada fila de las tablas de abajo apunta a una línea con
+el marcador y cada marcador tiene su fila (comprobado el 23 nov 2026 con un script que lee las
+tablas y el código: 96 referencias, 0 sin marcador, 0 marcadores sin fila). Fuera de los `.tf`, los README de algunas raíces
 tienen marcadores propios (al final de esta sección); `tests/` tiene otros cuatro en sus `.tf`,
 fuera de este conteo. "Si falla" cita el código cuando lo dice; si no, la entrada dice "sin
 indicación".
@@ -814,18 +925,21 @@ indicación".
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
 | `deny_policy.tf:22` | Política de denegación de la carpeta `bootstrap`: también niega `folders.setIamPolicy` sobre la propia carpeta, y la API de IAM v2 acepta las credenciales de usuario sin proyecto de cuota (punto 32) | Ver punto 32 |
-| `main.tf:116` | Que la API de Cloud Storage acepte el número del proyecto semilla al consultar su agente (punto 27) | Ver punto 27 |
-| `main.tf:191` | Doble región válida en `state_bucket_dual_regions` (punto 31) | Ver punto 31 |
-| `main.tf:194` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket (punto 13) | Repetir el apply (propagación de IAM) |
-| `service_accounts.tf:91` | `init`/`plan`/`apply` del backend con las condiciones de §6.2 (punto 1) | Carpetas administradas con IAM propio por prefijo |
-| `service_accounts.tf:211` | Permisos del rol personalizado `<prefix>TfKmsSecretIamGranter` admitidos en roles personalizados (punto 33) | Ver punto 33 |
-| `service_accounts.tf:237` | Permisos del rol personalizado `<prefix>TfSecretContainerAdmin` admitidos en roles personalizados (punto 33) | Ver punto 33 |
+| `audit_alerts.tf:5` | Métricas y alertas de auditoría del semilla creadas con las credenciales de la persona de la etapa 0 (puntos 22 y 58) | Ver punto 58 |
+| `main.tf:31` | `gcloud asset search-all-resources` de `drift.yml` con el semilla como proyecto de cuota (punto 60) | Ver punto 60 |
+| `main.tf:121` | Que la API de Cloud Storage acepte el número del proyecto semilla al consultar su agente (punto 27) | Ver punto 27 |
+| `main.tf:196` | Doble región válida en `state_bucket_dual_regions` (punto 31) | Ver punto 31 |
+| `main.tf:199` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket (punto 13) | Repetir el apply (propagación de IAM) |
+| `service_accounts.tf:92` | `init`/`plan`/`apply` del backend con las condiciones de §6.2 (punto 1) | Carpetas administradas con IAM propio por prefijo |
+| `service_accounts.tf:212` | Permisos del rol personalizado `<prefix>TfKmsSecretIamGranter` admitidos en roles personalizados (punto 33) | Ver punto 33 |
+| `service_accounts.tf:238` | Permisos del rol personalizado `<prefix>TfSecretContainerAdmin` admitidos en roles personalizados (punto 33) | Ver punto 33 |
 | `wif.tf:36` | Que el mapeo de `attribute.environment` no falle en trabajos sin entorno de GitHub | Sin indicación en el código. Se notaría en el primer trabajo `plan 1-org` (sin entorno): falla el paso de autenticación. Propuesta: quitar del mapeo `attribute.environment` (ningún `principalSet` ni condición lo usa hoy) y volver a aplicar la etapa 0 a mano (runbook 01, "Cambios posteriores") |
 
 ### Etapa 1 (`stages/1-org`)
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
+| `essential_contacts.tf:8` | Contactos esenciales de la organización con grupos y `essential_contacts_language` (punto 57) | Ver punto 57 |
 | `iam.tf:115` | Condición con `iam.googleapis.com/modifiedGrantsByRole` aceptada en una carpeta y evaluada al cambiar el IAM de los proyectos de abajo (punto 28) | Ver punto 28 |
 | `main.tf:118` | Que `iam.allowedPolicyMemberDomains` no rechace los `principalSet://` de WIF en cambios futuros | Sin indicación |
 | `main.tf:139` | Activación de SCC (punto 2) | Paso manual del runbook 01 |
@@ -844,6 +958,7 @@ indicación".
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
 | `dns.tf:13` | Resolución de `onprem_dns_domain` desde un spoke con la VM DNS de `onprem-sim` (puntos 7 y 36) | Ver punto 36 |
+| `dns.tf:46` | Registro de Cloud DNS en la VPC `onprem-sim` y detector `DNS_LOGGING_DISABLED` (punto 61) | Ver punto 61 |
 | `firewall.tf:73` | Que el tráfico delegado con `goto_next` llegue a la política del spoke, que las verificaciones de salud lleguen a los backends con `lb_backend` y que IAP solo entre a las VM con `iap_ssh` | Sin indicación |
 | `firewall.tf:90` | Que la VM DNS de `onprem-sim` responda a una consulta de un spoke y la respuesta vuelva por la ruta anunciada (punto 36) | Ver punto 36 |
 | `vpn.tf:127` | Anuncios de las dos VPN, preferencia por la primaria y paso a la de DR (punto 37) | Ver punto 37 |
@@ -884,6 +999,10 @@ indicación".
 
 | Archivo:línea | Qué verificar | Si falla |
 |---|---|---|
+| `audit-alerts/main.tf:11` | Que SHA reconozca los filtros de una sola línea y dé por buenas las alertas (punto 58) | Ver punto 58 |
+| `audit-alerts/main.tf:22` | Tipo de recurso con que llegan las series de cada métrica (`global`, `gcs_bucket`, `cloudsql_database`) (punto 58) | Ver punto 58 |
+| `audit-alerts/main.tf:150` | El grupo `security_admins` acepta correo de Cloud Monitoring (punto 58) | Ver punto 58 |
+| `audit-alerts/main.tf:182` | Alerta aceptada justo después de crear la métrica (punto 58) | Repetir el apply (lo dice el código) |
 | `backup-dr/main.tf:19` | API `backupdr` habilitada y bóveda en otra región que acepte respaldos de VM y Cloud SQL | Sin indicación |
 | `backup-dr/main.tf:21` | El destroy de dev falla mientras la bóveda tenga respaldos dentro de la retención forzada | Ver punto 86 (`destroy.yml` lo avisa en el plan; para la prueba, `enable_backup = false` en dev) |
 | `backup-dr/main.tf:35` | Plan de Cloud SQL (`sqladmin.googleapis.com/Instance`) en el proveedor 6.x y roles de la cuenta de la bóveda (salida `vault_service_account`) | Otorgar los roles en la etapa 4 o 5 |
@@ -918,8 +1037,10 @@ indicación".
 | `log-export/main.tf:65` | Bloqueo sobre un bucket ya creado (punto 15) | Ver punto 15 |
 | `log-export/main.tf:97` | Permiso del agente de Cloud Storage sobre la llave al crear el bucket | Repetir el apply |
 | `memorystore/main.tf:65` | Permiso del agente sobre la llave y PSA sobre la red del host | Sin indicación |
-| `network-spoke/main.tf:158` | Destroy de la conexión de PSA después de borrar las instancias de la etapa 5 | Ver punto 87 (volver a lanzar `destroy.yml` pasado el plazo de cuatro días que documenta PSA) |
-| `network-spoke/main.tf:181` | Dos spokes no crean su peering a la vez; las rutas BGP llegan al spoke (punto 6) | El pipeline aplica los entornos en serie |
+| `network-hub/variables.tf:104` | Flow logs al 100 % sin hallazgo de `VPC_FLOW_LOGS_SETTINGS_NOT_RECOMMENDED` y volumen contra la estimación (punto 62) | Ver punto 62 |
+| `network-spoke/variables.tf:115` | Lo mismo en los spokes; dev y qa con 0.5 sí se marcan (punto 62) | Ver punto 62 |
+| `network-spoke/main.tf:159` | Destroy de la conexión de PSA después de borrar las instancias de la etapa 5 | Ver punto 87 (volver a lanzar `destroy.yml` pasado el plazo de cuatro días que documenta PSA) |
+| `network-spoke/main.tf:182` | Dos spokes no crean su peering a la vez; las rutas BGP llegan al spoke (punto 6) | El pipeline aplica los entornos en serie |
 | `observability/main.tf:55` | Los buzones de `notification_emails` existen y aceptan las alertas | Sin indicación |
 | `observability/main.tf:203` | La alerta de memoria de VM necesita Ops Agent | Sin él la condición queda sin datos |
 | `observability/main.tf:288` | SLI por solicitudes con los filtros del balanceador y `select_slo_burn_rate` con tráfico real | Sin indicación |
@@ -927,12 +1048,13 @@ indicación".
 | `off-hours-shutdown/main.tf:101` | `setSize` de un pool regional cuenta `nodeCount` por zona; la operación del primer paso termina antes del segundo (punto 71) | Ver punto 71 |
 | `org/main.tf:20` | Ubicaciones permitidas (punto 3) | Ver punto 3 |
 | `org/main.tf:50` | Agentes de servicio de Google siguen recibiendo roles con `iam.allowedPolicyMemberDomains` | Sin indicación |
-| `project-factory/main.tf:27` | Proyecto sin red default y sin error al intentar borrarla | Sin indicación |
+| `project-factory/main.tf:37` | Proyecto sin red default y sin error al intentar borrarla | Sin indicación |
+| `project-factory/main.tf:93` | OS Login en los metadatos del proyecto: el detector `OS_LOGIN_DISABLED` no lo marca y IAP + OS Login dan SSH con `roles/compute.osLogin` (punto 59) | Ver punto 59 |
 | `secrets/main.tf:21` | Agente de Secret Manager con permiso sobre las llaves antes de crear los secretos | Lo da la etapa que llama al módulo (etapa 2) |
 | `storage/main.tf:86` | Agente de Cloud Storage con permiso sobre la llave; llave de `us` para un bucket con `custom_placement_config` | Sin indicación |
 | `storage/main.tf:89` | `gcp.resourceLocations` y la doble región (punto 3) | Ver punto 3 |
-| `vpc-sc/main.tf:42` | Perímetro en dry-run sin bloque `status`; paso a forzado en un solo plan | Sin indicación |
-| `vpc-sc/main.tf:134` | Regla de entrada del pipeline (punto 5), como recurso aparte en dry-run y forzado | Ver punto 5 |
+| `vpc-sc/main.tf:49` | Perímetro en dry-run sin bloque `status`; paso a forzado en un solo plan | Sin indicación |
+| `vpc-sc/main.tf:147` | Regla de entrada del pipeline (punto 5), como recurso aparte en dry-run y forzado | Ver punto 5 |
 
 ### Marcadores solo en README
 

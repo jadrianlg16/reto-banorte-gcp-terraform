@@ -9,7 +9,8 @@ En el proyecto `net-hub` que crea `1-org` (`common_project_ids["net_hub"]`):
 
 - APIs `compute.googleapis.com` y `dns.googleapis.com` (sin apagarlas al destruir).
 - VPC hub `<prefix>-common-net-hub` (módulo `network-hub`): subredes `hub` (región primaria) y
-  `hub_dr` (región de DR) con Private Google Access y flow logs al 50 %, un Cloud Router por
+  `hub_dr` (región de DR) con Private Google Access y flow logs al 100 % (valor por defecto del
+  módulo, CIS 3.10, ADR 0027; igual en `onprem-sim`), un Cloud Router por
   región con `hub_asn`, sin ruta por defecto a internet y con la ruta al VIP restringido
   `199.36.153.4/30`.
 - Dos HA VPN, cada una con dos túneles IKEv2 y BGP (módulo `hybrid-connectivity`, SLA
@@ -47,7 +48,11 @@ En el proyecto `net-hub` que crea `1-org` (`common_project_ids["net_hub"]`):
   módulo, prioridad 65000, con registro).
 - DNS (módulo `dns`): zona de reenvío de `onprem_dns_domain` hacia `onprem_dns_servers` por la
   VPN (`forwarding_path = private`) y política de servidor con reenvío entrante y registro de
-  consultas sobre la VPC hub.
+  consultas sobre la VPC hub. Con `simulate_onprem = true`, otra política
+  `<prefix>-common-net-dns-onprem-sim-policy` solo con registro de consultas sobre la VPC
+  `onprem-sim` (CIS 2.13: el detector revisa cada red).
+- Las métricas y alertas de auditoría (CIS 2.5 a 2.12) del proyecto `net-hub` las crea `1-org`,
+  que crea el proyecto.
 
 Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_cidrs` y cada
 `spoke_supernets` no se traslapan con `onprem_cidrs` ni entre sí; `hub_cidrs` cabe en
@@ -150,6 +155,7 @@ Para el hub:
 
 | Name | Type |
 | ---- | ---- |
+| [google_dns_policy.onprem_sim](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_policy) | resource |
 | [google_project_service.hub](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_service) | resource |
 | [random_password.vpn_shared_secret](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
 | [google_secret_manager_secret_version.vpn_shared_secret](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/secret_manager_secret_version) | data source |

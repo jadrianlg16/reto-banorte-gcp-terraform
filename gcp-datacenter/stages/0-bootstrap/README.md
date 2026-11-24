@@ -9,7 +9,8 @@ etapa.
 | Recurso | Nombre (prefix `bnt`) | Notas |
 |---|---|---|
 | Carpeta | `bootstrap` | módulo `folders` |
-| Proyecto semilla | `bnt-bootstrap-seed[-<sufijo>]` | módulo `project-factory`; APIs de esta etapa y las de nivel organización que las etapas 1 a 5 cobran a este proyecto como proyecto de cuota |
+| Proyecto semilla | `bnt-bootstrap-seed[-<sufijo>]` | módulo `project-factory`; APIs de esta etapa y las de nivel organización que las etapas 1 a 5 cobran a este proyecto como proyecto de cuota (entre ellas `essentialcontacts` para 1-org y `cloudasset`, que además usa `drift.yml`), con OS Login en sus metadatos (CIS 4.4) |
+| Métricas y alertas de auditoría | `bnt-bootstrap-ops-audit-<control>` en el proyecto semilla | módulo `audit-alerts` (CIS 2.5 a 2.12): ocho métricas del CIS más cambios de políticas de firewall de red, cada una con su alerta, y un canal de correo hacia `security_alert_email` |
 | Registros de auditoría | `allServices` en el proyecto semilla | ADMIN_READ, DATA_READ y DATA_WRITE: toda lectura y escritura del estado queda auditada |
 | Llavero y llave KMS | `bnt-bootstrap-sec-keyring-us` / `bnt-bootstrap-sec-state` | módulo `kms`; en la ubicación multirregional de KMS que corresponde al bucket (`us` por defecto); rotación de 90 días, `prevent_destroy` (ADR 0008) |
 | Bucket de estado | `bnt-bootstrap-ops-tfstate[-<sufijo>]` | multirregional `US` por defecto (`state_bucket_location`) o doble región configurable (`state_bucket_dual_regions`, con replicación turbo); versionado, acceso uniforme, sin acceso público, CMEK con la llave anterior, `prevent_destroy`; conserva `state_versions_to_keep` versiones viejas |
@@ -85,6 +86,7 @@ para el repositorio autorizado.
 
 | Cuenta | Ámbito | Rol | Motivo |
 |---|---|---|---|
+| `1-org` | organización | `roles/essentialcontacts.admin` | contactos esenciales de la organización (CIS 1.17) |
 | `1-org` | organización | `roles/resourcemanager.folderAdmin` | crear las carpetas `common`, `dev`, `qa`, `prod`, su IAM y la configuración de auditoría de `prod` |
 | `1-org` | organización | `roles/resourcemanager.projectCreator` | crear los proyectos de `common` (queda como dueña de lo que crea) |
 | `1-org` | organización | `roles/orgpolicy.policyAdmin` | las nueve políticas de organización |
@@ -238,6 +240,8 @@ variables del repositorio de GitHub (`GCP_WORKLOAD_IDENTITY_PROVIDER`,
   sobre la propia carpeta `bootstrap`.
 - Con `state_bucket_dual_regions`: que las dos regiones formen una doble región configurable
   válida dentro de `state_bucket_location`.
+- Métricas, alertas y canal de `audit-alerts` en el proyecto semilla, y que el grupo de
+  `security_alert_email` reciba el correo de verificación del canal (pendientes 22 y 58).
 
 ## Pruebas
 
@@ -248,7 +252,9 @@ exigencias del bucket, que es multirregional y que se cifra con la llave `state`
 condición de WIF por IDs y el `principalSet` exacto por `repository_id`, la política de
 denegación (carpeta, principal, permisos y que no niega objetos ni el proyecto de cuota), el
 rol de contenedores de secretos sin versiones, las condiciones de cada asignación del bucket y
-las lecturas de §6.1, y que no hay roles básicos; la variante de doble región; y que se
+las lecturas de §6.1, y que no hay roles básicos; las APIs `cloudasset`, `essentialcontacts` y
+`monitoring` del semilla, las nueve métricas de auditoría y `essentialcontacts.admin` de
+`1-org`; la variante de doble región; y que se
 rechazan `prefix`, `github_repository` y `github_repository_id` inválidos, una ubicación
 regional del estado y una doble región sin `primary_region`.
 
@@ -272,6 +278,7 @@ regional del estado y una doble región sin `primary_region`.
 | Name | Source | Version |
 | ---- | ------ | ------- |
 | <a name="module_bootstrap_folder"></a> [bootstrap\_folder](#module\_bootstrap\_folder) | ../../modules/folders | n/a |
+| <a name="module_seed_audit_alerts"></a> [seed\_audit\_alerts](#module\_seed\_audit\_alerts) | ../../modules/audit-alerts | n/a |
 | <a name="module_seed_project"></a> [seed\_project](#module\_seed\_project) | ../../modules/project-factory | n/a |
 | <a name="module_stage_iam"></a> [stage\_iam](#module\_stage\_iam) | ../../modules/iam | n/a |
 | <a name="module_state_kms"></a> [state\_kms](#module\_state\_kms) | ../../modules/kms | n/a |
@@ -303,6 +310,7 @@ regional del estado y una doble región sin `primary_region`.
 | <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización de GCP (sin el prefijo organizations/). | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en todos los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
 | <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). La etapa 0 no crea recursos regionales: el bucket de estado y su llave van en state\_bucket\_location para sobrevivir a la caída de esta región. | `string` | n/a | yes |
+| <a name="input_security_alert_email"></a> [security\_alert\_email](#input\_security\_alert\_email) | Correo del grupo security\_admins (el mismo de groups.security\_admins de la etapa 1): recibe las alertas de auditoría del proyecto semilla (CIS 2.5 a 2.12, módulo audit-alerts). | `string` | n/a | yes |
 | <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con ubicación (§4.2). Debe incluir la ubicación de KMS del estado (lower(state\_bucket\_location): us, eu o asia). | `map(string)` | <pre>{<br/>  "asia": "asia",<br/>  "eu": "eu",<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_project_suffix"></a> [project\_suffix](#input\_project\_suffix) | Sufijo opcional que se agrega al ID del proyecto semilla y al nombre del bucket de estado para que sean únicos a nivel mundial. Vacío: sin sufijo. | `string` | `""` | no |
 | <a name="input_state_bucket_dual_regions"></a> [state\_bucket\_dual\_regions](#input\_state\_bucket\_dual\_regions) | Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo ["us-central1", "us-east4"], primaria y DR del ADR 0002), dentro de state\_bucket\_location; lleva replicación turbo (RPO de 15 minutos). Vacío (por defecto): bucket multirregional. | `list(string)` | `[]` | no |
