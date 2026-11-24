@@ -29,6 +29,7 @@ Documentos que vas a usar (rutas relativas a `gcp-datacenter/`):
 | [`docs/pendientes-apply.md`](pendientes-apply.md) | Lo que solo un despliegue real puede confirmar: tu lista de pruebas |
 | [`docs/runbooks/04-conmutacion-a-dr.md`](runbooks/04-conmutacion-a-dr.md) | Simulacro de DR |
 | [`docs/cumplimiento-cis.md`](cumplimiento-cis.md) §6 | Cómo evaluar el CIS con Security Command Center |
+| [`docs/backlog.md`](backlog.md) | Lo que falta para terminar el proyecto, con lo que te toca a ti en la sección "Depende de GCP" |
 | [`README.md`](../README.md) | Arquitectura, orden de despliegue y criterios de aceptación |
 
 ---
@@ -52,8 +53,9 @@ Identity Free** (sin costo).
 5. **Crea tu usuario de trabajo** en <https://admin.google.com> → Directorio → Usuarios (por
    ejemplo `tu.nombre@<dominio>`), con verificación en dos pasos. Con él corres la etapa 0; el
    superadministrador queda solo para emergencias. Los controles de Cloud Identity que pide el
-   CIS (verificación en dos pasos obligatoria, llaves de seguridad, etc.) están en el runbook 01,
-   "Prerrequisitos".
+   CIS (verificación en dos pasos obligatoria, llaves de seguridad para administradores, Access
+   Transparency, etc.) están en la sección "Controles manuales del CIS" del runbook 01, con la
+   evidencia que hay que guardar de cada uno.
 6. **Cuenta de facturación.** Créala en Facturación. **Recomendación: de pago, no de prueba
    gratuita.** Según Google, con la prueba gratuita (300 USD por 90 días) no se pueden pedir
    aumentos de cuota (<https://docs.cloud.google.com/free/docs/free-cloud-features>) y este
@@ -228,6 +230,14 @@ del despliegue mínimo (cambia cada `<...>`; guárdalo fuera del repositorio):
 
 - Dev va sin respaldos y con sus proyectos borrables desde el inicio para que el destroy del
   criterio de aceptación no se bloquee (sección H). Los respaldos se prueban en prod.
+- **Apagado fuera de horario (ADR 0028).** Los `terraform.tfvars.example` de dev y qa lo traen
+  encendido (`enable_off_hours_shutdown = true` en la etapa 4 y `off_hours_shutdown` en la 5):
+  Cloud SQL se detiene de 20:00 a 07:00, hora de Monterrey, y todo el fin de semana. El primer
+  apply la crea encendida, pero si `apply.yml` vuelve a correr con Cloud SQL detenida, la prueba
+  de humo de dev falla a propósito con un mensaje que lo dice ([`pipeline.md`](pipeline.md), "Prueba
+  de humo fuera de horario"). Lanza los despliegues entre semana de 07:00 a 20:00, o apágalo para
+  las pruebas con `"off_hours_shutdown": { "enabled": false }` en `stages/5-workloads/envs/dev` y
+  `qa`. Probar que sí apaga y enciende son los puntos 70 a 81 de `pendientes-apply.md`.
 - No pongas `labels` dentro de `common`: cada raíz valida las suyas.
 - Si la organización ya tenía una política de Access Context Manager (runbook 01, paso 8), agrega
   `"stages/2-security": { "access_policy_id": "<número>" }`.

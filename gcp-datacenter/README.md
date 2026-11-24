@@ -13,6 +13,11 @@ La fuente única de diseño es [`docs/CONTRATO.md`](docs/CONTRATO.md); las decis
 [`docs/adr/`](docs/adr/README.md), el pipeline en [`docs/pipeline.md`](docs/pipeline.md) y los
 procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 
+Para desplegarlo por primera vez en una organización propia (desde crear la organización hasta
+el destroy, con un prompt para Claude Code): [`docs/guia-colaborador-gcp.md`](docs/guia-colaborador-gcp.md).
+Lo que falta para terminar el proyecto: [`docs/backlog.md`](docs/backlog.md). Sesiones para
+entregar la operación: [`docs/transferencia-de-conocimiento.md`](docs/transferencia-de-conocimiento.md).
+
 ## Arquitectura en breve
 
 - Organización con carpetas `bootstrap`, `common`, `dev`, `qa` y `prod`, nueve políticas de
@@ -77,7 +82,7 @@ procedimientos de operación en [`docs/runbooks/`](docs/runbooks/).
 | `policies/` | Siete políticas de Conftest (Rego), sus pruebas y 27 planes de ejemplo en `fixtures/` |
 | `scripts/` | `check.sh`, `policy-check.sh`, `docs.sh`, `affected-roots.sh`, `selftest.sh`, `plan-fingerprint.py`, `unmanaged-resources.py` y otros auxiliares del pipeline |
 | `tests/` | Terratest y prueba de extremo a extremo (paquete 13: compilan y sus fixtures validan, sin ejecutar contra GCP) |
-| `docs/` | Contrato, ADR, pipeline, runbooks, diagramas, `pendientes-apply.md`, `cumplimiento-cis.md` y `estimacion-de-costos.md` |
+| `docs/` | Contrato, ADR, pipeline, runbooks, diagramas, `pendientes-apply.md`, `cumplimiento-cis.md`, `estimacion-de-costos.md`, la guía del colaborador, el plan de transferencia de conocimiento y el `backlog.md` |
 | `../.github/workflows/` | `pr.yml`, `apply.yml`, `destroy.yml`, `drift.yml`, `terratest.yml` y el reutilizable `_terraform-root.yml` |
 
 ## Requisitos previos
