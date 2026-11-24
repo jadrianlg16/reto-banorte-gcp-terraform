@@ -1,13 +1,14 @@
-# Etapa `3-networks` (hub)
+# Etapa `2-networks` (hub)
 
-Raíz del hub de red (contrato §7.3, ADR 0014). Los spokes de cada entorno viven en
+Raíz del hub de red (ADR 0029 §2 y §6, ADR 0014). Los spokes de cada entorno viven en
 `envs/{dev,qa,prod}` y tienen su propio estado (ver [envs/dev/README.md](envs/dev/README.md)).
+Todo vive en el proyecto único de la landing zone (`project_id`, ADR 0029 §1): el hub,
+`onprem-sim` y los tres spokes son VPC del mismo proyecto.
 
 ## Qué crea
 
-En el proyecto `net-hub` que crea `1-org` (`common_project_ids["net_hub"]`):
+En el proyecto `project_id` (lo crea una persona; esta raíz no lo crea ni lo borra):
 
-- APIs `compute.googleapis.com` y `dns.googleapis.com` (sin apagarlas al destruir).
 - VPC hub `<prefix>-common-net-hub` (módulo `network-hub`): subredes `hub` (región primaria) y
   `hub_dr` (región de DR) con Private Google Access y flow logs al 100 % (valor por defecto del
   módulo, CIS 3.10, ADR 0027; igual en `onprem-sim`), un Cloud Router por
@@ -26,12 +27,10 @@ En el proyecto `net-hub` que crea `1-org` (`common_project_ids["net_hub"]`):
   - `true`: VPC `<prefix>-common-net-onprem-sim` (`onprem_sim_cidr`, 192.168.0.0/24) con un
     Cloud Router (`onprem_asn`, que debe ser privado) y un gateway HA VPN en la región primaria
     y, con `enable_vpn_dr`, otro router y otro gateway en la región de DR (sin subred, solo
-    para la VPN de DR); cada punta de `hybrid-connectivity` apunta al gateway de la otra. Una
-    política de firewall de red `<prefix>-common-net-fw-onprem-sim` en esa VPC permite solo
-    DNS (TCP/UDP 53) desde 35.199.192.0/19 y SSH por IAP, para poder probar el reenvío DNS con
-    una VM DNS creada a mano en `onprem_dns_servers`. El secreto compartido lo genera
-    `random_password` y **solo existe en el estado de Terraform**, cifrado con la llave CMEK
-    del bucket de estado (ADR 0006 y 0008); no sale en ninguna salida.
+    para la VPN de DR); cada punta de `hybrid-connectivity` apunta al gateway de la otra. El
+    secreto compartido lo genera `random_password` y **solo existe en el estado de
+    Terraform**, cifrado con la llave CMEK del bucket de estado (ADR 0006 y 0008); no sale en
+    ninguna salida.
   - `false`: gateway externo con `onprem_vpn_gateway_ips` (1 o 2 IP), uno por VPN (el de DR se
     llama `<prefix>-common-net-vpn-onprem-dr-peer` y usa las mismas IP). `onprem_asn` puede
     ser público de 2 o 4 bytes. El secreto se lee de Secret Manager (`onprem_vpn_secret_id`)
@@ -39,20 +38,22 @@ En el proyecto `net-hub` que crea `1-org` (`common_project_ids["net_hub"]`):
     se admite); el valor también queda en el estado cifrado, nunca en variables.
   - Las validaciones exigen las entradas de cada modo y rechazan las del otro.
 - Cloud Interconnect (VLAN attachments) solo con `enable_interconnect = true`.
-- Política de firewall jerárquica `<prefix>-common-net-fw` asociada a la organización (módulo
-  `firewall`) **sin reglas `allow`**: delega con `goto_next` a la política de red de cada spoke
-  las verificaciones de salud y proxies de Google (35.191.0.0/16, 130.211.0.0/22, TCP), el IAP
-  (35.235.240.0/20, TCP 22 y 3389), el tráfico interno (`hub_supernet` y `spoke_supernets`) y el
-  de `onprem_cidrs`; con `simulate_onprem = true` delega además 35.199.192.0/19 (TCP/UDP 53)
-  solo hacia la VPC `onprem-sim` (`target_resources`); deniega todo lo demás (regla del
-  módulo, prioridad 65000, con registro).
+- Políticas de firewall de red (módulo `firewall`), una por VPC común, cada una con la
+  denegación por defecto de la entrada (prioridad 65000, con registro):
+  - `<prefix>-common-net-fw-hub` en la VPC hub, **sin reglas `allow`** (el hub no tiene
+    cargas).
+  - Con `simulate_onprem = true`, `<prefix>-common-net-fw-onprem-sim` en esa VPC: permite solo
+    DNS (TCP/UDP 53) desde 35.199.192.0/19 y SSH por IAP (TCP 22 desde 35.235.240.0/20), para
+    poder probar el reenvío DNS con una VM DNS creada a mano en `onprem_dns_servers`.
 - DNS (módulo `dns`): zona de reenvío de `onprem_dns_domain` hacia `onprem_dns_servers` por la
   VPN (`forwarding_path = private`) y política de servidor con reenvío entrante y registro de
   consultas sobre la VPC hub. Con `simulate_onprem = true`, otra política
   `<prefix>-common-net-dns-onprem-sim-policy` solo con registro de consultas sobre la VPC
   `onprem-sim` (CIS 2.13: el detector revisa cada red).
-- Las métricas y alertas de auditoría (CIS 2.5 a 2.12) del proyecto `net-hub` las crea `1-org`,
-  que crea el proyecto.
+
+No crea (regla de recursos únicos, ADR 0029 §4): las APIs del proyecto (`compute`, `dns` y, con
+on-premises real, `secretmanager`), que habilita `0-bootstrap` una sola vez, ni las métricas y
+alertas de auditoría del proyecto, que viven en `1-base`.
 
 Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_cidrs` y cada
 `spoke_supernets` no se traslapan con `onprem_cidrs` ni entre sí; `hub_cidrs` cabe en
@@ -60,17 +61,21 @@ Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_c
 
 ### Notas de diseño
 
-- **Una regla `allow` de la organización es final.** Por eso la política jerárquica no
-  permite nada: las verificaciones de salud y el IAP llegan a la política de red del spoke,
-  que solo los deja pasar hacia las VM con la etiqueta segura `lb_backend` (verificaciones de
-  salud, puertos `lb_backend_ports`) o `iap_ssh` (TCP 22). Una VM sin etiqueta no los recibe;
-  el acceso por IAP además exige `iap.tunnelInstances.accessViaIAP`. La VPC hub no tiene
-  política de red: lo delegado se resuelve con sus reglas de VPC y la denegación implícita.
+- **Sin política jerárquica (ADR 0029 §6).** Antes, la organización negaba por defecto y
+  delegaba con `goto_next` las verificaciones de salud, el IAP, el tráfico interno y el de
+  on-premises a la política de red de cada VPC. En un proyecto sin organización ni carpetas no
+  hay dónde asociarla, así que cada VPC tiene su propia política de red con la misma intención:
+  la denegación por defecto pasa a cada política, y lo que se delegaba lo decide la política de
+  la VPC de destino, igual que antes. En los spokes solo pasan las verificaciones de salud
+  hacia la etiqueta segura `lb_backend` (puertos `lb_backend_ports`) y el SSH por IAP hacia
+  `iap_ssh`; en `onprem-sim`, el DNS del reenvío y el SSH por IAP. La VPC hub no tenía política
+  de red y lo delegado terminaba en la denegación implícita de la VPC; su política nueva tampoco
+  permite nada. `VERIFICAR-EN-APPLY` (en `firewall.tf`): que la VPN y el reenvío DNS entrante
+  sigan funcionando con esa denegación.
 - **On-premises simulado sin servidor DNS.** La VPC `onprem-sim` no tiene un servidor DNS en
   `onprem_dns_servers`: la zona de reenvío queda creada pero las consultas a
   `onprem_dns_domain` no reciben respuesta hasta que se cree a mano una VM DNS con esa IP en
-  `onprem-sim`. El firewall ya admite esa prueba (delegación solo hacia `onprem-sim` y su
-  política de red).
+  `onprem-sim`. El firewall ya admite esa prueba (política de red de `onprem-sim`).
 - **Rotación del secreto de la VPN real.** En el proveedor, `shared_secret` fuerza el
   reemplazo del túnel, y los túneles tienen nombre fijo (se destruyen antes de crearse). Por
   eso la versión es numérica y una rotación entra por PR, y se hace de a un túnel:
@@ -84,40 +89,40 @@ Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_c
   On-premises entra por la primaria (MED menor). El regreso de un flujo hacia la región de DR
   puede ser asimétrico (entra por la VPN primaria y vuelve por la de DR); un firewall con
   estado en on-premises debe admitirlo (`VERIFICAR-EN-APPLY`).
-- Lectura de estado: solo `1-org` (§6.1 permite además `0-bootstrap`, que esta raíz no
-  necesita).
+- **Lectura de estado: ninguna.** El proyecto entra por `project_id` y ninguna salida de
+  `1-base` le hace falta al hub (ADR 0029 §2 permite leer `1-base`). Por eso la raíz no tiene
+  `remote_state.tf` ni `state_bucket`.
 
 ## Cómo se ejecuta
 
 ```sh
-cd stages/3-networks
+cd stages/2-networks
 cp terraform.tfvars.example terraform.tfvars   # ajustar valores
 terraform init -backend-config="bucket=<state_bucket>"
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-Orden: después de `1-org` y antes de cualquier spoke. Las salidas `vpn_gateway_ip_addresses`,
-`vpn_dr_gateway_ip_addresses` y `dns_inbound_forwarder_ips` sirven para configurar el equipo y
-el DNS de on-premises (cuatro túneles: dos por VPN).
+Orden (ADR 0029 §2): después de `1-base` y antes de cualquier spoke. En el pipeline la aplica la
+cuenta `<prefix>-tf-net` en el entorno `common` de GitHub. Las salidas
+`vpn_gateway_ip_addresses`, `vpn_dr_gateway_ip_addresses` y `dns_inbound_forwarder_ips` sirven
+para configurar el equipo y el DNS de on-premises (cuatro túneles: dos por VPN).
 
-## Roles de la cuenta de servicio `<prefix>-tf-3-networks`
+## Permisos de la cuenta de servicio `<prefix>-tf-net`
 
-Para el hub:
+Todos en el proyecto y otorgados por `0-bootstrap` (ADR 0029 §3: ninguna raíz de red da
+permisos de proyecto). Lo que esta raíz necesita:
 
-| Alcance | Rol | Lo asigna | Para qué |
-|---|---|---|---|
-| Organización | `roles/compute.orgFirewallPolicyAdmin` | 0-bootstrap | Crear la política jerárquica y sus reglas |
-| Organización | `roles/compute.orgSecurityResourceAdmin` | 0-bootstrap | Asociar la política a la organización |
-| Organización | `roles/resourcemanager.organizationViewer` | 0-bootstrap | Leer la organización |
-| Proyecto semilla | `roles/serviceusage.serviceUsageConsumer` | 0-bootstrap | Proyecto de cuota |
-| Bucket de estado | §6.2: escritura de `3-networks/hub`, lectura de `1-org` | 0-bootstrap | Estado |
-| Proyecto `net-hub` | `roles/compute.networkAdmin` | 1-org | VPC, subredes, routers, rutas, HA VPN, Interconnect |
-| Proyecto `net-hub` | `roles/compute.securityAdmin` | 1-org | Política de firewall de red de `onprem-sim` y sus reglas (solo con `simulate_onprem = true`) |
-| Proyecto `net-hub` | `roles/dns.admin` | 1-org | Zonas y política de servidor DNS |
-| Proyecto `net-hub` | `roles/serviceusage.serviceUsageAdmin` | 1-org | Habilitar las APIs |
-| Secreto `onprem_vpn_secret_id` | `roles/secretmanager.secretAccessor` | **nadie** (paso manual) | Solo con `simulate_onprem = false`: el secreto lo crea el equipo de red fuera de Terraform y le da este permiso a `<prefix>-tf-3-networks` |
-| Bucket de estado | §6.2: escritura en `3-networks/hub`, lectura de `1-org` | Estado |
+| Alcance | Rol | Para qué |
+|---|---|---|
+| Proyecto | `roles/compute.networkAdmin` | VPC, subredes, routers, rutas, HA VPN, Interconnect |
+| Proyecto | `roles/compute.securityAdmin` | Políticas de firewall de red del hub y de `onprem-sim`, sus reglas y asociaciones |
+| Proyecto | `roles/dns.admin` | Zonas y políticas de servidor DNS |
+| Bucket de estado | escritura de `2-networks/hub` | Estado |
+| Secreto `onprem_vpn_secret_id` | `roles/secretmanager.secretAccessor` | Solo con `simulate_onprem = false`: el secreto lo crea el equipo de red fuera de Terraform y le da este permiso a `<prefix>-tf-net` (paso manual) |
+
+Que `roles/compute.securityAdmin` alcance para crear, asociar y cambiar las reglas de una
+política de firewall de red global es HYPOTHESIS (`VERIFICAR-EN-APPLY`).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -135,15 +140,14 @@ Para el hub:
 | ---- | ------- |
 | <a name="provider_google"></a> [google](#provider\_google) | ~> 6.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.6 |
-| <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
 | <a name="module_dns"></a> [dns](#module\_dns) | ../../modules/dns | n/a |
+| <a name="module_firewall_hub"></a> [firewall\_hub](#module\_firewall\_hub) | ../../modules/firewall | n/a |
 | <a name="module_firewall_onprem_sim"></a> [firewall\_onprem\_sim](#module\_firewall\_onprem\_sim) | ../../modules/firewall | n/a |
-| <a name="module_firewall_org"></a> [firewall\_org](#module\_firewall\_org) | ../../modules/firewall | n/a |
 | <a name="module_hub"></a> [hub](#module\_hub) | ../../modules/network-hub | n/a |
 | <a name="module_onprem_sim"></a> [onprem\_sim](#module\_onprem\_sim) | ../../modules/network-hub | n/a |
 | <a name="module_vpn_hub"></a> [vpn\_hub](#module\_vpn\_hub) | ../../modules/hybrid-connectivity | n/a |
@@ -156,10 +160,8 @@ Para el hub:
 | Name | Type |
 | ---- | ---- |
 | [google_dns_policy.onprem_sim](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_policy) | resource |
-| [google_project_service.hub](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_service) | resource |
 | [random_password.vpn_shared_secret](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
 | [google_secret_manager_secret_version.vpn_shared_secret](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/secret_manager_secret_version) | data source |
-| [terraform_remote_state.org](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/data-sources/remote_state) | data source |
 
 ## Inputs
 
@@ -171,14 +173,13 @@ Para el hub:
 | <a name="input_hub_supernet"></a> [hub\_supernet](#input\_hub\_supernet) | Bloque /16 del hub (plan de direccionamiento: 10.0.0.0/16). Se anuncia a on-premises por BGP y debe contener hub\_cidrs. | `string` | n/a | yes |
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes de la raíz (app, owner, cost\_center y las que se agreguen). env y managed\_by las fija la raíz. | `map(string)` | n/a | yes |
 | <a name="input_onprem_asn"></a> [onprem\_asn](#input\_onprem\_asn) | ASN del router on-premises (plan: 65001). Con on-premises real puede ser público (de 2 o 4 bytes) o privado. En modo simulado es el ASN del Cloud Router de la VPC onprem-sim y debe ser privado. | `number` | n/a | yes |
-| <a name="input_onprem_cidrs"></a> [onprem\_cidrs](#input\_onprem\_cidrs) | Rangos de on-premises, real o simulado (plan: 192.168.0.0/16). Las políticas de firewall delegan este tráfico en los spokes y ningún rango de GCP puede traslaparse con ellos. | `list(string)` | n/a | yes |
+| <a name="input_onprem_cidrs"></a> [onprem\_cidrs](#input\_onprem\_cidrs) | Rangos de on-premises, real o simulado (plan: 192.168.0.0/16). Ningún rango de GCP puede traslaparse con ellos. | `list(string)` | n/a | yes |
 | <a name="input_onprem_dns_domain"></a> [onprem\_dns\_domain](#input\_onprem\_dns\_domain) | Dominio DNS de on-premises que el hub reenvía a onprem\_dns\_servers (por ejemplo corp.example.com.). Termina en punto. | `string` | n/a | yes |
 | <a name="input_onprem_dns_servers"></a> [onprem\_dns\_servers](#input\_onprem\_dns\_servers) | IP de los servidores DNS de on-premises (destino del reenvío por la VPN). Deben estar dentro de onprem\_cidrs. | `list(string)` | n/a | yes |
-| <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización de GCP (la política de firewall jerárquica se crea y se asocia aquí). | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en los nombres (por ejemplo, bnt). | `string` | n/a | yes |
 | <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (subred hub, HA VPN y su Cloud Router). | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto único de la landing zone (ADR 0029 §1; salida project\_id de 0-bootstrap). Aquí viven el hub, onprem-sim y los spokes. Lo crea una persona: esta raíz no lo crea ni lo borra. | `string` | n/a | yes |
 | <a name="input_spoke_supernets"></a> [spoke\_supernets](#input\_spoke\_supernets) | Mapa entorno (dev, qa, prod) → /16 de su spoke (plan: 10.10.0.0/16, 10.20.0.0/16, 10.30.0.0/16). El hub los anuncia a on-premises por BGP. | `map(string)` | n/a | yes |
-| <a name="input_state_bucket"></a> [state\_bucket](#input\_state\_bucket) | Bucket de estado de Terraform (salida state\_bucket de 0-bootstrap) del que se leen las etapas anteriores. | `string` | n/a | yes |
 | <a name="input_vpn_bgp_ranges"></a> [vpn\_bgp\_ranges](#input\_vpn\_bgp\_ranges) | Dos /30 de 169.254.0.0/16 para las sesiones BGP de los túneles de la interfaz 0 y 1 (plan: 169.254.0.0/30 y 169.254.0.4/30). El Cloud Router del hub toma la primera IP de cada /30. | `list(string)` | n/a | yes |
 | <a name="input_enable_interconnect"></a> [enable\_interconnect](#input\_enable\_interconnect) | Crea los VLAN attachments de Cloud Interconnect de interconnect\_attachments en el router primario del hub. Apagado por defecto. | `bool` | `false` | no |
 | <a name="input_enable_vpn_dr"></a> [enable\_vpn\_dr](#input\_enable\_vpn\_dr) | Crea la segunda HA VPN (dos túneles y BGP) en el Cloud Router del hub en dr\_region, y con simulate\_onprem = true su punta en onprem-sim. Sin ella, perder la región primaria deja a la región de DR sin camino a on-premises. | `bool` | `true` | no |
@@ -199,11 +200,10 @@ Para el hub:
 | ---- | ----------- |
 | <a name="output_bgp_advertised_ranges"></a> [bgp\_advertised\_ranges](#output\_bgp\_advertised\_ranges) | Rangos que el hub anuncia a on-premises por BGP, leídos de la sesión if0 de la VPN primaria (ordenados). Todas las sesiones de las dos VPN anuncian los mismos. |
 | <a name="output_dns_inbound_forwarder_ips"></a> [dns\_inbound\_forwarder\_ips](#output\_dns\_inbound\_forwarder\_ips) | IP de reenvío entrante de Cloud DNS en el hub, a las que on-premises reenvía las zonas de GCP. Se conocen hasta el apply. |
-| <a name="output_firewall_policy_id"></a> [firewall\_policy\_id](#output\_firewall\_policy\_id) | ID de la política de firewall jerárquica de la organización (locations/global/firewallPolicies/<id>). |
-| <a name="output_firewall_policy_rules"></a> [firewall\_policy\_rules](#output\_firewall\_policy\_rules) | Reglas de la política jerárquica creadas por la raíz, leídas de los recursos (nombre → prioridad, acción, orígenes, VPC destino y protocolos/puertos). Además, el módulo crea la denegación por defecto de la entrada (prioridad 65000). |
+| <a name="output_firewall_policy_id"></a> [firewall\_policy\_id](#output\_firewall\_policy\_id) | ID de la política de firewall de red de la VPC hub (projects/<proyecto>/global/firewallPolicies/<nombre>). Reemplaza a la política jerárquica de la organización (ADR 0029 §6). |
+| <a name="output_firewall_policy_rules"></a> [firewall\_policy\_rules](#output\_firewall\_policy\_rules) | Reglas propias de la política de red de la VPC hub, leídas de los recursos (nombre → prioridad, acción, orígenes y protocolos/puertos). Vacío a propósito: el hub no tiene cargas y solo queda la denegación por defecto de la entrada que crea el módulo (prioridad 65000, con registro). |
 | <a name="output_hub_network_name"></a> [hub\_network\_name](#output\_hub\_network\_name) | Nombre de la VPC hub. |
 | <a name="output_hub_network_self_link"></a> [hub\_network\_self\_link](#output\_hub\_network\_self\_link) | self\_link de la VPC hub, para el peering y las zonas de peering DNS de los spokes. |
-| <a name="output_hub_project_id"></a> [hub\_project\_id](#output\_hub\_project\_id) | ID del proyecto net-hub. |
 | <a name="output_hub_routers"></a> [hub\_routers](#output\_hub\_routers) | Mapa región → nombre del Cloud Router del hub. |
 | <a name="output_onprem_sim_firewall_policy_id"></a> [onprem\_sim\_firewall\_policy\_id](#output\_onprem\_sim\_firewall\_policy\_id) | ID de la política de firewall de red de la VPC onprem-sim (DNS desde 35.199.192.0/19 e IAP), o null con simulate\_onprem = false. |
 | <a name="output_onprem_sim_network_name"></a> [onprem\_sim\_network\_name](#output\_onprem\_sim\_network\_name) | Nombre de la VPC onprem-sim, o null con simulate\_onprem = false. |
