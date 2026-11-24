@@ -675,6 +675,28 @@ bash scripts/go-test-report.sh "$g/una-falla.json" 99 >/dev/null 2>&1
 check "go-test-report: una prueba fallida falla aunque no haya omitidas" 1 $?
 bash scripts/go-test-report.sh "$g/tres-omitidas.json" x >/dev/null 2>&1
 check "go-test-report: máximo inválido es error de uso" 2 $?
+# Sin organización (salida real de go test -json, 24 nov 2026: TestOrg y TestVPCSC omitidas con
+# la marca [sin-organizacion] y TestGKE por su compuerta): con TERRATEST_ORG_ID vacío, las dos
+# de organización no cuentan contra el máximo; con TERRATEST_ORG_ID definido, sí.
+TERRATEST_ORG_ID="" bash scripts/go-test-report.sh "$g/omitidas-sin-organizacion.json" 1 "$tmp/go-org.md" \
+  >"$tmp/go-org.txt" 2>&1
+check "go-test-report: sin TERRATEST_ORG_ID, TestOrg y TestVPCSC no cuentan (3 omitidas, máximo 1, pasa)" 0 $?
+TERRATEST_ORG_ID="" bash scripts/go-test-report.sh "$g/omitidas-sin-organizacion.json" 0 >/dev/null 2>&1
+check "go-test-report: sin TERRATEST_ORG_ID, la omisión de TestGKE sigue contando (máximo 0, falla)" 1 $?
+TERRATEST_ORG_ID="123456789012" bash scripts/go-test-report.sh "$g/omitidas-sin-organizacion.json" 2 >/dev/null 2>&1
+check "go-test-report: con TERRATEST_ORG_ID definido, la marca no exime (3 omitidas, máximo 2, falla)" 1 $?
+grep -q '2 sin organización que no cuentan' "$tmp/go-org.txt" &&
+  [ "$(grep -c '(sin organización: no cuenta)' "$tmp/go-org.md")" = 2 ] &&
+  grep -q '| 0 | 0 | 3 | 2 | 1 |' "$tmp/go-org.md"
+check "go-test-report: la salida y el resumen marcan las 2 omisiones sin organización" 0 $?
+TERRATEST_ORG_ID="" bash scripts/go-test-report.sh "$g/tres-omitidas.json" 2 >/dev/null 2>&1
+check "go-test-report: sin TERRATEST_ORG_ID, las omisiones sin marca cuentan igual (3, máximo 2, falla)" 1 $?
+go_marker="$(sed -n -E 's/^const OrgSkipMarker = "([^"]*)"$/\1/p' tests/helpers/env.go)"
+[ -n "$go_marker" ] && grep -qF "ORG_SKIP_MARKER=\"$go_marker\"" scripts/go-test-report.sh &&
+  [ "$(grep -l 'helpers.RequireOrganization(t, ' tests/integration/*_test.go | LC_ALL=C sort | tr '\n' ' ')" = \
+    "tests/integration/org_test.go tests/integration/vpc_sc_test.go " ] &&
+  grep -qF '      TERRATEST_ORG_ID: ${{ vars.TERRATEST_ORG_ID }}' "$WF/terratest.yml"
+check "go-test-report: la marca es la de helpers.OrgSkipMarker, la usan TestOrg y TestVPCSC, y terratest.yml le pasa TERRATEST_ORG_ID" 0 $?
 
 # --- module-tests.sh -----------------------------------------------------------------------
 got="$(bash scripts/module-tests.sh firewall 2>/dev/null)"

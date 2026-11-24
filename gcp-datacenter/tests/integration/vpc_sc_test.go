@@ -15,6 +15,7 @@ import (
 // Compuerta: TEST_ALLOW_ORG=true, TERRATEST_ORG_ID y TEST_ACCESS_POLICY_ID: VPC-SC solo existe
 // con organización (la política de acceso es de la organización).
 func TestVPCSC(t *testing.T) {
+	helpers.RequireOrganization(t, "TestVPCSC")
 	helpers.RequireOrgScope(t, "TestVPCSC")
 	env := helpers.RequireEnv(t, helpers.EnvOrgID, helpers.EnvAccessPolicyID)
 	run, project := moduleTest(t, "vpc-sc", "accesscontextmanager.googleapis.com")

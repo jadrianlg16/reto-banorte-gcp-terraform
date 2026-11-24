@@ -120,6 +120,24 @@ func RequireOrgScope(t testing.TB, what string) {
 	RequireGate(t, EnvAllowOrg, what+" crea recursos con alcance de organización")
 }
 
+// OrgSkipMarker va en el mensaje de t.Skip de las pruebas que solo valen con organización
+// (RequireOrganization). Con TERRATEST_ORG_ID vacío, scripts/go-test-report.sh no cuenta esas
+// omisiones contra TERRATEST_MAX_SKIPS: sin organización no hay cómo correrlas (ADR 0029: el
+// proyecto puede no estar en una), así que no son una omisión inesperada. Sin < > ni &, que
+// go test -json escaparía.
+const OrgSkipMarker = "[sin-organizacion]"
+
+// RequireOrganization omite la prueba, con OrgSkipMarker en el motivo, si TERRATEST_ORG_ID está
+// vacío. Va antes de las demás compuertas: con organización, la prueba sigue sujeta a
+// TEST_ALLOW_ORG y sus omisiones cuentan como cualquier otra.
+func RequireOrganization(t testing.TB, what string) {
+	t.Helper()
+	if Getenv(EnvOrgID, "") == "" {
+		t.Skipf("se omite %s: %s solo vale con organización y %s está vacío (ver tests/README.md)",
+			OrgSkipMarker, what, EnvOrgID)
+	}
+}
+
 // Region devuelve la región primaria de las pruebas.
 func Region() string { return Getenv(EnvRegion, DefaultRegion) }
 

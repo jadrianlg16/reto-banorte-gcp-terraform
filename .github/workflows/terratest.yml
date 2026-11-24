@@ -18,7 +18,9 @@
 #     (scripts/module-tests.sh). La etiqueta no fija versiones: las raíces usan rutas relativas.
 #   - Omitidas: scripts/go-test-report.sh lista en el resumen cada prueba omitida con su
 #     motivo y hace fallar el trabajo si hay más omitidas que TERRATEST_MAX_SKIPS (0 si no se
-#     define). Para aceptar omisiones hay que subir ese número a propósito.
+#     define). Para aceptar omisiones hay que subir ese número a propósito. No cuentan, con
+#     TERRATEST_ORG_ID vacío, las pruebas que solo valen con organización (TestOrg, TestVPCSC):
+#     se omiten con la marca [sin-organizacion] y el resumen las muestra aparte.
 #
 # Variables de repositorio de las pruebas reales (los nombres de entorno que reciben las
 # pruebas de Go son los mismos):
@@ -31,7 +33,8 @@
 #   TERRATEST_BILLING_ACCOUNT  cuenta de facturación de los proyectos efímeros (solo con
 #                              TEST_EPHEMERAL_PROJECTS).
 #   TERRATEST_ORG_ID           ID numérico de la organización (proyectos efímeros sin carpeta y
-#                              pruebas de organización; opcional).
+#                              pruebas de organización; opcional). Vacía: TestOrg y TestVPCSC
+#                              se omiten sin contar contra TERRATEST_MAX_SKIPS.
 #   TERRATEST_FOLDER_ID        carpeta donde se crean los proyectos efímeros (opcional).
 #   TERRATEST_MAX_SKIPS        máximo de pruebas omitidas aceptado (por defecto 0).
 #   TEST_ALLOW_EXPENSIVE, TEST_ALLOW_ORG, TEST_DIRECTORY_CUSTOMER_ID, TEST_ACCESS_POLICY_ID,

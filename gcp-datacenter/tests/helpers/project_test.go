@@ -94,6 +94,35 @@ func TestRequireProjectEnvLandingZone(t *testing.T) {
 	}
 }
 
+func TestRequireOrganization(t *testing.T) {
+	run := func(t *testing.T) *guardRecorder {
+		r := &guardRecorder{TB: t}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			RequireOrganization(r, "TestOrg")
+		}()
+		<-done
+		return r
+	}
+	t.Run("sin organización: se omite con la marca", func(t *testing.T) {
+		t.Setenv(EnvOrgID, " ")
+		r := run(t)
+		if !r.skipped || !strings.Contains(r.msg, OrgSkipMarker) || !strings.Contains(r.msg, "se omite") {
+			t.Errorf("skipped=%v msg=%q: se esperaba una omisión con %s y \"se omite\" (go-test-report.sh)", r.skipped, r.msg, OrgSkipMarker)
+		}
+	})
+	t.Run("con organización: sigue", func(t *testing.T) {
+		t.Setenv(EnvOrgID, "123456789012")
+		if r := run(t); r.skipped || r.fatal {
+			t.Errorf("con %s definido no debe omitirse: %q", EnvOrgID, r.msg)
+		}
+	})
+	if strings.ContainsAny(OrgSkipMarker, "<>&") {
+		t.Errorf("OrgSkipMarker %q lleva caracteres que go test -json escapa", OrgSkipMarker)
+	}
+}
+
 func TestIntegrationLabelsAreNotAnEnvironment(t *testing.T) {
 	labels := RequiredLabels(TestEnvLabel, Run{ID: "x"})
 	for _, env := range []string{"dev", "qa", "prod", "common", "bootstrap"} {

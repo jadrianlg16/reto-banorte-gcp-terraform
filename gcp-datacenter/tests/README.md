@@ -74,7 +74,7 @@ vive en el código.
 | `TEST_EPHEMERAL_PROJECTS` | `true`: un proyecto efímero por prueba en vez del proyecto único (necesita las tres de abajo) | Opcional |
 | `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | Solo con `TEST_EPHEMERAL_PROJECTS=true` |
 | `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de los proyectos efímeros. Opcional: sin ella se usa la organización | Proyectos efímeros |
-| `TERRATEST_ORG_ID` | Número de la organización. Sin ella se omiten las pruebas que solo valen con organización | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
+| `TERRATEST_ORG_ID` | Número de la organización. Sin ella se omiten las pruebas que solo valen con organización (`helpers.RequireOrganization`, con la marca `[sin-organizacion]` en el motivo; esas omisiones no cuentan contra `TERRATEST_MAX_SKIPS`) | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
 | `GOOGLE_CLOUD_PROJECT` | Proyecto por defecto de `gcloud` y del proveedor | Recomendado |
 | `TEST_REGION` / `TEST_DR_REGION` | Regiones (por defecto `us-central1` / `us-east4`). Deben estar en los mapas de códigos cortos de los módulos | Opcional |
 | `TEST_DIRECTORY_CUSTOMER_ID` | Cliente de Cloud Identity (`C…`). Opcional: con ella `TestOrg` también prueba `iam.allowedPolicyMemberDomains` | `TestOrg` |
@@ -175,7 +175,11 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
   las `TEST_*` específicas) llegan de variables de repositorio; sin ellas, esas pruebas se
   omiten. `scripts/go-test-report.sh` lista en el resumen cada prueba omitida con su motivo y
   hace fallar el trabajo si hay más omitidas que `TERRATEST_MAX_SKIPS` (0 por defecto): una
-  omisión no pasa en silencio.
+  omisión no pasa en silencio. Excepción: con `TERRATEST_ORG_ID` vacío, `TestOrg` y `TestVPCSC`
+  se omiten con la marca `[sin-organizacion]` (`helpers.OrgSkipMarker`) y no cuentan, porque
+  sin organización no hay cómo correrlas; se listan igual, marcadas "sin organización: no
+  cuenta". Con `TERRATEST_ORG_ID` definido cuentan como cualquier otra (por ejemplo, si falta
+  `TEST_ALLOW_ORG`).
 - La prueba de extremo a extremo no corre en CI: se lanza a mano.
 - `TestDevSmoke` corre en `apply.yml` (trabajo `dev / prueba de humo`), no aquí, con
   `TEST_SMOKE=true`, `TEST_E2E_STATE_BUCKET` y la cuenta de lectura `GCP_AUDIT_SERVICE_ACCOUNT`
