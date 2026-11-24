@@ -46,6 +46,16 @@ output "custom_role_ids" {
   value       = { for k in keys(google_project_iam_custom_role.this) : k => local.custom_role_ids[k] }
 }
 
+output "org_policies_enabled" {
+  description = "true si el proyecto está en una organización (org_id) y esta etapa le aplicó las políticas de organización (org.tf)."
+  value       = var.org_id != null
+}
+
+output "vpc_sc_perimeter_name" {
+  description = "Nombre completo del perímetro de VPC-SC (accessPolicies/<política>/servicePerimeters/<nombre>) que crea esta etapa, o null sin access_policy_id."
+  value       = try(module.vpc_sc[0].perimeter_name, null)
+}
+
 output "state_iam_conditions" {
   description = "Mapa raíz → { writes, reads }: prefijos del bucket de estado que escribe y que lee la cuenta de cada raíz (ADR 0029 §3). tf-read lee todo el bucket."
   value       = { for k, r in local.stage_roots : k => { writes = r.writes, reads = r.reads } }

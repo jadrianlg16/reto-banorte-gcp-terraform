@@ -21,7 +21,7 @@ variable "billing_account" {
 }
 
 variable "org_id" {
-  description = "ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). null (por defecto): proyecto sin organización; no se da roles/orgpolicy.policyAdmin a la cuenta de 1-base."
+  description = "ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). Con él, esta etapa aplica las políticas de organización al proyecto (org.tf); quien la aplica necesita roles/orgpolicy.policyAdmin en la organización. null (por defecto): proyecto sin organización ni políticas de organización. Ninguna cuenta del pipeline recibe roles de organización."
   type        = string
   default     = null
 
@@ -31,8 +31,35 @@ variable "org_id" {
   }
 }
 
+variable "additional_allowed_locations" {
+  description = "Solo con org_id: ubicaciones extra permitidas por gcp.resourceLocations además de primary_region y dr_region. Por defecto us: la multirregión del estado, de los llaveros y de los repositorios."
+  type        = list(string)
+  default     = ["us"]
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for l in var.additional_allowed_locations : can(regex("^(in:[a-z0-9-]+-locations|[a-z][a-z0-9-]*)$", l))])
+    error_message = "Cada valor debe ser una ubicación (us) o un grupo in:<grupo>-locations."
+  }
+}
+
+variable "directory_customer_id" {
+  description = "Solo con org_id: ID de cliente de Cloud Identity (Cxxxxxxxx), único dominio admitido en las políticas de IAM (iam.allowedPolicyMemberDomains). null: esa política no se crea."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.directory_customer_id == null || can(regex("^C[0-9a-zA-Z]{6,}$", var.directory_customer_id))
+    error_message = "directory_customer_id debe tener la forma C seguida del identificador (por ejemplo, C0abc1234), o ser null."
+  }
+  validation {
+    condition     = var.directory_customer_id == null || var.org_id != null
+    error_message = "directory_customer_id solo tiene sentido con org_id: sin organización no hay políticas de organización."
+  }
+}
+
 variable "access_policy_id" {
-  description = "ID numérico de la política de Access Context Manager de la organización, si existe. Con él, la cuenta de 1-base recibe roles/accesscontextmanager.policyEditor sobre esa política para el perímetro opcional de VPC-SC. null (por defecto): sin perímetro. Exige org_id."
+  description = "ID numérico de la política de Access Context Manager de la organización, si existe. Con él, esta etapa crea el perímetro de VPC-SC en dry-run alrededor de todo el proyecto (org.tf); quien la aplica necesita roles/accesscontextmanager.policyAdmin en la organización (o policyEditor sobre la política). null (por defecto): sin perímetro. Exige org_id."
   type        = string
   default     = null
 
@@ -43,6 +70,37 @@ variable "access_policy_id" {
   validation {
     condition     = var.access_policy_id == null || var.org_id != null
     error_message = "access_policy_id solo tiene sentido con org_id: la política de acceso es de una organización."
+  }
+}
+
+variable "vpc_sc_restricted_services" {
+  description = "Servicios restringidos por el perímetro opcional; debe incluir storage.googleapis.com. Con un solo proyecto, el perímetro ya incluye llaves y secretos: KMS y Secret Manager se restringen también."
+  type        = list(string)
+  default = [
+    "artifactregistry.googleapis.com",
+    "backupdr.googleapis.com",
+    "bigquery.googleapis.com",
+    "cloudkms.googleapis.com",
+    "compute.googleapis.com",
+    "container.googleapis.com",
+    "file.googleapis.com",
+    "gkebackup.googleapis.com",
+    "pubsub.googleapis.com",
+    "redis.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com",
+    "sqladmin.googleapis.com",
+    "storage.googleapis.com",
+  ]
+  nullable = false
+
+  validation {
+    condition     = alltrue([for s in var.vpc_sc_restricted_services : can(regex("^[a-z0-9.-]+\\.googleapis\\.com$", s))])
+    error_message = "Cada servicio debe tener la forma <servicio>.googleapis.com."
+  }
+  validation {
+    condition     = contains(var.vpc_sc_restricted_services, "storage.googleapis.com")
+    error_message = "vpc_sc_restricted_services debe incluir storage.googleapis.com."
   }
 }
 

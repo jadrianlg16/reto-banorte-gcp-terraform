@@ -267,8 +267,14 @@ run "plan_con_valores_de_ejemplo" {
     error_message = "tf-read recibe viewer, securityReviewer, cloudasset.viewer y networkmanagement.admin."
   }
   assert {
-    condition     = !contains(keys(module.stage_iam.bindings), "org|1-base|roles/orgpolicy.policyAdmin") && length(google_access_context_manager_access_policy_iam_member.base) == 0
-    error_message = "Sin org_id no hay roles de organización ni de la política de acceso."
+    condition = alltrue([
+      length(module.org_policies) == 0,
+      length(module.vpc_sc) == 0,
+      output.org_policies_enabled == false,
+      output.vpc_sc_perimeter_name == null,
+      length([for b in values(module.stage_iam.bindings) : b if b.scope == "organization"]) == 0,
+    ])
+    error_message = "Sin org_id no hay políticas de organización, perímetro ni roles de organización."
   }
 
   # --- Estado por raíz (ADR 0029 §3) ---
@@ -512,22 +518,42 @@ run "sin_denegacion" {
   }
 }
 
+# Con organización, las políticas de organización y el perímetro los aplica esta etapa (la
+# persona), no el pipeline: ninguna cuenta del pipeline recibe un rol de organización ni de la
+# política de acceso.
 run "con_organizacion_y_politica_de_acceso" {
   command = plan
 
   variables {
-    org_id           = "000000000000"
-    access_policy_id = "555555555555"
+    org_id                = "000000000000"
+    directory_customer_id = "C00000000"
+    access_policy_id      = "555555555555"
   }
 
   assert {
     condition = alltrue([
-      module.stage_iam.bindings["org|1-base|roles/orgpolicy.policyAdmin"].scope == "organization",
-      module.stage_iam.bindings["org|1-base|roles/orgpolicy.policyAdmin"].resource == "000000000000",
-      google_access_context_manager_access_policy_iam_member.base["555555555555"].name == "accessPolicies/555555555555",
-      google_access_context_manager_access_policy_iam_member.base["555555555555"].role == "roles/accesscontextmanager.policyEditor",
+      module.org_policies[0].policy_parent == "projects/example-project-id",
+      length(module.org_policies[0].policy_names) == 8,
+      contains(keys(module.org_policies[0].policy_names), "iam.allowedPolicyMemberDomains"),
+      output.org_policies_enabled == true,
     ])
-    error_message = "Con organización, 1-base recibe orgpolicy.policyAdmin y policyEditor sobre la política de acceso."
+    error_message = "Con organización, esta etapa aplica las ocho políticas de organización al proyecto."
+  }
+  assert {
+    condition = alltrue([
+      output.vpc_sc_perimeter_name == "accessPolicies/555555555555/servicePerimeters/bnt_common_sec_perimeter",
+      module.vpc_sc[0].enforced == false,
+      length(module.vpc_sc[0].spec_ingress_policies) == 1,
+      length(module.vpc_sc[0].status_ingress_policies) == 0,
+    ])
+    error_message = "Con política de acceso, esta etapa crea el perímetro en dry-run alrededor de todo el proyecto."
+  }
+  assert {
+    condition = alltrue([
+      length([for b in values(module.stage_iam.bindings) : b if b.scope == "organization"]) == 0,
+      length([for b in values(module.stage_iam.bindings) : b if strcontains(b.role, "orgpolicy") || strcontains(b.role, "accesscontextmanager")]) == 0,
+    ])
+    error_message = "Ninguna cuenta del pipeline recibe roles de organización ni de la política de acceso."
   }
 }
 
@@ -539,6 +565,16 @@ run "politica_de_acceso_sin_organizacion" {
   }
 
   expect_failures = [var.access_policy_id]
+}
+
+run "cliente_de_directorio_sin_organizacion" {
+  command = plan
+
+  variables {
+    directory_customer_id = "C00000000"
+  }
+
+  expect_failures = [var.directory_customer_id]
 }
 
 run "prefix_gcp" {

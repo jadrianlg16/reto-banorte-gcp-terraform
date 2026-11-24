@@ -14,6 +14,7 @@ aquí como `project_id`. Ninguna raíz crea ni borra el proyecto.
 | `custom_roles.tf` | Cuatro roles personalizados del proyecto |
 | `wif.tf` | Pool y proveedor de Workload Identity Federation para GitHub Actions |
 | `deny_policy.tf` | Etiqueta `<prefix>-proteccion = etapa-0` y política de denegación del proyecto |
+| `org.tf` | Solo con organización: las políticas de organización aplicadas al proyecto (módulo `org`, con `org_id`) y el perímetro de VPC-SC en dry-run (módulo `vpc-sc`, con `access_policy_id`) |
 
 Nombres con `prefix = "bnt"`: bucket `bnt-bootstrap-ops-tfstate[-<name_suffix>]`, llavero
 `bnt-bootstrap-sec-keyring-us`, pool `bnt-bootstrap-sec-wif-pool`, presupuesto
@@ -53,7 +54,7 @@ se declara en una raíz de entorno (ADR 0029 §4). Todas las cuentas tienen adem
 
 | Cuenta | Roles |
 |---|---|
-| `tf-base` | `cloudkms.admin` (salvo el llavero del estado), `TfSecretContainerAdmin`, `artifactregistry.admin`, `binaryauthorization.policyEditor`, `logging.configWriter`, `monitoring.alertPolicyEditor`, `monitoring.notificationChannelEditor`, `essentialcontacts.admin`, `pubsub.admin`, `securitycenter.notificationConfigEditor`, `storage.admin` (buckets `<prefix>-common-`), `TfServiceAccountManager` (cuentas de ejecución de los entornos), `projectIamAdmin` en dos concesiones delegadas (roles de lectura de personas; roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado); con `org_id`, `orgpolicy.policyAdmin` en la organización; con `access_policy_id`, `accesscontextmanager.policyEditor` sobre esa política |
+| `tf-base` | `cloudkms.admin` (salvo el llavero del estado), `TfSecretContainerAdmin`, `artifactregistry.admin`, `binaryauthorization.policyEditor`, `logging.configWriter`, `monitoring.alertPolicyEditor`, `monitoring.notificationChannelEditor`, `essentialcontacts.admin`, `pubsub.admin`, `securitycenter.notificationConfigEditor`, `storage.admin` (buckets `<prefix>-common-`), `TfServiceAccountManager` (cuentas de ejecución de los entornos), `projectIamAdmin` en dos concesiones delegadas (roles de lectura de personas; roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado). Ningún rol de organización ni de la política de acceso (`org.tf` los usa la persona de esta etapa) |
 | `tf-net` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin` |
 | `tf-net-<env>` | los de `tf-net`, más `TfNetworkTagManager` (claves y valores de etiquetas y su IAM, sin ligarlas) y `servicenetworking.networksAdmin` |
 | `tf-wl-<env>` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` (buckets `<prefix>-<env>-`); `cloudscheduler.admin` solo en dev y qa (ADR 0028). Sin roles de IAM ni de etiquetas en el proyecto: `1-base` le da `iam.serviceAccountUser` sobre cada cuenta de ejecución de su entorno que adjunta, y su spoke, `tagUser` sobre los valores `lb_backend` e `iap_ssh` |
@@ -142,8 +143,11 @@ destruyen, el mismo ID no se puede reusar hasta que venzan.
 Requisitos de quien la corre (con `gcloud auth application-default login`): `roles/owner` en el
 proyecto, `roles/iam.denyAdmin` (la política de denegación; `owner` no lo incluye) y
 `roles/billing.costsManager` en la cuenta de facturación (presupuesto). Con `org_id`, además
-permiso para dar `roles/orgpolicy.policyAdmin` en la organización; con `access_policy_id`,
-`roles/accesscontextmanager.policyAdmin`. El proyecto es el proyecto de cuota (`providers.tf`):
+`roles/orgpolicy.policyAdmin` en la organización (esta etapa crea las políticas de organización
+del proyecto); con `access_policy_id`, `roles/accesscontextmanager.policyAdmin` en la
+organización (o `policyEditor` sobre la política) para crear el perímetro. Las políticas de
+organización se aplican al final del primer apply, después de las cuentas y sus roles. El
+proyecto es el proyecto de cuota (`providers.tf`):
 si el primer plan falla por una API apagada, se habilitan `cloudresourcemanager`, `serviceusage`
 y `storage` con `gcloud services enable` y se repite (HYPOTHESIS: que basten esas tres).
 
@@ -187,8 +191,10 @@ roles personalizados, la etiqueta y sus
 enlaces y las tres reglas de la denegación; que ninguna cuenta del pipeline tenga un rol de
 proyecto que ligue o quite etiquetas (`ningun_rol_del_pipeline_liga_etiquetas`: `tagUser`,
 `tagAdmin`, roles con `*TagBinding` o `tagValueBindings`, y `cloudkms.admin` y `storage.admin`
-solo con una condición que deja fuera el llavero y el bucket del estado); las variantes sin etiquetas, sin denegación y con
-organización y política de acceso; y que se rechazan entradas inválidas.
+solo con una condición que deja fuera el llavero y el bucket del estado); las variantes sin
+etiquetas, sin denegación y con organización y política de acceso (las ocho políticas de
+organización y el perímetro en dry-run aquí, sin ningún rol de organización para el pipeline);
+y que se rechazan entradas inválidas.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -210,15 +216,16 @@ organización y política de acceso; y que se rechazan entradas inválidas.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| <a name="module_org_policies"></a> [org\_policies](#module\_org\_policies) | ../../modules/org | n/a |
 | <a name="module_stage_iam"></a> [stage\_iam](#module\_stage\_iam) | ../../modules/iam | n/a |
 | <a name="module_state_kms"></a> [state\_kms](#module\_state\_kms) | ../../modules/kms | n/a |
+| <a name="module_vpc_sc"></a> [vpc\_sc](#module\_vpc\_sc) | ../../modules/vpc-sc | n/a |
 
 ## Resources
 
 | Name | Type |
 | ---- | ---- |
 | [google-beta_google_project_service_identity.this](https://registry.terraform.io/providers/hashicorp/google-beta/latest/docs/resources/google_project_service_identity) | resource |
-| [google_access_context_manager_access_policy_iam_member.base](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/access_context_manager_access_policy_iam_member) | resource |
 | [google_billing_budget.project](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/billing_budget) | resource |
 | [google_compute_project_metadata_item.os_login](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_project_metadata_item) | resource |
 | [google_iam_deny_policy.pipeline](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/iam_deny_policy) | resource |
@@ -254,23 +261,27 @@ organización y política de acceso; y que se rechazan entradas inválidas.
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en todos los nombres (§4.2), por ejemplo bnt. | `string` | n/a | yes |
 | <a name="input_primary_region"></a> [primary\_region](#input\_primary\_region) | Región primaria (ADR 0002). Con dr\_region, las dos regiones de un bucket de estado de doble región (state\_bucket\_dual\_regions). | `string` | n/a | yes |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto único (ADR 0029 §1). Lo crea una persona con la consola o gcloud y lo liga a una cuenta de facturación de pago; ninguna raíz lo crea ni lo borra. | `string` | n/a | yes |
-| <a name="input_access_policy_id"></a> [access\_policy\_id](#input\_access\_policy\_id) | ID numérico de la política de Access Context Manager de la organización, si existe. Con él, la cuenta de 1-base recibe roles/accesscontextmanager.policyEditor sobre esa política para el perímetro opcional de VPC-SC. null (por defecto): sin perímetro. Exige org\_id. | `string` | `null` | no |
+| <a name="input_access_policy_id"></a> [access\_policy\_id](#input\_access\_policy\_id) | ID numérico de la política de Access Context Manager de la organización, si existe. Con él, esta etapa crea el perímetro de VPC-SC en dry-run alrededor de todo el proyecto (org.tf); quien la aplica necesita roles/accesscontextmanager.policyAdmin en la organización (o policyEditor sobre la política). null (por defecto): sin perímetro. Exige org\_id. | `string` | `null` | no |
+| <a name="input_additional_allowed_locations"></a> [additional\_allowed\_locations](#input\_additional\_allowed\_locations) | Solo con org\_id: ubicaciones extra permitidas por gcp.resourceLocations además de primary\_region y dr\_region. Por defecto us: la multirregión del estado, de los llaveros y de los repositorios. | `list(string)` | <pre>[<br/>  "us"<br/>]</pre> | no |
 | <a name="input_additional_apis"></a> [additional\_apis](#input\_additional\_apis) | APIs extra que se habilitan en el proyecto además de las fijas (por ejemplo bigquery.googleapis.com). Se habilitan una sola vez y no se apagan al destruir. | `set(string)` | `[]` | no |
 | <a name="input_budget_alert_thresholds"></a> [budget\_alert\_thresholds](#input\_budget\_alert\_thresholds) | Umbrales de alerta del presupuesto sobre el gasto real, como fracción del monto (0.5 = 50 %). Además se alerta al 100 % del gasto pronosticado. | `list(number)` | <pre>[<br/>  0.5,<br/>  0.75,<br/>  0.9,<br/>  1<br/>]</pre> | no |
+| <a name="input_directory_customer_id"></a> [directory\_customer\_id](#input\_directory\_customer\_id) | Solo con org\_id: ID de cliente de Cloud Identity (Cxxxxxxxx), único dominio admitido en las políticas de IAM (iam.allowedPolicyMemberDomains). null: esa política no se crea. | `string` | `null` | no |
 | <a name="input_enable_deny_policy"></a> [enable\_deny\_policy](#input\_enable\_deny\_policy) | Si es true (por defecto), crea la política de denegación del proyecto contra las nueve cuentas del pipeline (ADR 0029 §5). Sin etiquetas solo lleva la regla sin condición (WIF, roles personalizados, llaves de cuentas y borrar el proyecto). Quien aplica necesita roles/iam.denyAdmin. | `bool` | `true` | no |
 | <a name="input_enable_protection_tags"></a> [enable\_protection\_tags](#input\_enable\_protection\_tags) | Si es true (por defecto), crea la etiqueta <prefix>-proteccion = etapa-0 y la liga al bucket y al llavero del estado y a las nueve cuentas del pipeline (ADR 0029 §5). false solo si un apply demuestra que las etiquetas no funcionan en el proyecto; la protección queda entonces en los roles condicionados. | `bool` | `true` | no |
 | <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con ubicación (§4.2). Debe incluir la ubicación de KMS del estado (lower(state\_bucket\_location): us, eu o asia). | `map(string)` | <pre>{<br/>  "asia": "asia",<br/>  "eu": "eu",<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_name_suffix"></a> [name\_suffix](#input\_name\_suffix) | Sufijo opcional del nombre del bucket de estado para que sea único a nivel mundial (los nombres de bucket son globales). Vacío: sin sufijo. | `string` | `""` | no |
-| <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). null (por defecto): proyecto sin organización; no se da roles/orgpolicy.policyAdmin a la cuenta de 1-base. | `string` | `null` | no |
+| <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). Con él, esta etapa aplica las políticas de organización al proyecto (org.tf); quien la aplica necesita roles/orgpolicy.policyAdmin en la organización. null (por defecto): proyecto sin organización ni políticas de organización. Ninguna cuenta del pipeline recibe roles de organización. | `string` | `null` | no |
 | <a name="input_state_bucket_dual_regions"></a> [state\_bucket\_dual\_regions](#input\_state\_bucket\_dual\_regions) | Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo ["us-central1", "us-east4"]), dentro de state\_bucket\_location; lleva replicación turbo. Vacío (por defecto): bucket multirregional. | `list(string)` | `[]` | no |
 | <a name="input_state_bucket_location"></a> [state\_bucket\_location](#input\_state\_bucket\_location) | Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state\_bucket\_dual\_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary\_region. La ubicación de un bucket no se cambia después de crearlo. | `string` | `"US"` | no |
 | <a name="input_state_versions_to_keep"></a> [state\_versions\_to\_keep](#input\_state\_versions\_to\_keep) | Versiones no actuales de cada archivo de estado que se conservan en el bucket; las más viejas se borran. Permiten recuperar un estado dañado. | `number` | `20` | no |
+| <a name="input_vpc_sc_restricted_services"></a> [vpc\_sc\_restricted\_services](#input\_vpc\_sc\_restricted\_services) | Servicios restringidos por el perímetro opcional; debe incluir storage.googleapis.com. Con un solo proyecto, el perímetro ya incluye llaves y secretos: KMS y Secret Manager se restringen también. | `list(string)` | <pre>[<br/>  "artifactregistry.googleapis.com",<br/>  "backupdr.googleapis.com",<br/>  "bigquery.googleapis.com",<br/>  "cloudkms.googleapis.com",<br/>  "compute.googleapis.com",<br/>  "container.googleapis.com",<br/>  "file.googleapis.com",<br/>  "gkebackup.googleapis.com",<br/>  "pubsub.googleapis.com",<br/>  "redis.googleapis.com",<br/>  "run.googleapis.com",<br/>  "secretmanager.googleapis.com",<br/>  "sqladmin.googleapis.com",<br/>  "storage.googleapis.com"<br/>]</pre> | no |
 
 ## Outputs
 
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_custom_role_ids"></a> [custom\_role\_ids](#output\_custom\_role\_ids) | Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret\_container\_admin, service\_account\_manager, network\_tag\_manager y off\_hours\_scheduler. |
+| <a name="output_org_policies_enabled"></a> [org\_policies\_enabled](#output\_org\_policies\_enabled) | true si el proyecto está en una organización (org\_id) y esta etapa le aplicó las políticas de organización (org.tf). |
 | <a name="output_project_id"></a> [project\_id](#output\_project\_id) | ID del proyecto único. |
 | <a name="output_project_number"></a> [project\_number](#output\_project\_number) | Número del proyecto único. |
 | <a name="output_read_service_account"></a> [read\_service\_account](#output\_read\_service\_account) | Correo de la cuenta de solo lectura <prefix>-tf-read (plan, drift, prueba de humo y huérfanos; variable GCP\_AUDIT\_SERVICE\_ACCOUNT). |
@@ -278,6 +289,7 @@ organización y política de acceso; y que se rechazan entradas inválidas.
 | <a name="output_state_bucket"></a> [state\_bucket](#output\_state\_bucket) | Nombre del bucket de estado; las raíces lo reciben como state\_bucket y en -backend-config. |
 | <a name="output_state_iam_conditions"></a> [state\_iam\_conditions](#output\_state\_iam\_conditions) | Mapa raíz → { writes, reads }: prefijos del bucket de estado que escribe y que lee la cuenta de cada raíz (ADR 0029 §3). tf-read lee todo el bucket. |
 | <a name="output_state_kms_key_id"></a> [state\_kms\_key\_id](#output\_state\_kms\_key\_id) | ID completo de la llave KMS que cifra el bucket de estado. |
+| <a name="output_vpc_sc_perimeter_name"></a> [vpc\_sc\_perimeter\_name](#output\_vpc\_sc\_perimeter\_name) | Nombre completo del perímetro de VPC-SC (accessPolicies/<política>/servicePerimeters/<nombre>) que crea esta etapa, o null sin access\_policy\_id. |
 | <a name="output_workload_identity_pool"></a> [workload\_identity\_pool](#output\_workload\_identity\_pool) | Nombre completo del pool de WIF. |
 | <a name="output_workload_identity_provider"></a> [workload\_identity\_provider](#output\_workload\_identity\_provider) | Nombre completo del proveedor de WIF (projects/<número>/locations/global/workloadIdentityPools/<pool>/providers/<proveedor>), para google-github-actions/auth. |
 <!-- END_TF_DOCS -->

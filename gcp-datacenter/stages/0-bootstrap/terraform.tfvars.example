@@ -4,9 +4,12 @@
 project_id      = "example-project-id"
 billing_account = "000000-000000-000000"
 
-# Solo si el proyecto está dentro de una organización (si no, dejar comentados).
-# org_id           = "000000000000"
-# access_policy_id = "000000000000"
+# Solo si el proyecto está dentro de una organización (si no, dejar comentados). Con org_id esta
+# etapa aplica las políticas de organización al proyecto y, con access_policy_id, el perímetro de
+# VPC-SC en dry-run (org.tf).
+# org_id                = "000000000000"
+# directory_customer_id = "C00000000"
+# access_policy_id      = "000000000000"
 
 prefix         = "bnt"
 name_suffix    = ""

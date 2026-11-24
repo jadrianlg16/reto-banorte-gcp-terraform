@@ -36,7 +36,9 @@ override_data {
         network_tag_manager     = "projects/example-project-id/roles/bntTfNetworkTagManager"
         off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
       }
-      state_iam_conditions = {}
+      state_iam_conditions  = {}
+      org_policies_enabled  = false
+      vpc_sc_perimeter_name = null
     }
   }
 }
@@ -278,16 +280,9 @@ run "plan_con_valores_de_ejemplo" {
     ], b.role) if b.scope == "project"])
     error_message = "Un rol de proyecto fuera de las listas de la concesión delegada de 0-bootstrap fallaría en el apply."
   }
-
-  # --- Sin organización ---
   assert {
-    condition = alltrue([
-      length(module.org_policies) == 0,
-      length(module.vpc_sc) == 0,
-      output.org_policies_enabled == false,
-      output.vpc_sc_perimeter_name == null,
-    ])
-    error_message = "Sin org_id ni access_policy_id no hay políticas de organización ni perímetro."
+    condition     = alltrue([for b in values(module.iam.bindings) : b.scope != "organization"])
+    error_message = "1-base no asigna roles de organización ni de la política de acceso: las políticas de organización y el perímetro los aplica 0-bootstrap."
   }
 
   # --- Interfaz ---
@@ -315,28 +310,6 @@ run "nombres_de_llave_de_la_salida" {
       !contains(keys(output.kms_key_ids["prod"]), "sql_us"),
     ])
     error_message = "kms_key_ids debe tener <uso>, <uso>_dr y <uso>_us (en us solo storage, backup y artifacts)."
-  }
-}
-
-run "con_organizacion_y_perimetro" {
-  command = plan
-
-  variables {
-    org_id                = "000000000000"
-    directory_customer_id = "C00000000"
-    access_policy_id      = "555555555555"
-  }
-
-  assert {
-    condition = alltrue([
-      module.org_policies[0].policy_parent == "projects/example-project-id",
-      length(module.org_policies[0].policy_names) == 8,
-      output.org_policies_enabled == true,
-      output.vpc_sc_perimeter_name == "accessPolicies/555555555555/servicePerimeters/bnt_common_sec_perimeter",
-      module.vpc_sc[0].enforced == false,
-      length(module.vpc_sc[0].spec_ingress_policies) == 1,
-    ])
-    error_message = "Con organización: políticas en el proyecto y perímetro en dry-run alrededor de todo el proyecto."
   }
 }
 
@@ -484,16 +457,6 @@ run "rechaza_publicador_user" {
   }
 
   expect_failures = [var.artifact_registry_publishers]
-}
-
-run "rechaza_politica_de_acceso_sin_organizacion" {
-  command = plan
-
-  variables {
-    access_policy_id = "555555555555"
-  }
-
-  expect_failures = [var.access_policy_id]
 }
 
 run "rechaza_secretos_de_common" {

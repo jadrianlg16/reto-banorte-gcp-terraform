@@ -8,10 +8,8 @@ dr_region      = "us-east4"
 # Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<name_suffix>]).
 state_bucket = "bnt-bootstrap-ops-tfstate"
 
-# Solo si el proyecto está dentro de una organización (si no, dejar comentados).
-# org_id                = "000000000000"
-# directory_customer_id = "C00000000"
-# access_policy_id      = "000000000000"
+# Las políticas de organización y el perímetro de VPC-SC los aplica 0-bootstrap (org_id,
+# directory_customer_id y access_policy_id van en sus variables, no aquí).
 
 applications = ["app"]
 

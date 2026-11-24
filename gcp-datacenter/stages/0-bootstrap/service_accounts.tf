@@ -365,16 +365,8 @@ locals {
         condition = null
       },
     ],
-    # Con organización: las políticas de organización de 1-base sobre el proyecto. Este rol solo se
-    # puede dar en la organización y alcanza a toda ella (riesgo aceptado; sin org_id no existe).
-    var.org_id == null ? [] : [{
-      key       = "org|1-base|roles/orgpolicy.policyAdmin"
-      scope     = "organization"
-      resource  = var.org_id
-      role      = "roles/orgpolicy.policyAdmin"
-      member    = google_service_account.stage["1-base"].member
-      condition = null
-    }],
+    # Ningún rol de organización ni de la política de acceso: las políticas de organización y el
+    # perímetro de VPC-SC los aplica la persona de esta etapa (org.tf).
   )
 }
 
@@ -405,15 +397,4 @@ module "stage_iam" {
 
   # Los roles personalizados deben existir antes de asignarse (su ID se arma en el plan).
   depends_on = [google_project_iam_custom_role.this]
-}
-
-# Perímetro opcional de VPC-SC (1-base): editor solo de la política de acceso dada.
-# VERIFICAR-EN-APPLY: que la persona de la etapa 0 pueda dar este rol sobre la política (necesita
-# roles/accesscontextmanager.policyAdmin en la organización).
-resource "google_access_context_manager_access_policy_iam_member" "base" {
-  for_each = var.access_policy_id == null ? toset([]) : toset([var.access_policy_id])
-
-  name   = "accessPolicies/${each.value}"
-  role   = "roles/accesscontextmanager.policyEditor"
-  member = google_service_account.stage["1-base"].member
 }

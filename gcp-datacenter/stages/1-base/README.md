@@ -14,8 +14,7 @@ pipeline con la cuenta `<prefix>-tf-base` (entorno de GitHub `common`); lee el e
 | `artifacts.tf` | Un repositorio Docker `<prefix>-<env>-<app>` por entorno y aplicación, cifrado con la llave `artifacts` de su entorno; su IAM; la política única de Binary Authorization |
 | `iam.tf` | Roles de solo lectura de los grupos de personas y los roles de proyecto de las cuentas de ejecución (el `tagUser` de los agentes de GKE y de las APIs de Google lo da 0-bootstrap) |
 | `runtime_accounts.tf` | Las cuentas de ejecución de cada entorno y aplicación y sus permisos (tabla de abajo) |
-| `org.tf` | Solo con organización: las políticas de organización aplicadas al proyecto (módulo `org`) y el perímetro de VPC-SC en dry-run (módulo `vpc-sc`) |
-| `remote_state.tf` | Lectura del estado de `0-bootstrap` |
+| `remote_state.tf` | Lectura del estado de `0-bootstrap` (número del proyecto, cuentas de las raíces y roles personalizados) |
 
 Ninguna raíz de entorno declara roles de proyecto ni crea cuentas de servicio: todos están aquí.
 La cuenta de esta etapa solo puede asignar los roles de `local.base_grantable_roles` y
@@ -78,21 +77,11 @@ clúster no puede, entonces, limitar los clústeres de prod (`<prefix>-prod-<app
 misma evaluación que la regla por defecto. Separar las imágenes de prod exige atestaciones
 (propuesta para una fase siguiente).
 
-## Organización (opcional)
+## Organización
 
-Sin `org_id`, `org.tf` no crea nada y los controles de organización los cubren las reglas de
-Conftest y los pasos manuales del runbook 01. Con `org_id`:
-
-- el módulo `org` aplica al proyecto siete políticas: ubicación de recursos (`primary_region`,
-  `dr_region` y `additional_allowed_locations`), sin IP externa en VM, sin llaves de cuentas de
-  servicio, VM blindadas, acceso uniforme y prevención de acceso público en buckets y Cloud SQL
-  sin IP pública; más `iam.allowedPolicyMemberDomains` con `directory_customer_id`;
-- 0-bootstrap da a la cuenta de esta etapa `roles/orgpolicy.policyAdmin` **en la organización**
-  (el rol no se puede dar en un proyecto).
-
-Con `access_policy_id` (requiere `org_id`), el módulo `vpc-sc` crea un perímetro en dry-run
-alrededor de todo el proyecto, con las nueve cuentas del pipeline en la regla de entrada. No
-separa entornos (ADR 0029 §1).
+Esta etapa ya no aplica políticas de organización ni el perímetro de VPC-SC: con `org_id` y
+`access_policy_id` los aplica `0-bootstrap` (`org.tf`), con la persona de la etapa 0. La cuenta
+de esta etapa no tiene `roles/orgpolicy.policyAdmin` ni roles sobre la política de acceso.
 
 ## Interfaz con las raíces siguientes
 
@@ -105,7 +94,9 @@ separa entornos (ADR 0029 §1).
 | `notification_channel_ids` | `{ security = <canal> }` | `3-workloads` |
 | `secret_ids` | entorno → nombre → ID | informativa |
 | `off_hours_role_id` | ID completo del rol personalizado del apagado (lo crea 0-bootstrap) | informativa |
-| `security_alert_email`, `log_bucket`, `vpc_sc_perimeter_name`, `org_policies_enabled` | valores sueltos | informativas |
+| `security_alert_email`, `log_bucket` | valores sueltos | informativas |
+
+`vpc_sc_perimeter_name` y `org_policies_enabled` pasaron a ser salidas de `0-bootstrap`.
 
 ## Cómo se ejecuta
 
@@ -130,10 +121,10 @@ su exclusión, los llaveros y sus agentes, los repositorios, su IAM y la políti
 Authorization, los roles de grupos y agentes, las cuentas de ejecución y sus permisos (roles,
 condición de Cloud SQL, secretos, repositorio, `serviceAccountUser` de las cuentas de cargas y
 el enlace de Workload Identity con y sin `gke_workload_identity_bindings`), los nombres de llave
-de `kms_key_ids`, las variantes con organización y perímetro, con SCC y atestadores, sin prod y
-con patrones de imagen válidos; y que se rechazan entradas inválidas (proyecto distinto del de
-0-bootstrap, contactos que no cubren las categorías obligatorias, grupo desconocido, publicador
-`user:`, política de acceso sin organización, secretos fuera de dev, qa y prod, una aplicación
+de `kms_key_ids`, que no haya roles de organización, las variantes con SCC y atestadores, sin
+prod y con patrones de imagen válidos; y que se rechazan entradas inválidas (proyecto distinto
+del de 0-bootstrap, contactos que no cubren las categorías obligatorias, grupo desconocido,
+publicador `user:`, secretos fuera de dev, qa y prod, una aplicación
 de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un registro entero).
 
 <!-- BEGIN_TF_DOCS -->
@@ -160,9 +151,7 @@ de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un
 | <a name="module_common_kms"></a> [common\_kms](#module\_common\_kms) | ../../modules/kms | n/a |
 | <a name="module_iam"></a> [iam](#module\_iam) | ../../modules/iam | n/a |
 | <a name="module_kms"></a> [kms](#module\_kms) | ../../modules/kms | n/a |
-| <a name="module_org_policies"></a> [org\_policies](#module\_org\_policies) | ../../modules/org | n/a |
 | <a name="module_secrets"></a> [secrets](#module\_secrets) | ../../modules/secrets | n/a |
-| <a name="module_vpc_sc"></a> [vpc\_sc](#module\_vpc\_sc) | ../../modules/vpc-sc | n/a |
 
 ## Resources
 
@@ -196,14 +185,11 @@ de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto único (ADR 0029 §1). Llega por tfvars como en las demás raíces; una precondición exige que sea el mismo que publica 0-bootstrap. | `string` | n/a | yes |
 | <a name="input_security_alert_email"></a> [security\_alert\_email](#input\_security\_alert\_email) | Correo que recibe las alertas de auditoría (CIS 2.5 a 2.12, módulo audit-alerts). Puede ser un grupo o una persona: es un canal de notificación, no un permiso de IAM. | `string` | n/a | yes |
 | <a name="input_state_bucket"></a> [state\_bucket](#input\_state\_bucket) | Bucket de estado (salida state\_bucket de 0-bootstrap); se usa para leer el estado de 0-bootstrap. | `string` | n/a | yes |
-| <a name="input_access_policy_id"></a> [access\_policy\_id](#input\_access\_policy\_id) | ID numérico de la política de Access Context Manager de la organización. Con él se crea el perímetro de VPC-SC en dry-run alrededor de todo el proyecto (ADR 0029 §1). null (por defecto): sin perímetro. Exige org\_id. | `string` | `null` | no |
-| <a name="input_additional_allowed_locations"></a> [additional\_allowed\_locations](#input\_additional\_allowed\_locations) | Solo con org\_id: ubicaciones extra permitidas por gcp.resourceLocations además de primary\_region y dr\_region. Por defecto us: la multirregión del estado, de los llaveros y de los repositorios. | `list(string)` | <pre>[<br/>  "us"<br/>]</pre> | no |
 | <a name="input_applications"></a> [applications](#input\_applications) | Aplicaciones de cada entorno: repositorio de imágenes (<prefix>-<env>-<app>), cuentas de ejecución (<prefix>-<env>-<app>-<uso>) y regla de Binary Authorization en sus clústeres de prod (<prefix>-prod-<app>-gke[-dr]). Misma validación que application de 3-workloads: de 2 a 8 caracteres. | `set(string)` | <pre>[<br/>  "app"<br/>]</pre> | no |
 | <a name="input_artifact_registry_location"></a> [artifact\_registry\_location](#input\_artifact\_registry\_location) | Ubicación de los repositorios de Artifact Registry: la multirregión us (por defecto; sobrevive a la pérdida de una región) o primary\_region o dr\_region. Se cifran con la llave artifacts de esa ubicación. | `string` | `"us"` | no |
 | <a name="input_artifact_registry_publishers"></a> [artifact\_registry\_publishers](#input\_artifact\_registry\_publishers) | Mapa entorno → aplicación → miembros que publican imágenes (roles/artifactregistry.writer solo sobre ese repositorio), por ejemplo la cuenta del CI de la aplicación. Sin user:. | `map(map(list(string)))` | `{}` | no |
 | <a name="input_binary_authorization_allowlist_patterns"></a> [binary\_authorization\_allowlist\_patterns](#input\_binary\_authorization\_allowlist\_patterns) | Patrones de imágenes que Binary Authorization admite además de los repositorios del proyecto (por ejemplo, imágenes base de un registro aprobado), con la forma <registro>/<ruta>[/*\|/**\|*]: comodines solo al final, * al final del nombre o después de una /, ** solo después de una /. Globales: valen para todos los clústeres y Cloud Run. | `list(string)` | `[]` | no |
 | <a name="input_binary_authorization_attestors"></a> [binary\_authorization\_attestors](#input\_binary\_authorization\_attestors) | Atestadores (projects/<p>/attestors/<a>) que exigen la regla por defecto y las reglas de los clústeres de prod. Vacío (por defecto): sin atestaciones, se niega todo lo que no esté en la lista de permitidos. | `list(string)` | `[]` | no |
-| <a name="input_directory_customer_id"></a> [directory\_customer\_id](#input\_directory\_customer\_id) | Solo con org\_id: ID de cliente de Cloud Identity (Cxxxxxxxx), único dominio admitido en las políticas de IAM (iam.allowedPolicyMemberDomains). null: esa política no se crea. | `string` | `null` | no |
 | <a name="input_enable_scc_notification"></a> [enable\_scc\_notification](#input\_enable\_scc\_notification) | Si es true, crea el tema de Pub/Sub con CMEK y la notificación de hallazgos de Security Command Center del proyecto. SCC se activa a mano en el proyecto antes (ADR 0029 §7); por eso es false por defecto. | `bool` | `false` | no |
 | <a name="input_environments"></a> [environments](#input\_environments) | Entornos con llaveros, llaves, contenedores de secretos y repositorios de imágenes. | `list(string)` | <pre>[<br/>  "dev",<br/>  "qa",<br/>  "prod"<br/>]</pre> | no |
 | <a name="input_essential_contacts_language"></a> [essential\_contacts\_language](#input\_essential\_contacts\_language) | Idioma de las notificaciones de Essential Contacts (etiqueta BCP-47, por ejemplo es o en). | `string` | `"es"` | no |
@@ -216,10 +202,8 @@ de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un
 | <a name="input_log_retention_locked"></a> [log\_retention\_locked](#input\_log\_retention\_locked) | Si es true, bloquea la retención del bucket de logs. IRREVERSIBLE una vez aplicado: la retención ya no se puede acortar ni quitar y el bucket no se puede borrar hasta que venza el último objeto. | `bool` | `false` | no |
 | <a name="input_name_suffix"></a> [name\_suffix](#input\_name\_suffix) | Sufijo opcional del nombre del bucket de logs para que sea único a nivel mundial. Vacío: sin sufijo. | `string` | `""` | no |
 | <a name="input_off_hours_environments"></a> [off\_hours\_environments](#input\_off\_hours\_environments) | Entornos con cuenta de los trabajos del apagado fuera de horario (<prefix>-<env>-<app>-sched, ADR 0028) y su rol. 3-workloads la usa con off\_hours\_shutdown.enabled. Nunca prod. | `list(string)` | <pre>[<br/>  "dev",<br/>  "qa"<br/>]</pre> | no |
-| <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). Con él se aplican las políticas de organización al proyecto. null (por defecto): sin políticas de organización. | `string` | `null` | no |
 | <a name="input_scc_notification_filter"></a> [scc\_notification\_filter](#input\_scc\_notification\_filter) | Filtro de los hallazgos de Security Command Center que se publican en el tema de Pub/Sub. Por defecto, los activos y sin silenciar de severidad alta o crítica. | `string` | `"state = \"ACTIVE\" AND mute != \"MUTED\" AND (severity = \"HIGH\" OR severity = \"CRITICAL\")"` | no |
 | <a name="input_secret_names"></a> [secret\_names](#input\_secret\_names) | Mapa entorno → nombres cortos de los contenedores de secretos (sin valores, ADR 0015). El ID queda <prefix>-<entorno>-sec-<nombre>. Un entorno sin entrada no tiene secretos. | `map(list(string))` | `{}` | no |
-| <a name="input_vpc_sc_restricted_services"></a> [vpc\_sc\_restricted\_services](#input\_vpc\_sc\_restricted\_services) | Servicios restringidos por el perímetro opcional; debe incluir storage.googleapis.com. Con un solo proyecto, el perímetro ya incluye llaves y secretos: KMS y Secret Manager se restringen también. | `list(string)` | <pre>[<br/>  "artifactregistry.googleapis.com",<br/>  "backupdr.googleapis.com",<br/>  "bigquery.googleapis.com",<br/>  "cloudkms.googleapis.com",<br/>  "compute.googleapis.com",<br/>  "container.googleapis.com",<br/>  "file.googleapis.com",<br/>  "gkebackup.googleapis.com",<br/>  "pubsub.googleapis.com",<br/>  "redis.googleapis.com",<br/>  "run.googleapis.com",<br/>  "secretmanager.googleapis.com",<br/>  "sqladmin.googleapis.com",<br/>  "storage.googleapis.com"<br/>]</pre> | no |
 
 ## Outputs
 
@@ -231,9 +215,7 @@ de más de 8 caracteres, el apagado en prod y un patrón de imagen que admite un
 | <a name="output_log_bucket"></a> [log\_bucket](#output\_log\_bucket) | Nombre del bucket de logs de auditoría (destino del sink de proyecto). |
 | <a name="output_notification_channel_ids"></a> [notification\_channel\_ids](#output\_notification\_channel\_ids) | Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security\_alert\_email (alertas de auditoría). |
 | <a name="output_off_hours_role_id"></a> [off\_hours\_role\_id](#output\_off\_hours\_role\_id) | ID completo (projects/<id>/roles/<prefix>OffHoursScheduler) del rol personalizado del apagado fuera de horario (ADR 0028). Lo crea 0-bootstrap; 1-base lo publica. |
-| <a name="output_org_policies_enabled"></a> [org\_policies\_enabled](#output\_org\_policies\_enabled) | true si el proyecto está en una organización (org\_id) y se aplicaron las políticas de organización. |
 | <a name="output_runtime_service_accounts"></a> [runtime\_service\_accounts](#output\_runtime\_service\_accounts) | Mapa entorno → aplicación → uso → correo de las cuentas de ejecución (<prefix>-<env>-<app>-<uso>): gke\_nodes, workload, mig, run y, en off\_hours\_environments, scheduler (<prefix>-<env>-<app>-sched). 3-workloads las usa; no las crea. |
 | <a name="output_secret_ids"></a> [secret\_ids](#output\_secret\_ids) | Mapa entorno → nombre corto → ID del secreto (projects/<proyecto>/secrets/<id>). Un entorno sin secretos tiene un mapa vacío. |
 | <a name="output_security_alert_email"></a> [security\_alert\_email](#output\_security\_alert\_email) | Correo que recibe las alertas de auditoría del proyecto (CIS 2.5 a 2.12). |
-| <a name="output_vpc_sc_perimeter_name"></a> [vpc\_sc\_perimeter\_name](#output\_vpc\_sc\_perimeter\_name) | Nombre completo del perímetro de VPC-SC (accessPolicies/<política>/servicePerimeters/<nombre>), o null sin access\_policy\_id. |
 <!-- END_TF_DOCS -->

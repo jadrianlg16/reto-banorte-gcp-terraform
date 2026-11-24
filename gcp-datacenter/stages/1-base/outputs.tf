@@ -69,13 +69,3 @@ output "log_bucket" {
   description = "Nombre del bucket de logs de auditoría (destino del sink de proyecto)."
   value       = module.audit_logs.bucket_name
 }
-
-output "vpc_sc_perimeter_name" {
-  description = "Nombre completo del perímetro de VPC-SC (accessPolicies/<política>/servicePerimeters/<nombre>), o null sin access_policy_id."
-  value       = try(module.vpc_sc[0].perimeter_name, null)
-}
-
-output "org_policies_enabled" {
-  description = "true si el proyecto está en una organización (org_id) y se aplicaron las políticas de organización."
-  value       = var.org_id != null
-}

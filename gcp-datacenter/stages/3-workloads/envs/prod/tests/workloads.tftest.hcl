@@ -64,8 +64,6 @@ override_data {
       security_alert_email     = "gcp-security-admins@example.com"
       notification_channel_ids = { security = "projects/example-lz/notificationChannels/000000000001" }
       log_bucket               = "bnt-common-ops-audit-logs"
-      vpc_sc_perimeter_name    = null
-      org_policies_enabled     = false
     }
   }
 }
