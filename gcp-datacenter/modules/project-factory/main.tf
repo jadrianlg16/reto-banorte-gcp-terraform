@@ -4,11 +4,21 @@ locals {
 
   shared_vpc_service = var.shared_vpc_host_project != null
 
-  # Shared VPC (host o servicio) necesita la API de Compute en el proyecto.
+  # APIs de todo proyecto (docs/cumplimiento-cis.md): Cloud Asset Inventory (CIS 2.14, el
+  # detector CLOUD_ASSET_API_DISABLED revisa cada proyecto) y Logging y Monitoring, que usan las
+  # métricas y alertas de auditoría (módulo audit-alerts, CIS 2.5 a 2.12). Shared VPC (host o
+  # servicio) necesita además la API de Compute.
+  baseline_apis = ["cloudasset.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com"]
   apis = setunion(
     var.apis,
+    local.baseline_apis,
     var.shared_vpc_host || local.shared_vpc_service ? ["compute.googleapis.com"] : [],
   )
+
+  # OS Login en el proyecto (CIS 4.4): el detector OS_LOGIN_DISABLED lee el metadato
+  # enable-oslogin del proyecto. Solo donde hay Compute Engine: sin la API no hay metadatos de
+  # proyecto que escribir.
+  enable_os_login = contains(local.apis, "compute.googleapis.com")
 
   # Entornos donde destruir el proyecto por error sería grave.
   protected_environments = ["bootstrap", "common", "prod"]
@@ -70,6 +80,24 @@ resource "google_compute_shared_vpc_service_project" "this" {
 
   host_project    = var.shared_vpc_host_project
   service_project = google_project.this.project_id
+
+  depends_on = [google_project_service.this]
+}
+
+# OS Login en todo el proyecto (CIS 4.4), con un elemento de metadato y no con la política de
+# organización compute.requireOsLogin: según la documentación de Google, la política escribe
+# enable-oslogin solo en los proyectos nuevos (no en el semilla, creado antes de la etapa 1) e
+# impide apagarlo; el metadato es lo que lee el detector y cubre todos los proyectos del
+# repositorio. Las VM del MIG ya lo fijan por instancia (compute-mig) y los nodos de GKE
+# Standard lo heredan sin reiniciar (documentación de OS Login para GKE).
+# VERIFICAR-EN-APPLY: que el detector OS_LOGIN_DISABLED no marque los proyectos y que IAP + OS
+# Login sigan dando SSH a quien tenga roles/compute.osLogin (pendiente 59).
+resource "google_compute_project_metadata_item" "os_login" {
+  for_each = local.enable_os_login ? toset(["enable-oslogin"]) : toset([])
+
+  project = google_project.this.project_id
+  key     = each.key
+  value   = "TRUE"
 
   depends_on = [google_project_service.this]
 }

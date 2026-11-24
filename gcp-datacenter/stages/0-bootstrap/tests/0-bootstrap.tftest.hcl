@@ -71,6 +71,7 @@ variables {
   github_repository_id       = "100000001"
   github_repository_owner_id = "200000002"
   state_bucket_location      = "US"
+  security_alert_email       = "gcp-security-admins@example.com"
   labels = {
     app         = "landing-zone"
     owner       = "plataforma"
@@ -103,6 +104,22 @@ run "plan_con_valores_de_ejemplo" {
   assert {
     condition     = google_iam_workload_identity_pool.github.workload_identity_pool_id == "bnt-bootstrap-sec-wif-pool"
     error_message = "Nombre del pool de WIF fuera de convención."
+  }
+
+  # CIS (docs/cumplimiento-cis.md): Cloud Asset (2.14) y Essential Contacts (API del proyecto
+  # de cuota de la etapa 1, 1.17) en el semilla; métricas y alertas de auditoría (2.5 a 2.12)
+  # hacia security_admins; y el rol de contactos de la cuenta de 1-org en la organización.
+  assert {
+    condition     = alltrue([for a in ["cloudasset.googleapis.com", "essentialcontacts.googleapis.com", "monitoring.googleapis.com"] : contains(module.seed_project.enabled_apis, a)])
+    error_message = "El proyecto semilla debe habilitar Cloud Asset, Essential Contacts y Monitoring."
+  }
+  assert {
+    condition     = length(module.seed_audit_alerts.metric_names) == 9 && module.seed_audit_alerts.metric_names["owner"] == "bnt-bootstrap-ops-audit-owner"
+    error_message = "El proyecto semilla debe tener las métricas de auditoría de CIS 2.5 a 2.12."
+  }
+  assert {
+    condition     = module.stage_iam.bindings["org|1-org|roles/essentialcontacts.admin"].scope == "organization"
+    error_message = "La cuenta de 1-org necesita roles/essentialcontacts.admin en la organización (CIS 1.17)."
   }
 
   # Salida stage_service_accounts: exactamente las cinco llaves del contrato.

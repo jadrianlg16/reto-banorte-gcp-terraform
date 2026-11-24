@@ -7,7 +7,8 @@ Cloud Router con Cloud NAT por región activa (ADR 0004). La especificación (se
 "Componentes del datacenter", red) exige Private Google Access, flow logs al 50 %, NAT por
 región y ninguna IP pública: Private Google Access y los flow logs son fijos en las subredes
 normales, el muestreo solo puede subir (`flow_log_sampling >= 0.5`), el NAT se crea siempre en
-cada región activa y el módulo no crea ninguna dirección externa (el NAT usa `AUTO_ONLY`).
+cada región activa y el módulo no crea ninguna dirección externa (el NAT usa `AUTO_ONLY`). El
+muestreo vale 1 (100 %, CIS 3.10) por defecto; dev y qa lo bajan a 0.5 por costo (ADR 0027).
 
 Decisiones del módulo:
 
@@ -80,13 +81,14 @@ No modules.
 | <a name="input_regions"></a> [regions](#input\_regions) | Regiones del spoke: primary (primaria) y dr (recuperación). La de DR solo se usa con enable\_dr = true. | <pre>object({<br/>    primary = string<br/>    dr      = string<br/>  })</pre> | n/a | yes |
 | <a name="input_subnet_cidrs"></a> [subnet\_cidrs](#input\_subnet\_cidrs) | Rangos del plan de direccionamiento. Llaves: app, proxy, run, gke\_master, pods, services, psa (siempre) y app\_dr, proxy\_dr, run\_dr, gke\_master\_dr, pods\_dr, services\_dr (obligatorias con enable\_dr = true). gke\_master y gke\_master\_dr son solo reservas: no crean subred. | `map(string)` | n/a | yes |
 | <a name="input_enable_dr"></a> [enable\_dr](#input\_enable\_dr) | Crea las subredes, el router y el NAT de la región de DR (llaves *\_dr de subnet\_cidrs). En dev y qa las llaves *\_dr se reservan pero no se crean. | `bool` | `false` | no |
-| <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs. La especificación pide 0.5 como mínimo; solo se permite subirla. | `number` | `0.5` | no |
+| <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs. La especificación pide 0.5 como mínimo; solo se permite subirla. Por defecto 1 (100 %, lo que pide el detector de CIS 3.10; ADR 0027). | `number` | `1` | no |
 | <a name="input_region_short_names"></a> [region\_short\_names](#input\_region\_short\_names) | Mapa región → código corto que se agrega a los nombres de recursos regionales. | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 
 ## Outputs
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_flow_log_sampling"></a> [flow\_log\_sampling](#output\_flow\_log\_sampling) | Mapa subred normal (llave de §5) → fracción de muestreo de sus flow logs (CIS 3.10, ADR 0027). |
 | <a name="output_nat_names"></a> [nat\_names](#output\_nat\_names) | Mapa región → nombre del Cloud NAT. |
 | <a name="output_network_id"></a> [network\_id](#output\_network\_id) | ID de la VPC spoke (projects/<proyecto>/global/networks/<nombre>). |
 | <a name="output_network_name"></a> [network\_name](#output\_network\_name) | Nombre de la VPC spoke. |

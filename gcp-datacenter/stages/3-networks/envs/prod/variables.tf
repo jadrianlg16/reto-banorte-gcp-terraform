@@ -184,9 +184,9 @@ variable "dns_domain_base" {
 }
 
 variable "flow_log_sampling" {
-  description = "Fracción de muestreo de los flow logs de las subredes. La especificación pide 0.5; solo se permite subirla."
+  description = "Fracción de muestreo de los flow logs de las subredes. La especificación pide 0.5; solo se permite subirla. Por defecto 1 (100 %, CIS 3.10); los ejemplos de dev y qa usan 0.5 por costo (ADR 0027)."
   type        = number
-  default     = 0.5
+  default     = 1
 
   validation {
     condition     = var.flow_log_sampling >= 0.5 && var.flow_log_sampling <= 1

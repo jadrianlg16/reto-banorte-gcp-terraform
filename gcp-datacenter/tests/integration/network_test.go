@@ -11,19 +11,20 @@ import (
 )
 
 // assertPrivateSubnet comprueba en la API lo que §8 exige a toda subred de los módulos de red:
-// Private Google Access y flow logs con muestreo de 0.5.
+// Private Google Access y flow logs con el muestreo por defecto de los módulos (1.0: CIS 3.8,
+// ADR 0027; los fixtures no lo cambian).
 func assertPrivateSubnet(t *testing.T, project, region, name string) map[string]any {
 	t.Helper()
 	s := helpers.GcloudJSON(t, t.Context(), "compute", "networks", "subnets", "describe", name,
 		"--project="+project, "--region="+region)
 	assert.True(t, helpers.PathBool(s, "privateIpGoogleAccess"), "%s: Private Google Access", name)
 	assert.True(t, helpers.PathBool(s, "logConfig.enable"), "%s: flow logs", name)
-	assert.Equal(t, "0.5", helpers.PathString(s, "logConfig.flowSampling"), "%s: muestreo de flow logs", name)
+	assert.Equal(t, "1", helpers.PathString(s, "logConfig.flowSampling"), "%s: muestreo de flow logs", name)
 	return s
 }
 
 // TestNetworkHub comprueba el módulo network-hub (§8): VPC personalizada, subredes privadas
-// con PGA y flow logs 0.5, y un Cloud Router por región con el ASN del hub.
+// con PGA y flow logs al 100 %, y un Cloud Router por región con el ASN del hub.
 func TestNetworkHub(t *testing.T) {
 	run, project := moduleTest(t, "network-hub", "compute.googleapis.com")
 	ctx := t.Context()
@@ -54,7 +55,7 @@ func TestNetworkHub(t *testing.T) {
 }
 
 // TestNetworkSpoke comprueba el módulo network-spoke (§7.4 y §8): subredes de §5 con PGA y
-// flow logs 0.5, rangos secundarios pods/services, subred proxy-only, rango y conexión de PSA,
+// flow logs al 100 %, rangos secundarios pods/services, subred proxy-only, rango y conexión de PSA,
 // peering en ambos sentidos (el hub exporta rutas, el spoke las importa) y Cloud NAT por
 // región sin IP públicas en las VM.
 func TestNetworkSpoke(t *testing.T) {

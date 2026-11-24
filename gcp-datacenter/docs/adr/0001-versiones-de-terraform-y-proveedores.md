@@ -34,7 +34,7 @@ La actualización a una versión mayor del proveedor se hace por PR cuando el cl
 
 - **Usar la versión mayor vigente del proveedor.** Rechazada: contradice una convención
   obligatoria de la especificación, y una versión mayor puede traer cambios incompatibles
-  (argumentos retirados o valores por defecto distintos) que obligarían a revisar los 24 módulos sin poder probar contra GCP.
+  (argumentos retirados o valores por defecto distintos) que obligarían a revisar todos los módulos sin poder probar contra GCP.
 - **Restricción abierta (`>= 6.0`).** Rechazada: un `terraform init -upgrade` podría saltar a
   la versión mayor siguiente sin revisión, y el archivo de bloqueo dejaría de ser la única
   fuente de la versión efectiva.

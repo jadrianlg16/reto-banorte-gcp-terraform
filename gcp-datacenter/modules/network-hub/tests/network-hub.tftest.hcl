@@ -39,8 +39,8 @@ run "hub_por_defecto" {
   }
 
   assert {
-    condition     = alltrue([for s in google_compute_subnetwork.this : s.log_config[0].flow_sampling == 0.5])
-    error_message = "Todas las subredes deben tener flow logs con muestreo 0.5."
+    condition     = alltrue([for s in google_compute_subnetwork.this : s.log_config[0].flow_sampling == 1 && s.log_config[0].aggregation_interval == "INTERVAL_5_SEC" && s.log_config[0].metadata == "INCLUDE_ALL_METADATA"])
+    error_message = "Por defecto todas las subredes tienen flow logs al 100 %, cada 5 s y con todos los metadatos (CIS 3.10, ADR 0027)."
   }
 
   assert {

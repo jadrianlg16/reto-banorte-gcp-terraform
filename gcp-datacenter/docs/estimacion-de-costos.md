@@ -56,6 +56,17 @@ Una prueba de 3 días del escenario B cuesta **61.32 – 65.73 USD**; la variant
   Data Access de la carpeta prod y registros del balanceador con Cloud Armor en `VERBOSE`). Los
   VPC Flow Logs son *vended logs*, sin nivel gratuito: 0.4 GiB/mes por spoke en *bajo* y 2, 5 y
   20 GiB/mes (dev, qa, prod) en *alto*.
+- **Muestreo de flow logs (cambio posterior a las tablas):** las cifras de flow logs suponen
+  muestreo 0.5. Desde el ADR 0027 (CIS 3.10), prod, el hub y `onprem-sim` muestrean al 100 %;
+  dev y qa siguen en 0.5. Si el volumen crece en proporción al muestreo (HIPÓTESIS), el
+  escenario A sube +0.15 USD/mes en *bajo* (prod 0.4 → 0.8 GiB, hub y `onprem-sim` 0.2 → 0.4 GiB)
+  y +5.25 USD/mes en *alto* (prod 20 → 40 GiB, hub y `onprem-sim` 1 → 2 GiB), a 0.25 USD/GiB.
+  Las tablas y los totales no se recalcularon con esto.
+- **Métricas de log y alertas de auditoría (CIS 2.5 a 2.12):** nueve por proyecto en los 11
+  proyectos del diseño con una aplicación (semilla, cuatro de `common`, tres `net-spoke` y tres
+  de servicio). Las alertas no cobran (punto anterior); las métricas de log cuentan solo cuando
+  hay entradas que coinciden (cambios de IAM, firewall, rutas, redes, buckets o Cloud SQL), así
+  que se toman en 0 (HIPÓTESIS: no se buscó el precio de métricas definidas por el usuario).
 - **Monitoring y Secret Manager sin cargo con este tamaño:**
   - Uptime checks: 1 por entorno cada 60 s son 43,800 ejecuciones al mes por región de
     verificación. Sin `selected_regions` corre desde todas (`modules/observability/variables.tf:83`;
@@ -111,25 +122,25 @@ Hub (`stages/3-networks/terraform.tfvars.example`): `enable_vpn_dr = true` (l. 2
 | Memorystore | 5 GB; BASIC fuera de prod, STANDARD_HA en prod | `…/qa/terraform.tfvars.example:39`, `…/prod/terraform.tfvars.example:67`, `modules/memorystore/main.tf:5` |
 | Filestore | REGIONAL, 1024 GiB (prod) | `stages/5-workloads/envs/prod/terraform.tfvars.example:68-69` |
 | Cloud Storage: bucket de la app | Regional sin DR; doble región `us-central1`+`us-east4` con turbo replication con `enable_dr`; STANDARD | `stages/5-workloads/envs/prod/data.tf:110-114`, `modules/storage/variables.tf:113` |
-| Cloud Storage: estado | Multirregión US | `stages/0-bootstrap/terraform.tfvars.example:17`, `stages/0-bootstrap/main.tf:130-135` |
-| Cloud Storage: logs de auditoría | `us-central1`, STANDARD, retención de 365 días | `stages/1-org/main.tf:86-103`, `stages/1-org/terraform.tfvars.example:23`, `modules/log-export/variables.tf:83` |
+| Cloud Storage: estado | Multirregión US | `stages/0-bootstrap/terraform.tfvars.example:17`, `stages/0-bootstrap/main.tf:135-140` |
+| Cloud Storage: logs de auditoría | `us-central1`, STANDARD, retención de 365 días | `stages/1-org/main.tf:86-103`, `stages/1-org/terraform.tfvars.example:32`, `modules/log-export/variables.tf:83` |
 | HA VPN | 4 instancias de 2 túneles = **8 túneles**: hub primaria, onprem-sim primaria, hub de DR y onprem-sim de DR | `stages/3-networks/vpn.tf:96-122`, `:129-153`, `:185-207`, `:211-233`; 2 sesiones BGP por VPN (`stages/3-networks/vpn.tf:42-49`), un túnel por sesión (`modules/hybrid-connectivity/main.tf:63-64`) |
 | Cloud Router | Hub: uno por región; onprem-sim: primaria y DR | `modules/network-hub/main.tf:48-49`, `stages/3-networks/vpn.tf:171` |
-| Cloud NAT | Uno por spoke y región activa, `AUTO_ONLY`: dev 1, qa 1, prod 2 (con DR) = 4 | `modules/network-spoke/main.tf:6-9`, `:195-229`, `:211` |
+| Cloud NAT | Uno por spoke y región activa, `AUTO_ONLY`: dev 1, qa 1, prod 2 (con DR) = 4 | `modules/network-spoke/main.tf:6-9`, `:196-230`, `:212` |
 | Balanceador externo | Uno por entorno (existe si hay algún backend; Cloud Run está encendido en los tres), 2 reglas de reenvío globales (443 y 80) | `stages/5-workloads/envs/prod/load_balancing.tf:86`, `:178-180`; `modules/load-balancer/main.tf:255`, `:290` |
 | Balanceador interno | Uno por región con cómputo (solo la primaria sin `dr_active`), 2 reglas `INTERNAL_MANAGED` (443 y 80) | `stages/5-workloads/envs/prod/load_balancing.tf:204-206`; `modules/load-balancer/main.tf:447`, `:492` |
 | Cloud Armor | 1 política por balanceador externo, 12 reglas: 9 OWASP, cve-canary, límite de tasa y regla por defecto | `stages/5-workloads/envs/prod/load_balancing.tf:166-168`; `modules/cloud-armor/variables.tf:56-65`; `modules/cloud-armor/main.tf:44`, `:58`, `:85` |
-| Cloud KMS | 72 llaves SOFTWARE con rotación de 90 días: 69 de la etapa 2 (3 entornos × [2 regiones × 10 usos + multirregión × 3 usos]), 2 de la etapa 1 y 1 de la etapa 0 | `stages/2-security/main.tf:8-14`, `:21-33`; `stages/1-org/main.tf:77-80`; `stages/0-bootstrap/main.tf:102-104`; `modules/kms/variables.tf:66`; `stages/2-security/terraform.tfvars.example:18` |
+| Cloud KMS | 72 llaves SOFTWARE con rotación de 90 días: 69 de la etapa 2 (3 entornos × [2 regiones × 10 usos + multirregión × 3 usos]), 2 de la etapa 1 y 1 de la etapa 0 | `stages/2-security/main.tf:8-14`, `:21-33`; `stages/1-org/main.tf:77-80`; `stages/0-bootstrap/main.tf:107-109`; `modules/kms/variables.tf:66`; `stages/2-security/terraform.tfvars.example:18` |
 | Secret Manager | 1 secreto por entorno con réplica en 2 regiones = 6 versiones activas cuando se carguen los valores; el secreto de la VPN simulada no usa Secret Manager | `stages/2-security/terraform.tfvars.example:12-16`, `stages/2-security/main.tf:83-86`, `stages/3-networks/vpn.tf:76-81` |
 | Artifact Registry | 1 repositorio Docker multirregional `us` por entorno | `stages/4-projects/envs/prod/artifacts.tf:43-60`, `stages/4-projects/envs/prod/terraform.tfvars.example:23` |
 | Backup and DR | Bóveda en `dr_region` y plan diario de Cloud SQL (30 días) en cada entorno | `stages/5-workloads/envs/prod/operations.tf:36-60`, `modules/backup-dr/main.tf:23-25` |
 | Backup for GKE | Solo con `enable_backup`, `enable_gke` y `enable_dr` (prod); plan en `dr_region`, todos los namespaces | `stages/5-workloads/envs/prod/operations.tf:30`, `modules/backup-dr/main.tf:88-92`, `:107-109` |
 | Cloud DNS | 19 zonas: 1 de reenvío en el hub + 6 por spoke; registro de consultas encendido | `stages/3-networks/dns.tf:23-37`, `stages/3-networks/envs/prod/dns.tf:58-96` |
-| Logging | Sink agregado de auditoría hacia el bucket de logs; Data Access en la carpeta prod y en el proyecto semilla; GKE con logs de sistema y de cargas; flow logs con muestreo 0.5; NAT solo errores | `modules/org/variables.tf:89`, `stages/1-org/main.tf:123-136`, `stages/0-bootstrap/main.tf:74-87`, `modules/gke/main.tf:123-125`, `stages/3-networks/envs/prod/terraform.tfvars.example:37`, `modules/network-spoke/main.tf:225-228` |
+| Logging | Sink agregado de auditoría hacia el bucket de logs; Data Access en la carpeta prod y en el proyecto semilla; GKE con logs de sistema y de cargas; flow logs con muestreo 0.5 en las tablas (1.0 en prod, hub y `onprem-sim` desde el ADR 0027, ver §1); NAT solo errores | `modules/org/variables.tf:89`, `stages/1-org/main.tf:123-136`, `stages/0-bootstrap/main.tf:79-92`, `modules/gke/main.tf:123-125`, `stages/3-networks/envs/prod/terraform.tfvars.example:38`, `modules/network-spoke/main.tf:226-229` |
 | Monitoring | Managed Prometheus en GKE; 1 uptime check cada 60 s; 9 condiciones de alerta por entorno | `modules/gke/main.tf:127-131`, `modules/observability/variables.tf:81`, `modules/observability/main.tf:119`, `:163`, `:214`, `:254`, `:323`, `:338` |
 | SCC | Solo la notificación de hallazgos; la activación (Standard) es manual | `stages/1-org/main.tf:138-194` |
 | Política jerárquica de firewall | Asociada a la organización (se cobra por VM) | `stages/3-networks/firewall.tf:82` |
-| Presupuesto | `budget_amount = 1000` (moneda de la cuenta de facturación) | `stages/1-org/terraform.tfvars.example:25` |
+| Presupuesto | `budget_amount = 1000` (moneda de la cuenta de facturación) | `stages/1-org/terraform.tfvars.example:34` |
 
 ## 3. Precios unitarios
 
@@ -184,7 +195,7 @@ Valores de ejemplo de los tres entornos, `enable_vpn_dr = true` y DR de datos en
 | **Total** | **2,450.43** | **3,553.63** |
 | **Por día** | **80.56** | **116.83** |
 
-El total supera el presupuesto de ejemplo de 1000 (`stages/1-org/terraform.tfvars.example:25`).
+El total supera el presupuesto de ejemplo de 1000 (`stages/1-org/terraform.tfvars.example:34`).
 
 `*` en un renglón = usa un precio SUPUESTO de la §3. Los precios de las columnas de cálculo están
 en USD por hora (× 730) o por unidad.
@@ -441,12 +452,12 @@ variables, se marcan así: son propuestas, no cambios hechos.
     (`modules/kms/variables.tf:67`): hasta 72 × 0.06 = 4.32 USD. Las llaves y los llaveros no se
     borran en Cloud KMS; solo se destruyen sus versiones.
   - El bucket de logs de auditoría guarda los objetos 365 días por su retención: centavos.
-  - El bucket de estado tiene `prevent_destroy` (`stages/0-bootstrap/main.tf:181-183`).
+  - El bucket de estado tiene `prevent_destroy` (`stages/0-bootstrap/main.tf:186-188`).
 
   Prod no se desmonta solo con `destroy`: tiene `deletion_protection` obligatoria
   (`stages/5-workloads/envs/prod/variables.tf:173-183`) y `deletion_policy = "PREVENT"`
   (`stages/4-projects/envs/prod/terraform.tfvars.example:18`).
-- **Presupuesto.** Ajustar `budget_amount` (`stages/1-org/terraform.tfvars.example:25`) al
+- **Presupuesto.** Ajustar `budget_amount` (`stages/1-org/terraform.tfvars.example:34`) al
   crédito disponible para recibir los avisos de umbral (`stages/1-org/main.tf:198-231`). El
   presupuesto avisa; no corta el gasto.
 

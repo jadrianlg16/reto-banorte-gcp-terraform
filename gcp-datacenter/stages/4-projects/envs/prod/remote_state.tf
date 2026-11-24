@@ -66,8 +66,10 @@ data "terraform_remote_state" "network" {
 }
 
 locals {
-  # 1-org: folder_ids (map(string), llaves common, dev, qa, prod → folders/…).
-  folder_id = data.terraform_remote_state.org.outputs.folder_ids[var.environment]
+  # 1-org: folder_ids (map(string), llaves common, dev, qa, prod → folders/…) y
+  # security_alert_email (string, grupo security_admins: alertas de auditoría).
+  folder_id            = data.terraform_remote_state.org.outputs.folder_ids[var.environment]
+  security_alert_email = data.terraform_remote_state.org.outputs.security_alert_email
 
   # 2-security: kms_key_ids (map(map(map(string))) [entorno][ubicación][uso]),
   # secret_ids (map(map(string)) [entorno][nombre]), perimeter_name (string),

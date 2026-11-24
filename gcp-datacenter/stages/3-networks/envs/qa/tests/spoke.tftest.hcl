@@ -30,7 +30,8 @@ override_data {
         security = "000000000013"
         backup   = "000000000014"
       }
-      log_bucket = "bnt-common-logging-audit"
+      log_bucket           = "bnt-common-logging-audit"
+      security_alert_email = "gcp-security-admins@example.com"
     }
   }
 }
@@ -201,6 +202,21 @@ run "spoke_dev_sin_dr" {
   assert {
     condition     = contains(module.project.enabled_apis, "networkmanagement.googleapis.com")
     error_message = "El proyecto host debe tener la API de Network Management (Connectivity Tests de la prueba de humo)."
+  }
+
+  # CIS: Cloud Asset (2.14), métricas y alertas de auditoría hacia security_admins (2.5 a
+  # 2.12) y flow logs al 50 % en dev (3.10, desviación del ADR 0027).
+  assert {
+    condition     = contains(module.project.enabled_apis, "cloudasset.googleapis.com") && length(module.audit_alerts.metric_names) == 9
+    error_message = "El proyecto net-spoke debe tener Cloud Asset y las métricas de auditoría."
+  }
+  assert {
+    condition     = module.audit_alerts.metric_names["network"] == "bnt-dev-ops-audit-network" && module.audit_alerts.notification_email == "gcp-security-admins@example.com"
+    error_message = "Las alertas del spoke deben ir al grupo security_admins que publica 1-org."
+  }
+  assert {
+    condition     = length(module.spoke.flow_log_sampling) == 2 && alltrue([for v in values(module.spoke.flow_log_sampling) : v == 0.5])
+    error_message = "En dev los flow logs van al 50 % (terraform.tfvars.example, ADR 0027)."
   }
 
   # Reglas leídas de los recursos de la política de red (salida rules del módulo firewall).
@@ -387,6 +403,39 @@ run "spoke_prod" {
   assert {
     condition     = output.host_project_id == "bnt-prod-net-spoke" && output.private_dns_domain == "prod.empresa.internal." && length(output.subnets) == 6 && length(output.nat_names) == 2
     error_message = "prod debe crear bnt-prod-net-spoke, la zona prod.empresa.internal. y las subredes y NAT de las dos regiones."
+  }
+}
+
+# CIS 3.10 (ADR 0027): muestreo de flow logs al 100 % en prod (terraform.tfvars.example de
+# prod), 0.5 en dev y qa.
+run "spoke_prod_flow_logs_al_100" {
+  command = plan
+
+  variables {
+    environment       = "prod"
+    enable_dr         = true
+    flow_log_sampling = 1
+    spoke_supernet    = "10.30.0.0/16"
+    subnet_cidrs = {
+      app           = "10.30.0.0/20"
+      app_dr        = "10.30.16.0/20"
+      proxy         = "10.30.32.0/23"
+      proxy_dr      = "10.30.34.0/23"
+      run           = "10.30.36.0/24"
+      run_dr        = "10.30.37.0/24"
+      gke_master    = "10.30.38.0/28"
+      gke_master_dr = "10.30.38.16/28"
+      pods          = "10.30.64.0/18"
+      services      = "10.30.128.0/20"
+      services_dr   = "10.30.160.0/20"
+      psa           = "10.30.176.0/20"
+      pods_dr       = "10.30.192.0/18"
+    }
+  }
+
+  assert {
+    condition     = length(module.spoke.flow_log_sampling) == 4 && alltrue([for v in values(module.spoke.flow_log_sampling) : v == 1])
+    error_message = "En prod los flow logs de las cuatro subredes normales van al 100 % (CIS 3.10)."
   }
 }
 

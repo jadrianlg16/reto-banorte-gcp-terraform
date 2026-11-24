@@ -54,6 +54,26 @@
       ]
     },
     {
+      "module": "module.audit_alerts[\"app\"]",
+      "mode": "managed",
+      "type": "google_logging_metric",
+      "name": "this",
+      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [
+        {"index_key": "owner", "schema_version": 0, "attributes": {"id": "bnt-dev-ops-audit-owner", "name": "bnt-dev-ops-audit-owner", "project": "example-dev-app"}}
+      ]
+    },
+    {
+      "module": "module.audit_alerts[\"app\"]",
+      "mode": "managed",
+      "type": "google_monitoring_alert_policy",
+      "name": "this",
+      "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [
+        {"index_key": "owner", "schema_version": 0, "attributes": {"id": "projects/example-dev-app/alertPolicies/1234567890", "name": "projects/example-dev-app/alertPolicies/1234567890", "project": "example-dev-app"}}
+      ]
+    },
+    {
       "mode": "data",
       "type": "google_storage_bucket",
       "name": "manual",

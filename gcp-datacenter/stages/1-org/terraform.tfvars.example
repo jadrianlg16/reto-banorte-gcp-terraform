@@ -20,6 +20,15 @@ groups = {
   auditors        = "gcp-auditors@example.com"
 }
 
+# Contactos esenciales de la organización (CIS 1.17): grupo → categorías. Entre todos deben
+# cubrir LEGAL, SECURITY, SUSPENSION y TECHNICAL.
+essential_contacts = {
+  org_admins      = ["LEGAL", "SUSPENSION", "TECHNICAL"]
+  security_admins = ["SECURITY", "TECHNICAL"]
+  billing_admins  = ["BILLING"]
+}
+essential_contacts_language = "es"
+
 log_retention_days   = 365
 log_retention_locked = false
 budget_amount        = 1000

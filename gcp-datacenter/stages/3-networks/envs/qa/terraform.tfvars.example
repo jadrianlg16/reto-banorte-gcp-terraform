@@ -34,6 +34,7 @@ onprem_cidrs = ["192.168.0.0/16"]
 
 onprem_dns_domain = "corp.example.com."
 dns_domain_base   = "empresa.internal."
+# Muestreo de flow logs: 0.5 en dev y qa por costo (desviación de CIS 3.10, ADR 0027); 1 en prod.
 flow_log_sampling = 0.5
 
 # VIP de las zonas googleapis.com., gcr.io., pkg.dev. y run.app. (restricted o private).

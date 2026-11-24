@@ -17,7 +17,7 @@ especificación exige a cada módulo (columna "Exige" de §8).
 
 ## Decisión
 
-Los 24 módulos de `modules/` se escriben con recursos de `hashicorp/google` y
+Los módulos de `modules/` se escriben con recursos de `hashicorp/google` y
 `hashicorp/google-beta` directamente, sin bloques `module` que apunten a terceros. Cada módulo
 fija como valor o como validación lo que la especificación exige (por ejemplo,
 `prevent_destroy` en `kms`, `ipv4_enabled = false` en `cloud-sql`, la denegación por defecto en

@@ -20,6 +20,9 @@ locals {
   # Carpeta del entorno (salida folder_ids de 1-org).
   folder_id = data.terraform_remote_state.org.outputs.folder_ids[var.environment]
 
+  # Grupo security_admins (salida security_alert_email de 1-org): alertas de auditoría.
+  security_alert_email = data.terraform_remote_state.org.outputs.security_alert_email
+
   # VPC hub (salida hub_network_self_link del hub), para el peering y la zona de peering DNS.
   hub_network_self_link = data.terraform_remote_state.hub.outputs.hub_network_self_link
 

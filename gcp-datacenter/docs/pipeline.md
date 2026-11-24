@@ -346,7 +346,10 @@ Los trabajos `plan` no usan entorno: corren antes de la aprobación para que se 
    - `roles/networkmanagement.admin` en el proyecto host de dev (crear y borrar las
      Connectivity Tests), `roles/compute.networkViewer` en los proyectos host de dev y del hub,
      y `roles/cloudsql.viewer` en los proyectos de servicio de dev;
-   - la API `cloudasset.googleapis.com` habilitada en el proyecto de cuota de la cuenta. La API
+   - la API `cloudasset.googleapis.com` habilitada en el proyecto de cuota de la cuenta, que para
+     una cuenta de servicio es el proyecto donde vive. Si vive en el proyecto semilla (como en el
+     ejemplo de §2), ya la habilita `0-bootstrap` (`project-factory` la agrega a todo proyecto,
+     CIS 2.14; pendiente 60); si vive en otro proyecto, habilitarla ahí. La API
      `networkmanagement.googleapis.com` del proyecto host (donde se crean las Connectivity
      Tests) la habilita `3-networks/envs/<env>`; no se habilita a mano.
 

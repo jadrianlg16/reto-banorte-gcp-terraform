@@ -4,7 +4,9 @@ Crea la VPC del hub en modo personalizado y con enrutamiento global, sus subrede
 Router por cada región que usan las subredes (con el ASN del hub). La especificación (sección
 "Componentes del datacenter", red) exige subredes privadas con Private Google Access y flow
 logs al 50 %: el módulo fija Private Google Access y los flow logs en todas las subredes y solo
-permite subir el muestreo (validación `flow_log_sampling >= 0.5`).
+permite subir el muestreo (validación `flow_log_sampling >= 0.5`). El valor por defecto es 1
+(100 %), lo que pide el detector de CIS 3.10 (`VPC_FLOW_LOGS_SETTINGS_NOT_RECOMMENDED`): así
+quedan el hub y `onprem-sim` (ADR 0027).
 
 Decisiones del módulo:
 
@@ -59,7 +61,7 @@ No modules.
 | <a name="input_subnets"></a> [subnets](#input\_subnets) | Subredes de la VPC. Llave = nombre lógico (por ejemplo hub, hub\_dr); valor = región y CIDR primario. Todas son privadas, con Private Google Access y flow logs. | <pre>map(object({<br/>    region      = string<br/>    cidr        = string<br/>    description = optional(string, "")<br/>  }))</pre> | n/a | yes |
 | <a name="input_environment"></a> [environment](#input\_environment) | Entorno que se usa en los nombres. El hub vive en common. | `string` | `"common"` | no |
 | <a name="input_extra_router_regions"></a> [extra\_router\_regions](#input\_extra\_router\_regions) | Regiones donde se crea un Cloud Router aunque la VPC no tenga subred allí (por ejemplo, la región de DR de la VPC simulada de on-premises, que solo necesita el router para su HA VPN). Por defecto ninguna: un router por región con subred. | `list(string)` | `[]` | no |
-| <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs. La especificación pide 0.5 como mínimo; solo se permite subirla. | `number` | `0.5` | no |
+| <a name="input_flow_log_sampling"></a> [flow\_log\_sampling](#input\_flow\_log\_sampling) | Fracción de muestreo de los flow logs. La especificación pide 0.5 como mínimo; solo se permite subirla. Por defecto 1 (100 %, lo que pide el detector de CIS 3.10; ADR 0027). | `number` | `1` | no |
 | <a name="input_network_suffix"></a> [network\_suffix](#input\_network\_suffix) | Recurso que cierra el nombre de la VPC: <prefix>-<environment>-net-<network\_suffix>. Por defecto hub; la VPC simulada de on-premises (ADR 0006) usa onprem-sim. | `string` | `"hub"` | no |
 | <a name="input_region_short_names"></a> [region\_short\_names](#input\_region\_short\_names) | Mapa región → código corto que se agrega a los nombres de recursos regionales. | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 

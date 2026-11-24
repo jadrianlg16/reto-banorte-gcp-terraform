@@ -15,6 +15,8 @@ Estructura y gobierno de la organización (§7.1 del contrato). Corre con la cue
 | Registros de Data Access | carpeta `prod`, `allServices`: ADMIN_READ, DATA_READ, DATA_WRITE | `google_folder_iam_audit_config` |
 | Security Command Center | notificación `bnt-common-ops-scc-findings` (v2, `global`) hacia el tema de Pub/Sub `bnt-common-ops-scc-findings` (CMEK regional; mensajes solo en `primary_region`, con imposición en tránsito) | `google_scc_v2_organization_notification_config`, `google_pubsub_topic` |
 | Presupuesto | `bnt-common-ops-budget` sobre toda la organización, alertas a `budget_alert_thresholds` del gasto real y al 100 % del pronosticado | `google_billing_budget` |
+| Contactos esenciales de la organización (CIS 1.17) | un contacto por grupo de `essential_contacts` (por defecto `org_admins`: LEGAL, SUSPENSION, TECHNICAL; `security_admins`: SECURITY, TECHNICAL; `billing_admins`: BILLING), idioma `essential_contacts_language` | `google_essential_contacts_contact` |
+| Métricas y alertas de auditoría de los proyectos de common (CIS 2.5 a 2.12) | `bnt-common-ops-audit-<control>` en `net-hub`, `logging`, `security` y `backup`, con un canal de correo hacia el grupo `security_admins` | `audit-alerts` |
 | IAM por grupos y permisos de las cuentas de etapa | ver abajo | `iam` |
 
 Un solo sink: `log-export` recibe `parent = null` (solo crea el bucket, su CMEK y el permiso
@@ -28,6 +30,21 @@ etapa 2 y de los buckets de doble región).
 
 Los IDs de carpeta conservan el prefijo literal `folders/` (salida `ids` del módulo
 `folders`), así quien los consume sabe el tipo de padre en el plan.
+
+### Contactos esenciales y alertas de auditoría
+
+`essential_contacts` asigna categorías de notificación de Google a los grupos de `groups`
+(nunca a personas). La validación exige que estén SECURITY, TECHNICAL, LEGAL y SUSPENSION, las
+cuatro que revisa el detector `ESSENTIAL_CONTACTS_NOT_CONFIGURED` (CIS 1.17); BILLING va aparte
+para `billing_admins`. La cuenta de la etapa recibe `roles/essentialcontacts.admin` en la
+organización (etapa 0) y la API `essentialcontacts` está habilitada en el proyecto semilla, que
+es el proyecto de cuota.
+
+Las métricas de log del CIS (2.5 a 2.12) son de proyecto: los detectores de Security Health
+Analytics revisan cada proyecto. Esta etapa crea el juego en los cuatro proyectos de `common`
+(es su dueña) y publica el correo del grupo `security_admins` como `security_alert_email`, que
+leen `3-networks/<env>` y `4-projects/<env>` para sus proyectos. Cada etapa crea las alertas de
+los proyectos que crea; ninguna cuenta recibe un rol nuevo de Monitoring por esto.
 
 ### Security Command Center
 
@@ -108,7 +125,8 @@ actividad administrativa del proyecto `security` y del sink de la organización.
 
 ## Roles que necesita la cuenta de la etapa
 
-`<prefix>-tf-1-org` (los da la etapa 0): en la organización `resourcemanager.folderAdmin`,
+`<prefix>-tf-1-org` (los da la etapa 0): en la organización `essentialcontacts.admin`,
+`resourcemanager.folderAdmin`,
 `resourcemanager.projectCreator`, `orgpolicy.policyAdmin`, `logging.configWriter`,
 `iam.securityAdmin`, `securitycenter.notificationConfigEditor` y
 `resourcemanager.organizationViewer`; en la cuenta de facturación `billing.user` y
@@ -142,6 +160,10 @@ retención con el área de cumplimiento.
   servicio de Google.
 - Proyecto de cuota aceptado por todas las APIs de la etapa.
 - Retención bloqueada y CMEK del bucket de logs (en el módulo `log-export`).
+- Contactos esenciales creados en la organización con `essentialcontacts.admin` y el proyecto
+  semilla como proyecto de cuota, y que el detector deje de marcar la organización
+  (pendiente 57).
+- Métricas, alertas y canal de `audit-alerts` en los proyectos de common (pendiente 58).
 
 ## Pruebas
 
@@ -151,9 +173,10 @@ salidas y nombres de §7.1, las nueve políticas, el sink único, las llaves de 
 Access en prod, SCC, el presupuesto, que los grupos solo tienen lectura, que `developers` solo
 está en dev y qa y los permisos de las cuentas de etapa (5-workloads sin ningún rol,
 projectIamAdmin de 4-projects con su condición exacta, 2-security sin `secretmanager.admin` ni
-`projectIamAdmin`, el rol personalizado de 4-projects sobre `security`), el almacenamiento del tema de SCC limitado a la región primaria; y
+`projectIamAdmin`, el rol personalizado de 4-projects sobre `security`), el almacenamiento del tema de SCC limitado a la región primaria, los contactos esenciales por grupo, las nueve métricas de auditoría en cada proyecto de common y la salida `security_alert_email`; y
 que `groups` incompleto, una región
-de DR igual a la primaria y un `prefix` inválido se rechazan.
+de DR igual a la primaria, un `prefix` inválido y contactos sin SUSPENSION, con una categoría
+desconocida o con un grupo que no existe se rechazan.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -176,6 +199,7 @@ de DR igual a la primaria y un `prefix` inválido se rechazan.
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
+| <a name="module_audit_alerts"></a> [audit\_alerts](#module\_audit\_alerts) | ../../modules/audit-alerts | n/a |
 | <a name="module_audit_logs"></a> [audit\_logs](#module\_audit\_logs) | ../../modules/log-export | n/a |
 | <a name="module_common_project"></a> [common\_project](#module\_common\_project) | ../../modules/project-factory | n/a |
 | <a name="module_folders"></a> [folders](#module\_folders) | ../../modules/folders | n/a |
@@ -189,6 +213,7 @@ de DR igual a la primaria y un `prefix` inválido se rechazan.
 | ---- | ---- |
 | [google-beta_google_project_service_identity.pubsub](https://registry.terraform.io/providers/hashicorp/google-beta/latest/docs/resources/google_project_service_identity) | resource |
 | [google_billing_budget.org](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/billing_budget) | resource |
+| [google_essential_contacts_contact.org](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/essential_contacts_contact) | resource |
 | [google_folder_iam_audit_config.prod](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/folder_iam_audit_config) | resource |
 | [google_kms_crypto_key_iam_member.pubsub_agent](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
 | [google_pubsub_topic.scc_findings](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic) | resource |
@@ -211,6 +236,8 @@ de DR igual a la primaria y un `prefix` inválido se rechazan.
 | <a name="input_state_bucket"></a> [state\_bucket](#input\_state\_bucket) | Bucket de estado (salida state\_bucket de la etapa 0); se usa para leer el estado de 0-bootstrap. | `string` | n/a | yes |
 | <a name="input_additional_allowed_locations"></a> [additional\_allowed\_locations](#input\_additional\_allowed\_locations) | Ubicaciones extra permitidas por gcp.resourceLocations, además de las dos regiones. Por defecto us: la multirregión de los llaveros de la etapa 2 y de los buckets de doble región. | `list(string)` | <pre>[<br/>  "us"<br/>]</pre> | no |
 | <a name="input_budget_alert_thresholds"></a> [budget\_alert\_thresholds](#input\_budget\_alert\_thresholds) | Umbrales de alerta del presupuesto sobre el gasto real, como fracción del monto (0.5 = 50 %). Además se alerta al 100 % del gasto pronosticado. | `list(number)` | <pre>[<br/>  0.5,<br/>  0.75,<br/>  0.9,<br/>  1<br/>]</pre> | no |
+| <a name="input_essential_contacts"></a> [essential\_contacts](#input\_essential\_contacts) | Contactos esenciales de la organización (CIS 1.17): llave de groups → categorías de notificación que recibe ese grupo. Entre todos deben cubrir LEGAL, SECURITY, SUSPENSION y TECHNICAL, las que revisa el detector ESSENTIAL\_CONTACTS\_NOT\_CONFIGURED. Categorías admitidas por la API: ALL, BILLING, LEGAL, PRODUCT\_UPDATES, SECURITY, SUSPENSION, TECHNICAL y TECHNICAL\_INCIDENTS. | `map(list(string))` | <pre>{<br/>  "billing_admins": [<br/>    "BILLING"<br/>  ],<br/>  "org_admins": [<br/>    "LEGAL",<br/>    "SUSPENSION",<br/>    "TECHNICAL"<br/>  ],<br/>  "security_admins": [<br/>    "SECURITY",<br/>    "TECHNICAL"<br/>  ]<br/>}</pre> | no |
+| <a name="input_essential_contacts_language"></a> [essential\_contacts\_language](#input\_essential\_contacts\_language) | Idioma de las notificaciones de Essential Contacts (etiqueta BCP-47, por ejemplo es o en). | `string` | `"es"` | no |
 | <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con región (§4.2). Debe incluir primary\_region. | `map(string)` | <pre>{<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_log_retention_days"></a> [log\_retention\_days](#input\_log\_retention\_days) | Días de retención de cada objeto del bucket de logs de auditoría. | `number` | `365` | no |
 | <a name="input_log_retention_locked"></a> [log\_retention\_locked](#input\_log\_retention\_locked) | Si es true, bloquea la retención del bucket de logs. IRREVERSIBLE una vez aplicado: la retención ya no se puede acortar ni quitar y el bucket no se puede borrar hasta que venza el último objeto. | `bool` | `false` | no |
@@ -230,4 +257,5 @@ de DR igual a la primaria y un `prefix` inválido se rechazan.
 | <a name="output_logging_kms_key_ids"></a> [logging\_kms\_key\_ids](#output\_logging\_kms\_key\_ids) | Mapa uso (logs, pubsub) → ID de las llaves KMS del proyecto logging (ADR 0018). |
 | <a name="output_org_policy_names"></a> [org\_policy\_names](#output\_org\_policy\_names) | Mapa restricción → nombre completo de las nueve políticas de organización. |
 | <a name="output_scc_findings_topic"></a> [scc\_findings\_topic](#output\_scc\_findings\_topic) | ID del tema de Pub/Sub que recibe los hallazgos de Security Command Center. |
+| <a name="output_security_alert_email"></a> [security\_alert\_email](#output\_security\_alert\_email) | Correo del grupo security\_admins: destino de las alertas de auditoría (CIS 2.5 a 2.12) que crean los spokes de 3-networks y 4-projects en sus proyectos. |
 <!-- END_TF_DOCS -->

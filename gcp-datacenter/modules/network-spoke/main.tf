@@ -77,7 +77,8 @@ resource "google_compute_network" "this" {
   delete_default_routes_on_create = true
 }
 
-# Subredes privadas con Private Google Access y flow logs (muestreo de al menos 0.5).
+# Subredes privadas con Private Google Access y flow logs (muestreo de al menos 0.5; 1 por
+# defecto, ADR 0027).
 resource "google_compute_subnetwork" "this" {
   for_each = local.regular_subnets
 

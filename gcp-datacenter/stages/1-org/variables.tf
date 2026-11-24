@@ -180,6 +180,54 @@ variable "scc_notification_filter" {
   }
 }
 
+variable "essential_contacts" {
+  description = "Contactos esenciales de la organización (CIS 1.17): llave de groups → categorías de notificación que recibe ese grupo. Entre todos deben cubrir LEGAL, SECURITY, SUSPENSION y TECHNICAL, las que revisa el detector ESSENTIAL_CONTACTS_NOT_CONFIGURED. Categorías admitidas por la API: ALL, BILLING, LEGAL, PRODUCT_UPDATES, SECURITY, SUSPENSION, TECHNICAL y TECHNICAL_INCIDENTS."
+  type        = map(list(string))
+  default = {
+    org_admins      = ["LEGAL", "SUSPENSION", "TECHNICAL"]
+    security_admins = ["SECURITY", "TECHNICAL"]
+    billing_admins  = ["BILLING"]
+  }
+  nullable = false
+
+  validation {
+    condition = alltrue([
+      for k in keys(var.essential_contacts) :
+      contains(["org_admins", "billing_admins", "security_admins", "network_admins", "platform_devops", "developers", "auditors"], k)
+    ])
+    error_message = "Cada llave de essential_contacts debe ser una llave de groups (org_admins, billing_admins, security_admins, network_admins, platform_devops, developers, auditors)."
+  }
+  validation {
+    condition = alltrue([
+      for c in flatten(values(var.essential_contacts)) :
+      contains(["ALL", "BILLING", "LEGAL", "PRODUCT_UPDATES", "SECURITY", "SUSPENSION", "TECHNICAL", "TECHNICAL_INCIDENTS"], c)
+    ])
+    error_message = "Categoría desconocida en essential_contacts: solo ALL, BILLING, LEGAL, PRODUCT_UPDATES, SECURITY, SUSPENSION, TECHNICAL o TECHNICAL_INCIDENTS."
+  }
+  validation {
+    condition     = alltrue([for l in values(var.essential_contacts) : length(l) > 0])
+    error_message = "Cada grupo de essential_contacts necesita al menos una categoría."
+  }
+  validation {
+    condition = alltrue([
+      for c in ["LEGAL", "SECURITY", "SUSPENSION", "TECHNICAL"] : contains(flatten(values(var.essential_contacts)), c)
+    ])
+    error_message = "essential_contacts debe cubrir LEGAL, SECURITY, SUSPENSION y TECHNICAL (CIS 1.17)."
+  }
+}
+
+variable "essential_contacts_language" {
+  description = "Idioma de las notificaciones de Essential Contacts (etiqueta BCP-47, por ejemplo es o en)."
+  type        = string
+  default     = "es"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$", var.essential_contacts_language))
+    error_message = "essential_contacts_language debe ser una etiqueta de idioma BCP-47 (por ejemplo es, en o es-419)."
+  }
+}
+
 variable "labels" {
   description = "Etiquetas comunes (§4.3). Deben traer app, owner y cost_center; la raíz agrega env = common y managed_by = terraform."
   type        = map(string)

@@ -13,6 +13,23 @@ repositorio. Para evitar borrados accidentales, `deletion_policy` vale `PREVENT`
 en `bootstrap`, `common` y `prod` no admite otro valor; en `dev` y `qa` se puede usar `DELETE`
 para desmontar el entorno.
 
+Controles del CIS GCP Foundation v5.0 que fija el módulo en todo proyecto
+([`docs/cumplimiento-cis.md`](../../docs/cumplimiento-cis.md)):
+
+- APIs de base, además de `apis`: `cloudasset.googleapis.com` (2.14; el detector
+  `CLOUD_ASSET_API_DISABLED` revisa cada proyecto y `drift.yml` usa Cloud Asset), y
+  `logging.googleapis.com` y `monitoring.googleapis.com`, que necesitan las métricas y alertas
+  del módulo `audit-alerts` (2.5 a 2.12).
+- OS Login en el proyecto (4.4): si el proyecto tiene la API de Compute, el metadato de proyecto
+  `enable-oslogin = TRUE` (`google_compute_project_metadata_item.os_login`), que es lo que lee
+  el detector `OS_LOGIN_DISABLED`. Se prefirió a la política de organización
+  `compute.requireOsLogin` porque esa política solo escribe el metadato en los proyectos nuevos
+  ([documentación de Google](https://docs.cloud.google.com/compute/docs/oslogin/manage-oslogin-in-an-org))
+  y el proyecto semilla existe antes de la etapa 1. Los nodos de GKE Standard heredan el
+  metadato ([OS Login en GKE](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/enable-oslogin));
+  SSH a una VM o nodo exige entonces `roles/compute.osLogin` (nadie lo tiene hoy, ver
+  `docs/pendientes-apply.md` §5).
+
 Notas de uso:
 
 - Shared VPC: el host se habilita con `shared_vpc_host = true`; un proyecto de servicio se une
@@ -45,6 +62,7 @@ No modules.
 
 | Name | Type |
 | ---- | ---- |
+| [google_compute_project_metadata_item.os_login](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_project_metadata_item) | resource |
 | [google_compute_shared_vpc_host_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_shared_vpc_host_project) | resource |
 | [google_compute_shared_vpc_service_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_shared_vpc_service_project) | resource |
 | [google_project.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project) | resource |
