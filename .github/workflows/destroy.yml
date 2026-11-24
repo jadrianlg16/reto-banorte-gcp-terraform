@@ -29,8 +29,9 @@
 # con <prefix>-<env>-) que no conserve 1-base ni administre todavía un estado.
 #
 # Comparte el grupo de concurrencia de apply.yml: nunca corren a la vez. El siguiente apply.yml
-# (push a main o manual) vuelve a crear lo destruido. Para que no lo recree: GCP_ENABLED a otro
-# valor después del destroy.
+# (push a main o manual) vuelve a crear lo destruido. Para que no lo recree: agregar el entorno a
+# la variable de repositorio GCP_DISABLED_ENVS (por ejemplo "dev" o "dev,qa"; ver apply.yml)
+# antes o después del destroy, o GCP_ENABLED a otro valor para no aplicar nada.
 
 name: destroy
 

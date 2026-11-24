@@ -3,6 +3,7 @@
 #   unmanaged-resources.py  recursos de Cloud Asset del proyecto que no están en los estados
 #   affected-roots.sh       raíces que planea pr.yml (y drift.yml con --all)
 #   root-tfvars.py          variables de cada raíz desde GCP_TFVARS_JSON
+#   disabled-envs.py        entornos apagados con GCP_DISABLED_ENVS (apply.yml y drift.yml)
 #   go-test-report.sh       conteo de pruebas omitidas de go test -json
 #   module-tests.sh         pruebas de integración de cada módulo
 #   plan-fingerprint.py     huella del plan revisado (apply.yml)
@@ -192,48 +193,236 @@ grep -qF 'bash scripts/affected-roots.sh "${BASE_SHA}" "${HEAD_SHA}"' "$WF/pr.ym
   grep -qF 'bash scripts/affected-roots.sh --all' "$WF/drift.yml"
 check "affected-roots: pr.yml lo llama con base y cabeza del PR y drift.yml con --all" 0 $?
 
-# apply.yml: las raíces, llaves y entornos de GitHub son los de affected-roots.sh y el orden es
-# el del ADR 0029 §2 (cada trabajo espera al anterior; qa después de la prueba de humo de dev).
+# --- disabled-envs.py (GCP_DISABLED_ENVS) ---------------------------------------------------
+de() { GCP_DISABLED_ENVS="$1" "$PY" scripts/disabled-envs.py "${@:2}"; }
+[ "$(de "" outputs | tr '\n' ' ')" = "dev=true qa=true " ]
+check "disabled-envs: vacía, ningún entorno apagado" 0 $?
+[ "$(de "dev" outputs | tr '\n' ' ')" = "dev=false qa=true " ] &&
+  [ "$(de " QA , dev " outputs | tr '\n' ' ')" = "dev=false qa=false " ] &&
+  [ "$(de "qa qa" outputs | tr '\n' ' ')" = "dev=true qa=false " ]
+check "disabled-envs: dev, qa y los dos (comas o espacios, sin importar mayúsculas)" 0 $?
+de "dev,prod" outputs >/dev/null 2>"$tmp/de-err.txt"
+[ $? = 2 ] && grep -q 'prod no se puede apagar' "$tmp/de-err.txt"
+check "disabled-envs: prod en la variable es error (2) con mensaje" 0 $?
+de "prod" filter </dev/null >/dev/null 2>&1
+check "disabled-envs: prod también es error al filtrar (drift.yml)" 2 $?
+de "common" outputs >/dev/null 2>&1
+rc_common=$?
+de "dev,test" outputs >/dev/null 2>&1
+check "disabled-envs: common y nombres desconocidos son error" "2 2" "$rc_common $?"
+: >"$tmp/de-out.txt"
+de "dev,prod" outputs "$tmp/de-out.txt" >"$tmp/de-stdout.txt" 2>/dev/null
+[ $? = 2 ] && [ ! -s "$tmp/de-out.txt" ] && grep -q '^::error::' "$tmp/de-stdout.txt"
+check "disabled-envs: con archivo, el error va como ::error:: y no escribe salidas" 0 $?
+printf 'otra=1\n' >"$tmp/de-out.txt"
+de "qa" outputs "$tmp/de-out.txt" >"$tmp/de-stdout.txt" 2>&1
+[ $? = 0 ] && [ "$(tr '\n' ' ' <"$tmp/de-out.txt")" = "otra=1 dev=true qa=false " ] &&
+  grep -q '^::notice::.*qa' "$tmp/de-stdout.txt"
+check "disabled-envs: con archivo agrega las salidas al final (GITHUB_OUTPUT) y avisa con ::notice::" 0 $?
+bash scripts/affected-roots.sh --all >"$tmp/de-roots.txt"
+de "dev" filter <"$tmp/de-roots.txt" >"$tmp/de-filtered.txt" 2>/dev/null
 "$PY" -c '
-import json, re, sys
+import json, sys
+got = json.loads(open(sys.argv[1], encoding="utf-8").read().strip()[len("roots="):])
+want = [r for r in json.loads(open(sys.argv[2], encoding="utf-8").read().strip()[len("roots="):])
+        if r["environment"] != "dev"]
+sys.exit(0 if got == want and len(got) == 6 and all(r["environment"] != "dev" for r in got) else 1)
+' "$tmp/de-filtered.txt" "$tmp/de-roots.txt" 2>/dev/null
+check "disabled-envs: filter quita las 2 raíces de dev y deja las otras 6 en el mismo formato" 0 $?
+[ "$(de "" filter <"$tmp/de-roots.txt")" = "$(cat "$tmp/de-roots.txt")" ]
+check "disabled-envs: filter sin entornos apagados deja la lista igual" 0 $?
+printf 'nada\n' | de "" filter >/dev/null 2>&1
+check "disabled-envs: filter sin línea roots= es error" 2 $?
+grep -qF 'python3 scripts/disabled-envs.py outputs "${GITHUB_OUTPUT}"' "$WF/apply.yml" &&
+  grep -qF 'GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}' "$WF/apply.yml" &&
+  grep -qF 'python3 scripts/disabled-envs.py filter "${GITHUB_OUTPUT}" < "${RUNNER_TEMP}/roots.txt"' "$WF/drift.yml" &&
+  grep -qF 'GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}' "$WF/drift.yml"
+check "disabled-envs: apply.yml (gate) y drift.yml (raíces) lo usan con la variable de repositorio" 0 $?
+
+# apply.yml: las raíces, llaves y entornos de GitHub son los de affected-roots.sh y el orden es
+# el del ADR 0029 §2 (cada trabajo depende, directa o indirectamente, del anterior; qa después
+# de la prueba de humo de dev; los spokes en serie). Después simula el flujo: evalúa las
+# condiciones if de cada trabajo (subconjunto de expresiones de GitHub Actions que usa el flujo,
+# con el success() implícito cuando la condición no trae una función de estado; un trabajo
+# omitido o fallido omite a los que lo necesitan, docs.github.com "jobs.<job_id>.needs") con
+# las salidas reales de disabled-envs.py, y compara qué trabajos corren en cada escenario.
+"$PY" - "$WF/apply.yml" "$tmp/all.json" "$PROJECT_DIR/scripts/disabled-envs.py" >"$tmp/apply-order.txt" 2>&1 <<'PYEOF'
+import json, os, re, subprocess, sys
 wf = open(sys.argv[1], encoding="utf-8").read()
 roots = json.load(open(sys.argv[2], encoding="utf-8"))
+script = sys.argv[3]
 jobs = dict(re.findall(r"\n  ([a-z][a-z0-9-]*):\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n|\Z)", wf[wf.index("\njobs:"):], re.S))
 def field(body, key):
     m = re.search(r"^      %s: (.+)$" % key, body, re.M)
     return m.group(1).strip() if m else None
 def needs(body):
     m = re.search(r"^    needs: (.+)$", body, re.M)
-    return m.group(1).strip() if m else None
+    if not m:
+        return []
+    v = m.group(1).strip()
+    return [n.strip() for n in v.strip("[]").split(",")] if v.startswith("[") else [v]
+def condition(body):
+    m = re.search(r"^    if: (.*)$", body, re.M)
+    if not m:
+        return None
+    v = m.group(1).strip()
+    if v in (">-", ">"):
+        rest = []
+        for line in body[m.end() + 1:].splitlines():
+            if not line.startswith("      "):
+                break
+            rest.append(line.strip())
+        v = " ".join(rest)
+    if v.startswith("${{") and v.endswith("}}"):
+        v = v[3:-2].strip()
+    return v
+TOKEN = re.compile(r"\s*(?:(&&|\|\||==|!=|!|\(|\))|('[^']*')|([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*)(\(\))?)")
+STATUS = ("success", "failure", "always", "cancelled")
+def compile_expr(expr):
+    out, pos, status = [], 0, False
+    while pos < len(expr):
+        m = TOKEN.match(expr, pos)
+        if not m or m.end() == pos:
+            raise ValueError("expresión no reconocida: %r" % expr[pos:])
+        pos = m.end()
+        op, lit, path, call = m.groups()
+        if op:
+            out.append({"&&": " and ", "||": " or ", "!": " not "}.get(op, op))
+        elif lit:
+            out.append(repr(lit[1:-1]))
+        elif call:
+            if path not in STATUS:
+                raise ValueError("función no soportada: %s" % path)
+            status = True
+            out.append("F(%r)" % path)
+        else:
+            out.append("C(%r)" % path)
+    code = "".join(out)
+    return code if status else "F('success') and (%s)" % code
 bad = []
-cond = "    if: vars.GCP_ENABLED == \x27true\x27 && github.ref == \x27refs/heads/main\x27\n"
 deployed = []
 for name, body in jobs.items():
-    if name != "gate" and cond not in body + "\n":
-        bad.append("%s sin la condición de GCP_ENABLED y main" % name)
     if "uses: ./.github/workflows/_terraform-root.yml" in body:
         deployed.append({"root": field(body, "root"), "stage": field(body, "stage"),
                          "environment": field(body, "environment")})
 if sorted(deployed, key=lambda r: str(r["root"])) != sorted(roots, key=lambda r: r["root"]):
     bad.append("raíces de apply.yml distintas de affected-roots.sh --all: %s" % deployed)
+need = {n: needs(b) for n, b in jobs.items()}
+def ancestors(n, seen=None):
+    seen = set() if seen is None else seen
+    for p in need.get(n, []):
+        if p not in seen:
+            seen.add(p)
+            ancestors(p, seen)
+    return seen
 label = {n: field(b, "root") or ("humo" if "TestDevSmoke" in b else n) for n, b in jobs.items()}
-order, cur = [], "gate"
-while True:
-    nxt = [n for n, b in jobs.items() if needs(b) == cur]
-    if len(nxt) != 1:
-        break
-    cur = nxt[0]
-    order.append(label[cur])
-want = ["stages/1-base", "stages/2-networks", "stages/2-networks/envs/dev", "stages/3-workloads/envs/dev", "humo",
-        "stages/2-networks/envs/qa", "stages/3-workloads/envs/qa", "stages/2-networks/envs/prod",
+by_label = {v: k for k, v in label.items()}
+want = ["gate", "stages/1-base", "stages/2-networks", "stages/2-networks/envs/dev", "stages/3-workloads/envs/dev",
+        "humo", "stages/2-networks/envs/qa", "stages/3-workloads/envs/qa", "stages/2-networks/envs/prod",
         "stages/3-workloads/envs/prod"]
-if order != want:
-    bad.append("orden %s" % order)
+if sorted(label.values()) != sorted(want):
+    bad.append("trabajos %s" % sorted(label.values()))
+else:
+    for a, b in zip(want, want[1:]):
+        if by_label[a] not in ancestors(by_label[b]):
+            bad.append("%s no espera a %s" % (b, a))
+    for j in jobs:
+        if j != "gate" and "gate" not in ancestors(j):
+            bad.append("%s no espera a gate" % j)
+try:
+    conds = {n: compile_expr(condition(b)) for n, b in jobs.items() if n != "gate"}
+except ValueError as e:
+    conds = {}
+    bad.append(str(e))
+for n, b in jobs.items():
+    if n != "gate" and condition(b) is None:
+        bad.append("%s sin condición" % n)
+for n, ps in need.items():
+    for p in ps:
+        if p not in jobs:
+            bad.append("%s necesita %s, que no existe" % (n, p))
+def gate_outputs(value):
+    env = dict(os.environ, GCP_DISABLED_ENVS=value)
+    r = subprocess.run([sys.executable, script, "outputs"], env=env, stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL, universal_newlines=True)
+    if r.returncode != 0:
+        return "failure", {}
+    return "success", dict(l.split("=", 1) for l in r.stdout.split())
+def simulate(enabled, ref, disabled, fails):
+    results, outputs = {}, {}
+    pending = list(jobs)
+    while pending:
+        ready = [n for n in pending if all(p in results for p in need[n])]
+        if not ready:
+            raise ValueError("ciclo en needs")
+        for n in ready:
+            pending.remove(n)
+            if n == "gate":
+                results[n], outputs[n] = gate_outputs(disabled)
+                continue
+            def C(path, n=n):
+                parts = path.split(".")
+                if path == "vars.GCP_ENABLED":
+                    return enabled
+                if path == "github.ref":
+                    return ref
+                if parts[0] == "needs" and len(parts) >= 3:
+                    if parts[1] not in need[n]:
+                        raise ValueError("%s usa needs.%s sin necesitarlo" % (n, parts[1]))
+                    if parts[2] == "result":
+                        return results[parts[1]]
+                    if parts[2] == "outputs" and len(parts) == 4:
+                        return outputs.get(parts[1], {}).get(parts[3], "")
+                raise ValueError("%s: contexto no soportado %s" % (n, path))
+            def F(name, n=n):
+                rs = [results[p] for p in need[n]]
+                return {"success": all(r == "success" for r in rs), "failure": any(r == "failure" for r in rs),
+                        "always": True, "cancelled": False}[name]
+            if eval(conds[n], {"C": C, "F": F}):
+                results[n] = fails.get(n, "success")
+            else:
+                results[n] = "skipped"
+    return results
+COMMON = {"base", "networks-hub"}
+DEV = {"dev-networks", "dev-workloads", "dev-smoke"}
+QA = {"qa-networks", "qa-workloads"}
+PROD = {"prod-networks", "prod-workloads"}
+F_ = "failure"
+scenarios = [
+    ("todo encendido", "true", "refs/heads/main", "", {}, COMMON | DEV | QA | PROD),
+    ("dev apagado: qa sigue después del hub", "true", "refs/heads/main", "dev", {}, COMMON | QA | PROD),
+    ("qa apagado: prod después de la prueba de humo de dev", "true", "refs/heads/main", "qa", {}, COMMON | DEV | PROD),
+    ("dev y qa apagados: prod después del hub", "true", "refs/heads/main", "dev,qa", {}, COMMON | PROD),
+    ("con espacios y mayúsculas", "true", "refs/heads/main", " QA ", {}, COMMON | DEV | PROD),
+    ("falla la prueba de humo de dev", "true", "refs/heads/main", "", {"dev-smoke": F_}, COMMON | DEV),
+    ("falla dev / 3-workloads (humo omitido)", "true", "refs/heads/main", "", {"dev-workloads": F_},
+     COMMON | {"dev-networks", "dev-workloads"}),
+    ("qa apagado y falla la prueba de humo", "true", "refs/heads/main", "qa", {"dev-smoke": F_}, COMMON | DEV),
+    ("dev apagado y falla qa / 3-workloads", "true", "refs/heads/main", "dev", {"qa-workloads": F_}, COMMON | QA),
+    ("falla qa / 2-networks", "true", "refs/heads/main", "", {"qa-networks": F_}, COMMON | DEV | {"qa-networks"}),
+    ("dev apagado y falla el hub", "true", "refs/heads/main", "dev", {"networks-hub": F_}, COMMON),
+    ("dev y qa apagados y falla el hub", "true", "refs/heads/main", "dev,qa", {"networks-hub": F_}, COMMON),
+    ("falla 1-base", "true", "refs/heads/main", "", {"base": F_}, {"base"}),
+    ("prod en GCP_DISABLED_ENVS: gate falla y nada corre", "true", "refs/heads/main", "dev,prod", {}, set()),
+    ("nombre desconocido en GCP_DISABLED_ENVS", "true", "refs/heads/main", "test", {}, set()),
+    ("GCP_ENABLED distinto de true", "false", "refs/heads/main", "", {}, set()),
+    ("ejecución desde otra rama", "true", "refs/heads/otra", "dev", {}, set()),
+]
+if conds:
+    for name, enabled, ref, disabled, fails, expected in scenarios:
+        try:
+            r = simulate(enabled, ref, disabled, fails)
+        except ValueError as e:
+            bad.append("%s: %s" % (name, e))
+            continue
+        ran = {n for n, v in r.items() if n != "gate" and v != "skipped"}
+        if ran != expected:
+            bad.append("%s: corren %s, se esperaba %s" % (name, sorted(ran), sorted(expected)))
 print("; ".join(bad))
 sys.exit(1 if bad else 0)
-' "$WF/apply.yml" "$tmp/all.json" >"$tmp/apply-order.txt" 2>&1
+PYEOF
 rc=$?
-check "apply.yml: 1-base → hub → dev (red, cargas, humo) → qa → prod, con las llaves y entornos de affected-roots $(cat "$tmp/apply-order.txt")" 0 "$rc"
+check "apply.yml: 1-base → hub → dev (red, cargas, humo) → qa → prod, spokes en serie, llaves y entornos de affected-roots y 17 escenarios de GCP_DISABLED_ENVS y fallas $(cat "$tmp/apply-order.txt")" 0 "$rc"
 
 # Cuentas (ADR 0029 §3 y ADR 0025): todo plan corre con la cuenta de lectura y -lock=false; el
 # apply, con la cuenta de la raíz y el candado.
