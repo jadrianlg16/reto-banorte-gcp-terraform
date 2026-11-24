@@ -1,119 +1,110 @@
-# Diagrama 1: organización, gobierno y acceso
+# Diagrama 1: vista general, gobierno y acceso
 
-Jerarquía de recursos con los nombres de §4.2 del contrato (ejemplo `prefix = "bnt"`), qué
-etapa crea cada parte, las políticas y grupos de la etapa 1, el perímetro de VPC-SC y cómo
-despliega el pipeline. Es diseño: nada se ha aplicado.
+Todo vive en un solo proyecto de Google Cloud ([ADR 0029](../adr/0029-un-solo-proyecto.md)).
+Este diagrama muestra quién crea qué, cómo entra el pipeline y qué separa a los entornos. Es
+diseño: nada se ha aplicado.
+
+![Vista general: un proyecto, tres entornos y un pipeline](img/01-vista-general.png)
+
+El PNG sale de [`fuente/`](fuente/LEEME.md). Las piezas de cada entorno son las que enciende su
+`terraform.tfvars.example`. El diagrama de texto usa `prefix = "bnt"` y `{env}` por dev, qa o
+prod.
 
 ```mermaid
 flowchart TB
-  org["Organización (org_id)<br/>Cloud Identity · directory_customer_id"]
-
-  subgraph F_BOOT["Carpeta bootstrap (etapa 0)"]
-    seed["bnt-bootstrap-seed<br/>bucket de estado bnt-bootstrap-ops-tfstate (multirregión US)<br/>llave KMS bnt-bootstrap-sec-state en us (etapa 0, ADR 0008 y 0022)<br/>cuentas bnt-tf-1-org … bnt-tf-5-workloads<br/>pool y proveedor de WIF"]
-    deny["Política de denegación bnt-bootstrap-sec-deny-1-org<br/>bnt-tf-1-org no cambia el IAM de la carpeta, el semilla,<br/>las cuentas ni el bucket, ni toma su identidad (ADR 0023)"]
+  subgraph GH["GitHub · repositorio privado"]
+    team["Equipo<br/>solo lectura en GCP"]
+    repo["Repositorio<br/>Terraform en 4 etapas"]
+    gha["GitHub Actions<br/>un trabajo por raíz, con su environment"]
+    team -- "pull request" --> repo -- "merge a main" --> gha
   end
 
-  role["Roles personalizados de organización (etapa 0)<br/>bntTfKmsSecretIamGranter: la etapa 1 lo asigna a bnt-tf-4-projects en security<br/>bntTfSecretContainerAdmin: la etapa 1 lo asigna a bnt-tf-2-security en security"]
-  org --- role
+  owner["Persona dueña del proyecto<br/>crea el proyecto y aplica 0-bootstrap, una vez"]
 
-  subgraph F_COMMON["Carpeta common (etapa 1)"]
-    hubp["bnt-common-net-hub<br/>red hub (etapa 3)"]
-    logp["bnt-common-logging<br/>bucket de logs bnt-common-ops-audit-logs<br/>llaves logs y pubsub (etapa 1, ADR 0018)<br/>tema de hallazgos de SCC, mensajes solo en us-central1"]
-    secp["bnt-common-security<br/>llaves KMS de dev, qa y prod (etapa 2)<br/>contenedores de secretos sin valores<br/>el pipeline no lee valores (ADR 0015 y 0023)"]
-    bkpp["bnt-common-backup<br/>sin recursos en el código actual"]
+  subgraph P["Proyecto único · project_id · nombres bnt-{env}-…"]
+    subgraph B0["0-bootstrap (a mano)"]
+      apis["APIs del proyecto · OS Login<br/>cuenta de Compute por defecto sin Editor"]
+      state["Bucket de estado bnt-bootstrap-ops-tfstate<br/>multirregión US · llave KMS en us · versionado"]
+      wif["Pool y proveedor de WIF<br/>attribute_condition: repository_id y repository_owner_id"]
+      sas["9 cuentas del pipeline<br/>bnt-tf-base · bnt-tf-net · bnt-tf-net-{env}<br/>bnt-tf-wl-{env} · bnt-tf-read"]
+      roles["5 roles personalizados del proyecto"]
+      deny["Etiqueta bnt-proteccion = etapa-0<br/>política de denegación del proyecto"]
+      budget["Presupuesto del proyecto"]
+    end
+    subgraph B1["1-base (entorno common)"]
+      audit["Auditoría del proyecto · sink → bucket de logs con CMEK<br/>alertas de auditoría · contactos esenciales"]
+      keys["Llaves KMS y contenedores de secretos por entorno"]
+      img["Repositorios bnt-{env}-app · Binary Authorization"]
+      people["Grupos de solo lectura (opcional)"]
+      orgc["Solo con org_id: políticas de organización en el proyecto<br/>con access_policy_id: VPC-SC en dry-run"]
+    end
+    subgraph N2["2-networks"]
+      hub["hub (common): VPC hub, onprem-sim, VPN, DNS"]
+      spk["spoke por entorno: dev · qa · prod"]
+    end
+    subgraph W3["3-workloads"]
+      wl["cargas por entorno: dev · qa · prod"]
+    end
   end
 
-  subgraph F_DEV["Carpeta dev"]
-    devh["bnt-dev-net-spoke<br/>host de Shared VPC (etapa 3)"]
-    deva["bnt-dev-app<br/>proyecto de servicio (etapa 4)<br/>Artifact Registry y Binary Authorization (ADR 0024)"]
-  end
-
-  subgraph F_QA["Carpeta qa"]
-    qah["bnt-qa-net-spoke<br/>host de Shared VPC (etapa 3)"]
-    qaa["bnt-qa-app<br/>proyecto de servicio (etapa 4)"]
-  end
-
-  subgraph F_PROD["Carpeta prod · Data Access activado"]
-    prodh["bnt-prod-net-spoke<br/>host de Shared VPC (etapa 3)"]
-    proda["bnt-prod-app<br/>proyecto de servicio (etapa 4)"]
-  end
-
-  org --> F_BOOT
-  org --> F_COMMON
-  org --> F_DEV
-  org --> F_QA
-  org --> F_PROD
-
-  deva -- "usa la red" --> devh
-  qaa -- "usa la red" --> qah
-  proda -- "usa la red" --> prodh
-
-  perim{{"Perímetro VPC-SC bnt_prod_sec_perimeter<br/>creado en la etapa 2 · dry-run por defecto<br/>reglas de entrada como recursos aparte:<br/>cuentas de etapa (etapa 2) y publicadores de imágenes (etapa 4)"}}
-  perim -. "alta: etapa 2" .- secp
-  perim -. "alta: etapa 4" .- proda
-  perim -. "alta: etapa 4" .- prodh
-
-  subgraph GOV["Gobierno (etapa 1)"]
-    pol["Nueve políticas de organización<br/>compute.vmExternalIpAccess · compute.requireShieldedVm<br/>compute.skipDefaultNetworkCreation · sql.restrictPublicIp<br/>iam.disableServiceAccountKeyCreation · iam.allowedPolicyMemberDomains<br/>storage.publicAccessPrevention · storage.uniformBucketLevelAccess<br/>gcp.resourceLocations: primary_region, dr_region y us"]
-    grp["IAM solo por grupos y de solo lectura<br/>org_admins · billing_admins · security_admins<br/>network_admins · platform_devops · auditors<br/>developers solo en dev y qa · ningún rol a user:"]
-    obs["Sink agregado de la organización → bucket de logs<br/>notificación de SCC (activación manual)<br/>presupuesto con alertas · contactos esenciales<br/>métricas y alertas de auditoría CIS en cada proyecto"]
-  end
-  GOV -. "se aplica a" .-> org
-
-  subgraph PIPE["Quién despliega"]
-    admin["Persona administradora<br/>etapa 0, una sola vez, a mano"]
-    gh["GitHub Actions<br/>apply.yml"]
-    wif["Proveedor de WIF<br/>attribute_condition: assertion.repository_id<br/>y assertion.repository_owner_id (IDs numéricos)"]
-    sa["Cuenta de la etapa bnt-tf-{etapa}<br/>mínimo privilegio, sin llaves JSON<br/>roles de la etapa 5 por proyecto de servicio, no por carpeta"]
-  end
-  admin --> seed
-  gh --> wif --> sa
-  sa -- "etapas 1 a 5" --> org
-  deny -. "niega a bnt-tf-1-org" .-> seed
+  owner --> B0
+  gha -- "token OIDC" --> wif --> sas
+  sas -- "bnt-tf-base (common)" --> B1
+  sas -- "bnt-tf-net (common) y bnt-tf-net-{env} ({env})" --> N2
+  sas -- "bnt-tf-wl-{env} ({env})" --> W3
+  deny -. "niega a las 9 cuentas" .-> state
 ```
 
 ## Cómo se lee
 
-- Cada caja de proyecto dice qué etapa lo crea o lo llena. Las carpetas de entorno tienen el
-  mismo par de proyectos: el host de su Shared VPC (`net-spoke`) y un proyecto de servicio por
-  aplicación (por defecto `app`).
-- El perímetro de prod lo crea la etapa 2 con el proyecto `security` dentro; la etapa 4 de prod
-  agrega el proyecto de servicio y el host, que VPC-SC exige en el mismo perímetro
-  (ADR [0009](../adr/0009-perimetro-vpc-sc-en-dos-etapas-y-dry-run.md)).
-- Hay tres llaveros fuera de la etapa 2: el del estado en el semilla (etapa 0) y el de logs y
-  Pub/Sub en `logging` (etapa 1), para que haya CMEK desde el primer objeto.
-- Las personas solo leen. Cambia la infraestructura el pipeline, con una cuenta por etapa y WIF
-  filtrado por el ID numérico del repositorio y de su dueño (limitación: cualquier rama del
-  repositorio puede usarla, ver [`pipeline.md`](../pipeline.md) §5).
-- La cuenta de `1-org` tiene roles amplios de organización; la política de denegación de la
-  carpeta `bootstrap` le impide usarlos sobre la base del pipeline
-  (ADR [0023](../adr/0023-endurecimiento-de-la-identidad-del-pipeline.md)).
+- **Quién crea qué.** Una persona crea el proyecto (consola o `gcloud`), lo liga a una cuenta de
+  facturación de pago y aplica `0-bootstrap` a mano una sola vez
+  ([runbook 01](../runbooks/01-arranque-etapa-0.md)). Desde `1-base`, todo lo aplica el pipeline
+  con una cuenta por raíz. Ninguna raíz crea ni borra el proyecto.
+- **Raíces y cuentas** (`stages/0-bootstrap/README.md`):
 
-## Cambios respecto a la versión de la fase 3
+  | Raíz | Prefijo del estado | Cuenta | Entorno de GitHub |
+  |---|---|---|---|
+  | `stages/0-bootstrap` | `0-bootstrap` | una persona | — |
+  | `stages/1-base` | `1-base` | `<prefix>-tf-base` | `common` |
+  | `stages/2-networks` (hub) | `2-networks/hub` | `<prefix>-tf-net` | `common` |
+  | `stages/2-networks/envs/<env>` | `2-networks/<env>` | `<prefix>-tf-net-<env>` | `<env>` |
+  | `stages/3-workloads/envs/<env>` | `3-workloads/<env>` | `<prefix>-tf-wl-<env>` | `<env>` |
+  | plan, drift, prueba de humo, huérfanos | lee todo el bucket | `<prefix>-tf-read` | cualquiera |
 
-- El perímetro de VPC-SC ya no rodea solo al proyecto de aplicación de prod: incluye
-  `bnt-common-security` (etapa 2), `bnt-prod-app` y `bnt-prod-net-spoke` (etapa 4), y arranca en
-  dry-run.
-- La llave del bucket de estado se crea en la etapa 0 dentro del proyecto semilla, y la del
-  bucket de logs en la etapa 1 dentro de `bnt-common-logging`; antes todo KMS aparecía en
-  `bnt-common-security`.
-- Security Command Center ya no aparece en `bnt-common-security`: su notificación publica en un
-  tema del proyecto `bnt-common-logging`, y la activación de SCC es un paso manual.
-- `bnt-common-backup` existe pero no tiene recursos: la bóveda de Backup and DR vive en el
-  proyecto de servicio de cada entorno.
-- Las políticas de organización son las nueve, no cuatro, y `gcp.resourceLocations` admite
-  además la multirregión `us` (llaveros y bucket de doble región).
-- Los grupos son siete (se agrega `billing_admins`); sus correos llegan por la variable `groups`
-  en lugar de nombres fijos.
-- Se quita "salvo emergencia e IAP": no hay acceso de emergencia construido y ningún grupo
-  recibe permiso de IAP ([pendientes](../pendientes-apply.md), §5).
-- Se agregan el rol personalizado de organización que crea la etapa 0 para la cuenta de la etapa
-  4, el sink agregado, el Data Access de la carpeta prod y el presupuesto.
-- Ronda de correcciones del 21 nov 2026: el rol de la etapa 4 sobre `security` lo asigna la
-  etapa 1 (no la 2); se agrega el rol personalizado de contenedores de secretos de la etapa 2, la
-  política de denegación de la carpeta `bootstrap`, el estado en la multirregión `US`, WIF por
-  `assertion.repository_id`, y Artifact Registry con Binary Authorization en los proyectos de
-  servicio.
-- Rondas del 22 y 23 nov 2026: las reglas de entrada del perímetro son recursos separados, para
-  que convivan la de las cuentas de etapa (etapa 2) y las de los publicadores de imágenes
-  (etapa 4 de prod).
+- **WIF.** El proveedor acepta solo tokens del repositorio por su ID numérico y el de su dueño.
+  `tf-base` y `tf-net` solo aceptan tokens del entorno `common`; cada cuenta de entorno, solo los
+  de su entorno. Un trabajo sin entorno de GitHub solo obtiene `tf-read`. Cualquier rama del
+  repositorio puede pedir un token (limitación de [`pipeline.md`](../pipeline.md) §5).
+- **Protección del estado.** La política de denegación del proyecto niega a las nueve cuentas,
+  sobre lo que tenga la etiqueta (bucket y llavero del estado, las propias cuentas), borrar o
+  cambiar su IAM y suplantar a las cuentas. Sin condición les niega tocar WIF y los roles
+  personalizados, crear llaves de cuentas y borrar el proyecto. Que las etiquetas funcionen sin
+  organización es HYPOTHESIS (ADR 0029 §5).
+- **Gobierno sin organización.** Las políticas de organización y el perímetro de VPC-SC solo se
+  crean con `org_id` (y `access_policy_id`). Sin organización no existen: los cubren las reglas
+  de Conftest en cada PR y los pasos manuales del runbook 01. Que no se puedan usar sin
+  organización es HYPOTHESIS (ADR 0029 §1).
+- **Personas.** Solo lectura por grupos (`readers`, `security_admins`, `auditors` de `1-base`,
+  opcionales). La excepción es la persona dueña del proyecto, que necesita `owner` para
+  `0-bootstrap`.
+- **Qué separa a los entornos** (ADR 0029 §9): una VPC por entorno sin peering entre ellas, el
+  prefijo `<prefix>-<env>-` y la etiqueta `env`, una cuenta por entorno ligada a su entorno de
+  GitHub y permisos condicionados en Storage, KMS y Secret Manager. **No** los separan, como
+  riesgo aceptado: los permisos de Compute, GKE, Cloud Run, Cloud SQL, Memorystore y Filestore
+  de las cuentas de entorno, los agentes de servicio, la regla por defecto de Binary
+  Authorization y las cuotas.
+
+## Diferencias entre el código y el ADR 0029
+
+El diagrama sigue al código (`61b01b9`). Donde el ADR dice otra cosa:
+
+| Tema | ADR 0029 | Código |
+|---|---|---|
+| Cuenta de Compute por defecto sin Editor (`DEPRIVILEGE`) | En `1-base` (§4) | En `0-bootstrap` (`main.tf`) |
+| Rol `<prefix>OffHoursScheduler` | En `1-base` (§4) | Lo crea `0-bootstrap`; `1-base` lo publica como `off_hours_role_id` |
+| Lo que leen las raíces de red | `1-base` (y el hub, los spokes) (§2) | Ninguna lee `1-base`; los spokes leen solo el hub |
+| Roles de `tf-read` | Cuatro roles más el bucket (§3) | Los mismos y `serviceusage.serviceUsageConsumer`, que tienen todas las cuentas |
+| Regla sin condición de la denegación | WIF (§5) | WIF, roles personalizados, llaves de cuentas y borrar el proyecto |
+
+El diseño anterior, de varios proyectos y carpetas, está en la rama `archivo/multiproyecto`.

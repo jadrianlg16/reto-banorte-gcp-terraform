@@ -1,30 +1,34 @@
 # Diagrama 3: aplicación y protección de datos
 
-Camino de una solicitud hasta los datos de prod y los controles que encuentra, con lo que crean
-las etapas 2, 4 y 5. Es diseño: nada se ha aplicado.
+Camino de una solicitud hasta los datos de prod y los controles que encuentra. dev y qa tienen
+la misma forma con menos piezas encendidas y sin DR. Es diseño: nada se ha aplicado.
+
+![Aplicación y datos de prod: del usuario a la base de datos](img/03-aplicacion-y-datos.png)
+
+El PNG sale de [`fuente/`](fuente/LEEME.md) y dibuja prod con lo que enciende
+`stages/3-workloads/envs/prod/terraform.tfvars.example`. El diagrama de texto usa
+`prefix = "bnt"` y la aplicación `app`.
 
 ```mermaid
 flowchart LR
   user(["Usuario de Internet"])
   xlb["1 · Balanceador HTTPS global<br/>certificado administrado · TLS 1.2 mínimo<br/>redirección de HTTP a HTTPS"]
   armor["2 · Cloud Armor<br/>reglas OWASP preconfiguradas · límite de tasa"]
-  fw["3 · Firewall<br/>jerárquica: sin allow, delega con goto_next<br/>red del spoke: salud hacia lb_backend, IAP hacia iap_ssh"]
+  fw["3 · Política de firewall de red del spoke prod<br/>salud y proxies → lb_backend · IAP → iap_ssh<br/>plano de control de GKE · tráfico interno"]
   user --> xlb --> armor --> fw
 
-  subgraph APP["bnt-prod-app sobre la Shared VPC de bnt-prod-net-spoke"]
-    subgraph COMP["4 · Cómputo sin IP pública (etapa 5)"]
+  subgraph APP["3-workloads/envs/prod en la VPC del spoke prod"]
+    subgraph COMP["4 · Cómputo sin IP pública"]
       run["Cloud Run<br/>entrada interna y del balanceador<br/>sin allUsers (ADR 0020)"]
-      mig["MIG regional<br/>Shielded VM · OS Login · imagen endurecida<br/>etiquetas lb_backend e iap_ssh"]
-      gke["GKE regional, nodos privados<br/>Workload Identity: KSA app/app → cuenta workload<br/>Binary Authorization · endpoint privado"]
+      mig["MIG regional<br/>Shielded VM · OS Login<br/>etiquetas lb_backend e iap_ssh"]
+      gke["GKE regional bnt-prod-app-gke, nodos privados<br/>Workload Identity: app-prod/app → cuenta workload<br/>Binary Authorization"]
     end
-    ilb["Balanceador interno, uno por región<br/>subred proxy-only · acceso global<br/>certificado de DR emitido con enable_dr, antes del incidente"]
-    ar[("Artifact Registry bnt-prod-app-app-images-us<br/>multirregión us · CMEK artifacts<br/>lectura: gke-nodes, mig y agente de Cloud Run<br/>escritura: artifact_registry_publishers")]
-    binauthz{{"Binary Authorization del proyecto<br/>solo imágenes de ese repositorio (ADR 0024)"}}
+    ilb["Balanceador interno, uno por región<br/>subred proxy-only · acceso global"]
     subgraph DATA["7 · Datos solo por IP privada"]
-      sql[("Cloud SQL PostgreSQL · PSA<br/>HA regional · PITR · TLS obligatorio<br/>autenticación IAM, sin contraseñas")]
-      redis[("Memorystore · PSA<br/>TLS en el puerto 6378 · AUTH apagado")]
+      sql[("Cloud SQL PostgreSQL · PSA<br/>HA regional · PITR<br/>autenticación IAM, sin contraseñas")]
+      redis[("Memorystore · PSA · TLS")]
       nfs[("Filestore · PSA")]
-      gcs[("Cloud Storage<br/>Private Google Access y VIP restringido<br/>versionado · sin acceso público")]
+      gcs[("Cloud Storage de doble región<br/>Private Google Access y VIP restringido<br/>versionado · sin acceso público")]
     end
   end
 
@@ -33,71 +37,66 @@ flowchart LR
   onprem(["On-premises, por el hub"]) --> ilb
   ilb --> run
   ilb --> mig
-  pub(["Publicadores de imágenes<br/>fuera de GCP"]) -- "push: regla de entrada del perímetro<br/>solo Artifact Registry de esa aplicación" --> ar
-  ar -- "imágenes" --> run
-  ar -- "imágenes" --> gke
-  binauthz -. "admite o rechaza la imagen" .-> run
-  binauthz -. "admite o rechaza la imagen" .-> gke
 
-  support(["Soporte"]) --> iap["5 · IAP 35.235.240.0/20<br/>TCP 22 a VM con iap_ssh"] --> mig
-
-  subgraph SEC["bnt-common-security (etapa 2)"]
+  subgraph BASE["1-base (una vez por proyecto)"]
+    ar[("Artifact Registry bnt-prod-app<br/>multirregión us · CMEK artifacts · etiquetas inmutables")]
+    binauthz{{"Binary Authorization del proyecto<br/>lista de permitidos: los repositorios del proyecto"}}
     sm["6 · Secret Manager<br/>contenedores sin valores (ADR 0015)"]
     kms["8 · Cloud KMS · CMEK<br/>llave por entorno, ubicación y uso<br/>rotación de 90 días · prevent_destroy"]
   end
 
+  pub(["Publicadores de imágenes<br/>artifact_registry_publishers"]) -- "push" --> ar
+  ar -- "imágenes" --> run
+  ar -- "imágenes" --> gke
+  binauthz -. "admite o rechaza la imagen" .-> run
+  binauthz -. "admite o rechaza la imagen" .-> gke
+  support(["Soporte"]) --> iap["5 · IAP 35.235.240.0/20<br/>TCP 22 a VM con iap_ssh"] --> mig
   sm -. "secretAccessor: cuentas workload y run" .-> COMP
-  kms -. "CMEK de discos, secretos de GKE, Cloud Run, imágenes y datos" .-> APP
+  kms -. "CMEK de discos, secretos de GKE, Cloud Run y datos" .-> APP
 
-  perim{{"9 · Perímetro VPC-SC (dry-run por defecto)<br/>security · prod-app · prod-net-spoke<br/>restringe storage, sqladmin, compute, container, run, redis, artifactregistry…<br/>KMS y Secret Manager no restringidos (ADR 0019)"}}
+  perim{{"9 · VPC-SC opcional, solo con organización<br/>rodea todo el proyecto · dry-run"}}
   perim -.- APP
-  perim -.- SEC
+  perim -.- BASE
 ```
 
 ## Cómo se lee
 
-- La solicitud pública entra por el balanceador externo (1) y Cloud Armor (2), los dos en el
-  proyecto de servicio. El firewall (3) tiene dos niveles: la política jerárquica de la
-  organización no permite nada, solo delega con `goto_next` (verificaciones de salud, IAP,
-  tráfico interno y de on-premises) y deniega lo demás; la política de red del spoke es la que
-  permite: verificaciones de salud y proxies solo hacia `lb_backend`, SSH por IAP solo hacia
-  `iap_ssh`, y plano de control de GKE y tráfico interno de las cargas por rango.
-- El cómputo (4) no tiene IP pública. Cloud Run solo acepta tráfico interno y del balanceador;
-  con `public_via_load_balancer = true` desactiva la verificación de invocador en lugar de dar
-  `allUsers`.
-- On-premises llega por el hub al balanceador interno (subred proxy-only), no a las VM. Hay uno
-  por región con cómputo y con acceso global: con `dr_active`, el de DR se agrega sin tocar el
-  primario.
-- Las imágenes de Cloud Run y GKE salen del repositorio multirregional de la aplicación, y la
-  política de Binary Authorization del proyecto rechaza las de otro registro (ADR
-  [0024](../adr/0024-artifact-registry-y-binary-authorization-por-proyecto.md)).
-- Secret Manager (6) guarda contenedores; los valores se cargan fuera de Terraform. Cloud SQL no
-  usa contraseñas: las cuentas `workload` (pods de GKE por Workload Identity), `run` y `mig`
-  entran por IAM según el cómputo encendido (ADR
-  [0015](../adr/0015-sin-contrasenas-ni-valores-de-secretos-en-terraform.md)).
-- Cloud SQL, Memorystore y Filestore usan Private Service Access; Cloud Storage, Private Google
-  Access con el VIP restringido (7).
-- Las llaves (8) y los secretos viven en `security`, dentro del perímetro (9); KMS y Secret
-  Manager no son servicios restringidos porque ese proyecto también sirve a dev y qa.
+- **Entrada pública (1 y 2).** El balanceador externo y Cloud Armor viven en la raíz de cargas
+  del entorno (ADR [0005](../adr/0005-balanceador-y-cloud-armor-en-el-proyecto-de-servicio.md),
+  ajustado por el ADR 0029). Cloud Armor es una política del servicio de backend; el dibujo la
+  pone antes del balanceador para leerlo de izquierda a derecha.
+- **Firewall (3).** Una sola política, la de red del spoke. Permite solo hacia donde hace falta,
+  por etiqueta segura o por rango, y niega lo demás ([diagrama 2](02-red-y-conectividad.md)).
+- **Cómputo (4).** Sin IP pública. Cloud Run acepta tráfico interno y del balanceador; con
+  `public_via_load_balancer = true` desactiva la verificación de invocador en lugar de dar
+  `allUsers`. On-premises llega por el hub al balanceador interno, no a las VM.
+- **Workload Identity.** El pool `<proyecto>.svc.id.goog` es el mismo para los tres entornos. Por
+  eso el namespace por defecto es `<app>-<env>` y la raíz rechaza uno que no termine en `-<env>`
+  (ADR 0029 §9). La cuenta de Kubernetes por defecto es `app`.
+- **Imágenes.** Un repositorio por entorno y aplicación (`<prefix>-<env>-<app>`, multirregión
+  `us`) y una sola política de Binary Authorization, las dos en `1-base`. Solo escriben los
+  `artifact_registry_publishers` (`serviceAccount:`, `group:` o `principal…`, nunca `user:`).
+- **Secretos (6) y datos (7).** Secret Manager guarda contenedores; los valores se cargan fuera
+  de Terraform. Cloud SQL no usa contraseñas: las cuentas `workload` (GKE), `run` y `mig` entran
+  por IAM según el cómputo encendido
+  (ADR [0015](../adr/0015-sin-contrasenas-ni-valores-de-secretos-en-terraform.md)). Cloud SQL,
+  Memorystore y Filestore usan el Private Service Access del spoke; Cloud Storage, Private Google
+  Access con el VIP restringido.
+- **Llaves (8).** Llaveros `<prefix>-<env>-sec-keyring-{usc1,use4,us}` en `1-base`. Las cuentas de
+  cargas solo dan IAM sobre los llaveros y secretos de su entorno (condición por nombre). Los
+  agentes de servicio son uno por proyecto y tienen permiso sobre las llaves de los tres entornos
+  (riesgo aceptado, ADR 0029 §4).
+- **VPC-SC (9).** Solo con `org_id` y `access_policy_id`. Rodea todo el proyecto y queda en
+  dry-run: no separa entornos (ADR 0029 §1).
 
-## Cambios respecto a la versión de la fase 3
+## Diferencias entre el código y el ADR 0029
 
-- Cloud Storage se alcanza por Private Google Access y el VIP restringido
-  (`restricted.googleapis.com`, 199.36.153.4/30), no por Private Service Access.
-- Cloud KMS y Secret Manager quedan **dentro** del perímetro (el proyecto `security` es su
-  primer miembro), no fuera; KMS y Secret Manager no se restringen (ADR 0019).
-- Secret Manager ya no guarda "credenciales de BD": Cloud SQL usa autenticación IAM y los
-  secretos son contenedores sin valores.
-- El perímetro incluye también el proyecto host de prod y arranca en dry-run.
-- Cloud IDS ya no aparece como opción: no se construye ([pendientes](../pendientes-apply.md), §5).
-- El firewall no es "solo LB e IAP": la política del spoke también permite la subred proxy-only,
-  el plano de control de GKE y el tráfico interno de las cargas. Las verificaciones de salud y el
-  IAP los permite solo la política del spoke, por etiqueta segura; la jerárquica los delega.
-- Se agregan el balanceador interno para on-premises, Cloud Run sin `allUsers` y Memorystore con
-  TLS y sin AUTH.
-- Ronda de correcciones del 21 nov 2026: Artifact Registry y Binary Authorization por proyecto,
-  enlace de Workload Identity, balanceador interno por región con acceso global y
-  `artifactregistry` entre los servicios restringidos.
-- Rondas del 22 y 23 nov 2026: publicadores de imágenes (`artifact_registry_publishers`) con
-  permiso de escritura y, en prod, una regla de entrada al perímetro por aplicación; el
-  certificado interno de la región de DR se crea con `enable_dr`, antes de un incidente.
+- **Binary Authorization.** El ADR pide que cada clúster de prod solo admita el repositorio de
+  prod. En el código la lista de permitidos es global, y una imagen que coincide con ella se
+  admite sin importar las reglas por clúster (comentario de `stages/1-base/artifacts.tf`). Las
+  reglas de los clústeres de prod existen, pero sin atestadores (`binary_authorization_attestors`)
+  admiten las imágenes de cualquier repositorio del proyecto. HYPOTHESIS hasta el primer apply
+  (pendiente 42).
+
+El diseño anterior, con proyectos de servicio y Shared VPC, está en la rama
+`archivo/multiproyecto`.
