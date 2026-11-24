@@ -39,6 +39,7 @@ override_data {
       state_iam_conditions  = {}
       org_policies_enabled  = false
       vpc_sc_perimeter_name = null
+      onprem_dns_vm_enabled = false
     }
   }
 }
@@ -370,6 +371,62 @@ run "con_canal_de_operaciones" {
       toset(keys(output.notification_channel_ids)) == toset(["security", "operations"]),
     ])
     error_message = "Con operations_alert_email hay un canal de operaciones aparte del de seguridad."
+  }
+  assert {
+    condition     = length(google_service_account.onprem_dns) == 0 && output.onprem_dns_service_account == null && !contains(keys(module.iam.bindings), "onprem-dns|roles/logging.logWriter")
+    error_message = "Sin onprem_dns_vm en 0-bootstrap no hay cuenta de la VM DNS."
+  }
+}
+
+# VM DNS de onprem-sim: 0-bootstrap con onprem_dns_vm = true.
+run "con_cuenta_de_la_vm_dns" {
+  command = plan
+
+  override_data {
+    target = data.terraform_remote_state.bootstrap
+    values = {
+      outputs = {
+        project_id       = "example-project-id"
+        project_number   = "222222222222"
+        state_bucket     = "bnt-bootstrap-ops-tfstate"
+        state_kms_key_id = "projects/example-project-id/locations/us/keyRings/bnt-bootstrap-sec-keyring-us/cryptoKeys/bnt-bootstrap-sec-state"
+        stage_service_accounts = {
+          "1-base"           = "bnt-tf-base@example-project-id.iam.gserviceaccount.com"
+          "2-networks"       = "bnt-tf-net@example-project-id.iam.gserviceaccount.com"
+          "2-networks/dev"   = "bnt-tf-net-dev@example-project-id.iam.gserviceaccount.com"
+          "2-networks/qa"    = "bnt-tf-net-qa@example-project-id.iam.gserviceaccount.com"
+          "2-networks/prod"  = "bnt-tf-net-prod@example-project-id.iam.gserviceaccount.com"
+          "3-workloads/dev"  = "bnt-tf-wl-dev@example-project-id.iam.gserviceaccount.com"
+          "3-workloads/qa"   = "bnt-tf-wl-qa@example-project-id.iam.gserviceaccount.com"
+          "3-workloads/prod" = "bnt-tf-wl-prod@example-project-id.iam.gserviceaccount.com"
+        }
+        read_service_account       = "bnt-tf-read@example-project-id.iam.gserviceaccount.com"
+        workload_identity_provider = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool/providers/bnt-bootstrap-sec-github"
+        workload_identity_pool     = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool"
+        custom_role_ids = {
+          secret_container_admin  = "projects/example-project-id/roles/bntTfSecretContainerAdmin"
+          service_account_manager = "projects/example-project-id/roles/bntTfServiceAccountManager"
+          network_tag_manager     = "projects/example-project-id/roles/bntTfNetworkTagManager"
+          off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
+        }
+        state_iam_conditions  = {}
+        org_policies_enabled  = false
+        vpc_sc_perimeter_name = null
+        onprem_dns_vm_enabled = true
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      google_service_account.onprem_dns["this"].account_id == "bnt-common-net-dns",
+      output.onprem_dns_service_account == "bnt-common-net-dns@example-project-id.iam.gserviceaccount.com",
+      google_service_account_iam_member.onprem_dns_hub_user["this"].role == "roles/iam.serviceAccountUser",
+      google_service_account_iam_member.onprem_dns_hub_user["this"].member == "serviceAccount:bnt-tf-net@example-project-id.iam.gserviceaccount.com",
+      module.iam.bindings["onprem-dns|roles/logging.logWriter"].member == "serviceAccount:bnt-common-net-dns@example-project-id.iam.gserviceaccount.com",
+      length([for k, b in module.iam.bindings : k if b.member == "serviceAccount:bnt-common-net-dns@example-project-id.iam.gserviceaccount.com"]) == 1,
+    ])
+    error_message = "Con onprem_dns_vm, 1-base crea <prefix>-common-net-dns con solo logWriter y le da al hub serviceAccountUser sobre ella."
   }
 }
 

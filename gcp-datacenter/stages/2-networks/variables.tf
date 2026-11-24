@@ -355,6 +355,37 @@ variable "onprem_dns_servers" {
   }
 }
 
+variable "onprem_dns_vm" {
+  description = "Crea en onprem-sim la VM DNS de prueba (onprem_dns.tf): e2-micro sin IP pública, Shielded VM y OS Login, en la primera IP de onprem_dns_servers, que responde con autoridad dns.<onprem_dns_domain>. Solo con simulate_onprem = true. Antes deben estar aplicados 0-bootstrap con onprem_dns_vm = true (rol de instancias del hub) y 1-base (cuenta <prefix>-common-net-dns)."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = !var.onprem_dns_vm || var.simulate_onprem
+    error_message = "onprem_dns_vm = true necesita simulate_onprem = true: con on-premises real, el DNS lo pone el equipo de red."
+  }
+  validation {
+    condition = !var.onprem_dns_vm || try(
+      cidrhost("${var.onprem_dns_servers[0]}/${split("/", var.onprem_sim_cidr)[1]}", 0) == cidrhost(var.onprem_sim_cidr, 0) &&
+      !contains([for i in [0, 1, -2, -1] : cidrhost(var.onprem_sim_cidr, i)], var.onprem_dns_servers[0]),
+      false
+    )
+    error_message = "Con onprem_dns_vm = true, la primera IP de onprem_dns_servers debe estar en onprem_sim_cidr y no ser una de las cuatro reservadas de la subred (red, puerta de enlace, penúltima y difusión)."
+  }
+}
+
+variable "onprem_dns_vm_zone" {
+  description = "Zona de la VM DNS de onprem-sim. null (por defecto): <primary_region>-b. Debe ser una zona de primary_region, donde está la subred de onprem-sim."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = can(regex("^${var.primary_region}-[a-z]$", coalesce(var.onprem_dns_vm_zone, "${var.primary_region}-b")))
+    error_message = "onprem_dns_vm_zone debe ser una zona de primary_region (por ejemplo us-central1-b)."
+  }
+}
+
 variable "enable_interconnect" {
   description = "Crea los VLAN attachments de Cloud Interconnect de interconnect_attachments en el router primario del hub. Apagado por defecto."
   type        = bool

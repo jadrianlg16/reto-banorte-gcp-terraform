@@ -298,6 +298,13 @@ variable "enable_deny_policy" {
   nullable    = false
 }
 
+variable "onprem_dns_vm" {
+  description = "Si es true, la cuenta del hub (<prefix>-tf-net) recibe roles/compute.instanceAdmin.v1 y 1-base crea la cuenta de la VM DNS de onprem-sim (<prefix>-common-net-dns) con serviceAccountUser para el hub. Va en true solo junto con simulate_onprem = true y onprem_dns_vm = true en 2-networks. Por defecto false: el hub no administra VM."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "labels" {
   description = "Etiquetas comunes (§4.3). Deben traer app, owner y cost_center; la raíz agrega env = bootstrap y managed_by = terraform."
   type        = map(string)

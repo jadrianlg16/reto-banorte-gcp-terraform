@@ -249,6 +249,13 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "El rol de etiquetas y servicenetworking solo para los spokes; el hub tiene red, seguridad y DNS."
   }
+  assert {
+    condition = alltrue([
+      length([for k, b in module.stage_iam.bindings : k if b.role == "roles/compute.instanceAdmin.v1" && !startswith(k, "project|3-workloads/")]) == 0,
+      output.onprem_dns_vm_enabled == false,
+    ])
+    error_message = "Sin onprem_dns_vm, solo las cuentas de cargas tienen compute.instanceAdmin.v1."
+  }
   # Los agentes de GKE y de las APIs de Google reciben tagUser aquí (lo aplica una persona), no en
   # 1-base: la concesión delegada de 1-base no incluye tagUser.
   assert {
@@ -527,6 +534,26 @@ run "sin_denegacion" {
   assert {
     condition     = length(google_iam_deny_policy.pipeline) == 0 && length(google_tags_tag_key.protection) == 1
     error_message = "enable_deny_policy = false quita solo la política de denegación."
+  }
+}
+
+# VM DNS de onprem-sim: el hub, y ninguna cuenta de red de entorno, recibe instanceAdmin.v1.
+run "con_vm_dns_de_onprem_sim" {
+  command = plan
+
+  variables {
+    onprem_dns_vm = true
+  }
+
+  assert {
+    condition = alltrue([
+      module.stage_iam.bindings["project|2-networks|roles/compute.instanceAdmin.v1"].member == google_service_account.stage["2-networks"].member,
+      module.stage_iam.conditions["project|2-networks|roles/compute.instanceAdmin.v1"] == null,
+      length([for k, b in module.stage_iam.bindings : k if b.role == "roles/compute.instanceAdmin.v1" && startswith(k, "project|2-networks/")]) == 0,
+      length([for k, b in module.stage_iam.bindings : k if startswith(k, "project|2-networks|")]) == 5,
+      output.onprem_dns_vm_enabled,
+    ])
+    error_message = "Con onprem_dns_vm, solo el hub suma compute.instanceAdmin.v1 (red, seguridad, DNS, cuota e instancias)."
   }
 }
 

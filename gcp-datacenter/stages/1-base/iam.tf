@@ -38,6 +38,7 @@ locals {
       member   = "group:${var.groups["auditors"]}"
     }] : [],
     local.runtime_project_bindings,
+    local.onprem_dns_project_bindings,
   )
 }
 

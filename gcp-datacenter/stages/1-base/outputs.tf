@@ -48,6 +48,11 @@ output "gke_workload_identity_members" {
   }
 }
 
+output "onprem_dns_service_account" {
+  description = "Correo de la cuenta de la VM DNS de onprem-sim (<prefix>-common-net-dns), o null si 0-bootstrap no tiene onprem_dns_vm = true. El hub la adjunta a la VM; ninguna raíz lee esta salida."
+  value       = local.onprem_dns_vm ? local.onprem_dns_email : null
+}
+
 output "off_hours_role_id" {
   description = "ID completo (projects/<id>/roles/<prefix>OffHoursScheduler) del rol personalizado del apagado fuera de horario (ADR 0028). Lo crea 0-bootstrap; 1-base lo publica."
   value       = local.custom_role_ids["off_hours_scheduler"]

@@ -176,6 +176,17 @@ locals {
     { role = "roles/compute.securityAdmin", condition = null },
     { role = "roles/dns.admin", condition = null },
   ]
+  # Solo el hub, y solo con onprem_dns_vm = true: la VM DNS de onprem-sim
+  # (stages/2-networks/onprem_dns.tf). Sin condición, como compute.instanceAdmin.v1 de las cuentas
+  # de cargas: una condición por nombre sobre los tipos de Compute que crear una VM consulta y que
+  # no la admiten negaría todo (ADR 0029 §3). Riesgo aceptado mientras la opción esté activa: el
+  # hub podría cambiar o borrar las VM de los entornos. La cuenta de la VM la crea 1-base, que le
+  # da a esta cuenta serviceAccountUser solo sobre ella (stages/1-base/onprem_dns.tf).
+  # VERIFICAR-EN-APPLY: que el hub cree la VM DNS con este rol más networkAdmin (subred y dirección
+  # interna) y serviceAccountUser sobre su cuenta, y sin él no.
+  hub_roles = concat(local.net_roles, var.onprem_dns_vm ? [
+    { role = "roles/compute.instanceAdmin.v1", condition = null },
+  ] : [])
   net_env_roles = concat(local.net_roles, [
     # Etiquetas seguras del spoke y su IAM (tagUser de tf-wl-<env> sobre sus valores), sin
     # ligarlas a recursos ni retenerlas (custom_roles.tf).
@@ -213,7 +224,7 @@ locals {
   }
 
   stage_roles = merge(
-    { "1-base" = local.base_roles, "2-networks" = local.net_roles },
+    { "1-base" = local.base_roles, "2-networks" = local.hub_roles },
     { for e in local.environments : "2-networks/${e}" => local.net_env_roles },
     { for e in local.environments : "3-workloads/${e}" => local.workloads_roles[e] },
   )

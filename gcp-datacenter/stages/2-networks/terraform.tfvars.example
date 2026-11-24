@@ -41,6 +41,10 @@ onprem_sim_cidr = "192.168.0.0/24"
 onprem_dns_domain  = "corp.example.com."
 onprem_dns_servers = ["192.168.0.10"]
 
+# VM DNS de prueba en onprem-sim (responde dns.<onprem_dns_domain>). Antes: 0-bootstrap con
+# onprem_dns_vm = true y 1-base aplicado.
+# onprem_dns_vm = true
+
 enable_interconnect = false
 
 labels = {

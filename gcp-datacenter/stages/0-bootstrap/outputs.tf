@@ -56,6 +56,11 @@ output "vpc_sc_perimeter_name" {
   value       = try(module.vpc_sc[0].perimeter_name, null)
 }
 
+output "onprem_dns_vm_enabled" {
+  description = "true con onprem_dns_vm: el hub tiene compute.instanceAdmin.v1 y 1-base crea la cuenta de la VM DNS de onprem-sim."
+  value       = var.onprem_dns_vm
+}
+
 output "state_iam_conditions" {
   description = "Mapa raíz → { writes, reads }: prefijos del bucket de estado que escribe y que lee la cuenta de cada raíz (ADR 0029 §3). tf-read lee todo el bucket."
   value       = { for k, r in local.stage_roots : k => { writes = r.writes, reads = r.reads } }

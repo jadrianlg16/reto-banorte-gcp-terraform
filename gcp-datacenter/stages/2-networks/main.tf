@@ -4,8 +4,8 @@
 # (ADR 0003).
 #
 # Archivos: main.tf (red), vpn.tf (HA VPN, on-premises simulado e Interconnect),
-# firewall.tf (políticas de red del hub y de onprem-sim) y dns.tf (reenvío, política de
-# servidor y registro DNS de onprem-sim).
+# firewall.tf (políticas de red del hub y de onprem-sim), dns.tf (reenvío, política de
+# servidor y registro DNS de onprem-sim) y onprem_dns.tf (VM DNS de prueba de onprem-sim).
 #
 # Las APIs del proyecto (compute, dns y, con on-premises real, secretmanager) las habilita
 # 0-bootstrap una sola vez (ADR 0029 §2); esta raíz no declara ninguna.

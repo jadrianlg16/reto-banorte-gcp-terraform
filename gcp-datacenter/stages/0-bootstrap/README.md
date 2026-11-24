@@ -55,7 +55,7 @@ se declara en una raíz de entorno (ADR 0029 §4). Todas las cuentas tienen adem
 | Cuenta | Roles |
 |---|---|
 | `tf-base` | `cloudkms.admin` (salvo el llavero del estado), `TfSecretContainerAdmin`, `artifactregistry.admin`, `binaryauthorization.policyEditor`, `logging.configWriter`, `monitoring.alertPolicyEditor`, `monitoring.notificationChannelEditor`, `essentialcontacts.admin`, `pubsub.admin`, `securitycenter.notificationConfigEditor`, `storage.admin` (buckets `<prefix>-common-`), `TfServiceAccountManager` (cuentas de ejecución de los entornos), `projectIamAdmin` en dos concesiones delegadas (roles de lectura de personas; roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado). Ningún rol de organización ni de la política de acceso (`org.tf` los usa la persona de esta etapa) |
-| `tf-net` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin` |
+| `tf-net` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin`; con `onprem_dns_vm = true`, además `compute.instanceAdmin.v1` sin condición para la VM DNS de `onprem-sim` (riesgo aceptado mientras esté activo: el hub podría cambiar las VM de los entornos). `1-base` le da `iam.serviceAccountUser` solo sobre la cuenta de esa VM |
 | `tf-net-<env>` | los de `tf-net`, más `TfNetworkTagManager` (claves y valores de etiquetas y su IAM, sin ligarlas) y `servicenetworking.networksAdmin` |
 | `tf-wl-<env>` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` (buckets `<prefix>-<env>-`); `cloudscheduler.admin` solo en dev y qa (ADR 0028). Sin roles de IAM ni de etiquetas en el proyecto: `1-base` le da `iam.serviceAccountUser` sobre cada cuenta de ejecución de su entorno que adjunta, y su spoke, `tagUser` sobre los valores `lb_backend` e `iap_ssh` |
 | `tf-read` | `viewer`, `iam.securityReviewer`, `cloudasset.viewer`, `networkmanagement.admin` y `storage.objectViewer` sobre el bucket de estado |
@@ -194,9 +194,10 @@ enlaces y las tres reglas de la denegación; que ninguna cuenta del pipeline ten
 proyecto que ligue o quite etiquetas (`ningun_rol_del_pipeline_liga_etiquetas`: `tagUser`,
 `tagAdmin`, roles con `*TagBinding` o `tagValueBindings`, y `cloudkms.admin` y `storage.admin`
 solo con una condición que deja fuera el llavero y el bucket del estado); las variantes sin
-etiquetas, sin denegación y con organización y política de acceso (las ocho políticas de
-organización y el perímetro en dry-run aquí, sin ningún rol de organización para el pipeline);
-y que se rechazan entradas inválidas.
+etiquetas, sin denegación, con organización y política de acceso (las ocho políticas de
+organización y el perímetro en dry-run aquí, sin ningún rol de organización para el pipeline) y
+con `onprem_dns_vm` (solo `tf-net` suma `compute.instanceAdmin.v1`; sin la opción, solo las
+cuentas de cargas lo tienen); y que se rechazan entradas inválidas.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -272,6 +273,7 @@ y que se rechazan entradas inválidas.
 | <a name="input_enable_protection_tags"></a> [enable\_protection\_tags](#input\_enable\_protection\_tags) | Si es true (por defecto), crea la etiqueta <prefix>-proteccion = etapa-0 y la liga al bucket y al llavero del estado y a las nueve cuentas del pipeline (ADR 0029 §5). false solo si un apply demuestra que las etiquetas no funcionan en el proyecto; la protección queda entonces en los roles condicionados. | `bool` | `true` | no |
 | <a name="input_location_short_codes"></a> [location\_short\_codes](#input\_location\_short\_codes) | Mapa ubicación → código corto que se agrega a los nombres de recursos con ubicación (§4.2). Debe incluir la ubicación de KMS del estado (lower(state\_bucket\_location): us, eu o asia). | `map(string)` | <pre>{<br/>  "asia": "asia",<br/>  "eu": "eu",<br/>  "northamerica-south1": "nas1",<br/>  "us": "us",<br/>  "us-central1": "usc1",<br/>  "us-east4": "use4"<br/>}</pre> | no |
 | <a name="input_name_suffix"></a> [name\_suffix](#input\_name\_suffix) | Sufijo opcional del nombre del bucket de estado para que sea único a nivel mundial (los nombres de bucket son globales). Vacío: sin sufijo. | `string` | `""` | no |
+| <a name="input_onprem_dns_vm"></a> [onprem\_dns\_vm](#input\_onprem\_dns\_vm) | Si es true, la cuenta del hub (<prefix>-tf-net) recibe roles/compute.instanceAdmin.v1 y 1-base crea la cuenta de la VM DNS de onprem-sim (<prefix>-common-net-dns) con serviceAccountUser para el hub. Va en true solo junto con simulate\_onprem = true y onprem\_dns\_vm = true en 2-networks. Por defecto false: el hub no administra VM. | `bool` | `false` | no |
 | <a name="input_org_id"></a> [org\_id](#input\_org\_id) | ID numérico de la organización, si el proyecto está dentro de una (ADR 0029 §1). Con él, esta etapa aplica las políticas de organización al proyecto (org.tf); quien la aplica necesita roles/orgpolicy.policyAdmin en la organización. null (por defecto): proyecto sin organización ni políticas de organización. Ninguna cuenta del pipeline recibe roles de organización. | `string` | `null` | no |
 | <a name="input_state_bucket_dual_regions"></a> [state\_bucket\_dual\_regions](#input\_state\_bucket\_dual\_regions) | Opcional: las dos regiones de un bucket de estado de doble región configurable (por ejemplo ["us-central1", "us-east4"]), dentro de state\_bucket\_location; lleva replicación turbo. Vacío (por defecto): bucket multirregional. | `list(string)` | `[]` | no |
 | <a name="input_state_bucket_location"></a> [state\_bucket\_location](#input\_state\_bucket\_location) | Multirregión del bucket de estado y de su llave KMS: US, EU o ASIA. Con state\_bucket\_dual\_regions vacío el bucket es multirregional; si no, es de doble región configurable dentro de esta multirregión. La llave va en la ubicación de KMS homónima (us, eu, asia), como exige la CMEK de Cloud Storage. Así el estado y la llave sobreviven a la caída de primary\_region. La ubicación de un bucket no se cambia después de crearlo. | `string` | `"US"` | no |
@@ -283,6 +285,7 @@ y que se rechazan entradas inválidas.
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_custom_role_ids"></a> [custom\_role\_ids](#output\_custom\_role\_ids) | Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret\_container\_admin, service\_account\_manager, network\_tag\_manager y off\_hours\_scheduler. |
+| <a name="output_onprem_dns_vm_enabled"></a> [onprem\_dns\_vm\_enabled](#output\_onprem\_dns\_vm\_enabled) | true con onprem\_dns\_vm: el hub tiene compute.instanceAdmin.v1 y 1-base crea la cuenta de la VM DNS de onprem-sim. |
 | <a name="output_org_policies_enabled"></a> [org\_policies\_enabled](#output\_org\_policies\_enabled) | true si el proyecto está en una organización (org\_id) y esta etapa le aplicó las políticas de organización (org.tf). |
 | <a name="output_project_id"></a> [project\_id](#output\_project\_id) | ID del proyecto único. |
 | <a name="output_project_number"></a> [project\_number](#output\_project\_number) | Número del proyecto único. |

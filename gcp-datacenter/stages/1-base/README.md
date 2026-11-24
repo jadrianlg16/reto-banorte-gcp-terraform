@@ -14,7 +14,8 @@ pipeline con la cuenta `<prefix>-tf-base` (entorno de GitHub `common`); lee el e
 | `artifacts.tf` | Un repositorio Docker `<prefix>-<env>-<app>` por entorno y aplicación, cifrado con la llave `artifacts` de su entorno; su IAM; la política única de Binary Authorization |
 | `iam.tf` | Roles de solo lectura de los grupos de personas y los roles de proyecto de las cuentas de ejecución (el `tagUser` de los agentes de GKE y de las APIs de Google lo da 0-bootstrap) |
 | `runtime_accounts.tf` | Las cuentas de ejecución de cada entorno y aplicación y sus permisos (tabla de abajo) |
-| `remote_state.tf` | Lectura del estado de `0-bootstrap` (número del proyecto, cuentas de las raíces y roles personalizados) |
+| `onprem_dns.tf` | Solo si `0-bootstrap` tiene `onprem_dns_vm = true`: la cuenta `<prefix>-common-net-dns` de la VM DNS de `onprem-sim` (hub), con `logging.logWriter`, y `iam.serviceAccountUser` sobre ella para `<prefix>-tf-net` |
+| `remote_state.tf` | Lectura del estado de `0-bootstrap` (número del proyecto, cuentas de las raíces, roles personalizados y `onprem_dns_vm_enabled`) |
 
 Ninguna raíz de entorno declara roles de proyecto ni crea cuentas de servicio: todos están aquí.
 La cuenta de esta etapa solo puede asignar los roles de `local.base_grantable_roles` y
@@ -111,6 +112,7 @@ de esta etapa no tiene `roles/orgpolicy.policyAdmin` ni roles sobre la política
 | `secret_ids` | entorno → nombre → ID | informativa |
 | `off_hours_role_id` | ID completo del rol personalizado del apagado (lo crea 0-bootstrap) | informativa |
 | `security_alert_email`, `log_bucket` | valores sueltos | informativas |
+| `onprem_dns_service_account` | correo de `<prefix>-common-net-dns` o null | informativa (el hub arma el correo con el nombre) |
 
 `vpc_sc_perimeter_name` y `org_policies_enabled` pasaron a ser salidas de `0-bootstrap`.
 
@@ -138,8 +140,9 @@ Authorization, los roles de grupos y agentes, las cuentas de ejecución y sus pe
 condición de Cloud SQL, secretos, repositorio, `serviceAccountUser` de las cuentas de cargas y
 el enlace de Workload Identity con y sin `gke_workload_identity_bindings`), los llaveros y los
 nombres exactos de `kms_key_ids` (solo las llaves usadas; DR según `dr_environments`, también
-con qa), que no haya roles de organización, el canal de operaciones, las variantes con SCC y
-atestadores, con
+con qa), que no haya roles de organización, el canal de operaciones, la cuenta de la VM DNS de
+`onprem-sim` (sin ella por defecto; con `onprem_dns_vm_enabled`, solo `logWriter` y
+`serviceAccountUser` para `tf-net`), las variantes con SCC y atestadores, con
 atestadores por entorno (solos y con comunes: lista sin repositorios, atestador de cada entorno
 en sus clústeres y regla por defecto), sin prod y con patrones de imagen válidos; y que se
 rechazan entradas inválidas (proyecto distinto del de 0-bootstrap, contactos que no cubren las
@@ -190,7 +193,9 @@ registro entero).
 | [google_pubsub_topic.scc_findings](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/pubsub_topic) | resource |
 | [google_scc_v2_project_notification_config.findings](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/scc_v2_project_notification_config) | resource |
 | [google_secret_manager_secret_iam_member.runtime](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/secret_manager_secret_iam_member) | resource |
+| [google_service_account.onprem_dns](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
 | [google_service_account.runtime](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
+| [google_service_account_iam_member.onprem_dns_hub_user](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account_iam_member) | resource |
 | [google_service_account_iam_member.workload_identity](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account_iam_member) | resource |
 | [google_service_account_iam_member.workloads_user](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account_iam_member) | resource |
 | [terraform_remote_state.bootstrap](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/data-sources/remote_state) | data source |
@@ -240,6 +245,7 @@ registro entero).
 | <a name="output_log_bucket"></a> [log\_bucket](#output\_log\_bucket) | Nombre del bucket de logs de auditoría (destino del sink de proyecto). |
 | <a name="output_notification_channel_ids"></a> [notification\_channel\_ids](#output\_notification\_channel\_ids) | Mapa uso → ID del canal de notificación de Monitoring. security: canal de correo de security\_alert\_email (alertas de auditoría, solo de 1-base). operations: canal de operations\_alert\_email, que 3-workloads agrega a las alertas de su entorno; solo existe con operations\_alert\_email. |
 | <a name="output_off_hours_role_id"></a> [off\_hours\_role\_id](#output\_off\_hours\_role\_id) | ID completo (projects/<id>/roles/<prefix>OffHoursScheduler) del rol personalizado del apagado fuera de horario (ADR 0028). Lo crea 0-bootstrap; 1-base lo publica. |
+| <a name="output_onprem_dns_service_account"></a> [onprem\_dns\_service\_account](#output\_onprem\_dns\_service\_account) | Correo de la cuenta de la VM DNS de onprem-sim (<prefix>-common-net-dns), o null si 0-bootstrap no tiene onprem\_dns\_vm = true. El hub la adjunta a la VM; ninguna raíz lee esta salida. |
 | <a name="output_runtime_service_accounts"></a> [runtime\_service\_accounts](#output\_runtime\_service\_accounts) | Mapa entorno → aplicación → uso → correo de las cuentas de ejecución (<prefix>-<env>-<app>-<uso>): gke\_nodes, workload, mig, run y, en off\_hours\_environments, scheduler (<prefix>-<env>-<app>-sched). 3-workloads las usa; no las crea. |
 | <a name="output_secret_ids"></a> [secret\_ids](#output\_secret\_ids) | Mapa entorno → nombre corto → ID del secreto (projects/<proyecto>/secrets/<id>). Un entorno sin secretos tiene un mapa vacío. |
 | <a name="output_security_alert_email"></a> [security\_alert\_email](#output\_security\_alert\_email) | Correo que recibe las alertas de auditoría del proyecto (CIS 2.5 a 2.12). |

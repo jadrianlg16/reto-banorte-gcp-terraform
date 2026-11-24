@@ -79,3 +79,13 @@ output "onprem_sim_firewall_policy_id" {
   description = "ID de la política de firewall de red de la VPC onprem-sim (DNS desde 35.199.192.0/19 e IAP), o null con simulate_onprem = false."
   value       = var.simulate_onprem ? module.firewall_onprem_sim[0].policy_id : null
 }
+
+output "onprem_dns_vm" {
+  description = "VM DNS de prueba de onprem-sim: { name, zone, ip, record } (record: el nombre que responde, dns.<onprem_dns_domain>), o null sin onprem_dns_vm."
+  value = var.onprem_dns_vm ? {
+    name   = google_compute_instance.onprem_dns[0].name
+    zone   = google_compute_instance.onprem_dns[0].zone
+    ip     = local.onprem_dns_vm_ip
+    record = "dns.${lower(var.onprem_dns_domain)}"
+  } : null
+}

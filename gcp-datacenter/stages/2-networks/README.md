@@ -44,12 +44,21 @@ En el proyecto `project_id` (lo crea una persona; esta raíz no lo crea ni lo bo
     cargas).
   - Con `simulate_onprem = true`, `<prefix>-common-net-fw-onprem-sim` en esa VPC: permite solo
     DNS (TCP/UDP 53) desde 35.199.192.0/19 y SSH por IAP (TCP 22 desde 35.235.240.0/20), para
-    poder probar el reenvío DNS con una VM DNS creada a mano en `onprem_dns_servers`.
+    probar el reenvío DNS con la VM DNS de `onprem-sim`.
 - DNS (módulo `dns`): zona de reenvío de `onprem_dns_domain` hacia `onprem_dns_servers` por la
   VPN (`forwarding_path = private`) y política de servidor con reenvío entrante y registro de
   consultas sobre la VPC hub. Con `simulate_onprem = true`, otra política
   `<prefix>-common-net-dns-onprem-sim-policy` solo con registro de consultas sobre la VPC
   `onprem-sim` (CIS 2.13: el detector revisa cada red).
+- VM DNS de prueba (`onprem_dns.tf`), solo con `onprem_dns_vm = true` (exige
+  `simulate_onprem = true`): `<prefix>-common-net-dns-<región>`, `e2-micro` con Debian 12 en
+  `onprem_dns_vm_zone` (por defecto `<primary_region>-b`), en la primera IP de
+  `onprem_dns_servers` y sin IP pública, Shielded VM, OS Login, sin llaves SSH del proyecto ni
+  puerto serie. Corre con la cuenta `<prefix>-common-net-dns`, que crea `1-base` con solo
+  `roles/logging.logWriter`. El arranque instala `files/onprem-dns.py`, un servidor DNS con
+  autoridad sobre `onprem_dns_domain` hecho solo con Python 3 de la imagen (la VPC no sale a
+  internet, así que no se puede instalar dnsmasq); responde `dns.<onprem_dns_domain>` con la IP
+  de la VM por UDP y TCP. La salida `onprem_dns_vm` da el nombre, la zona, la IP y el registro.
 
 No crea (regla de recursos únicos, ADR 0029 §4): las APIs del proyecto (`compute`, `dns` y, con
 on-premises real, `secretmanager`), que habilita `0-bootstrap` una sola vez, ni las métricas y
@@ -57,7 +66,9 @@ alertas de auditoría del proyecto, que viven en `1-base`.
 
 Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_cidrs` y cada
 `spoke_supernets` no se traslapan con `onprem_cidrs` ni entre sí; `hub_cidrs` cabe en
-`hub_supernet`; `onprem_sim_cidr` y `onprem_dns_servers` caben en `onprem_cidrs`.
+`hub_supernet`; `onprem_sim_cidr` y `onprem_dns_servers` caben en `onprem_cidrs`. Con
+`onprem_dns_vm = true`, la primera IP de `onprem_dns_servers` está en `onprem_sim_cidr` y no es
+una de las cuatro reservadas de la subred.
 
 ### Notas de diseño
 
@@ -72,10 +83,16 @@ Validaciones del plan de direccionamiento (contrato §5): `hub_supernet`, `hub_c
   de red y lo delegado terminaba en la denegación implícita de la VPC; su política nueva tampoco
   permite nada. `VERIFICAR-EN-APPLY` (en `firewall.tf`): que la VPN y el reenvío DNS entrante
   sigan funcionando con esa denegación.
-- **On-premises simulado sin servidor DNS.** La VPC `onprem-sim` no tiene un servidor DNS en
-  `onprem_dns_servers`: la zona de reenvío queda creada pero las consultas a
-  `onprem_dns_domain` no reciben respuesta hasta que se cree a mano una VM DNS con esa IP en
-  `onprem-sim`. El firewall ya admite esa prueba (política de red de `onprem-sim`).
+- **Servidor DNS de on-premises simulado.** Con `onprem_dns_vm = false` (por defecto) la VPC
+  `onprem-sim` no tiene servidor DNS en `onprem_dns_servers`: la zona de reenvío queda creada
+  pero las consultas a `onprem_dns_domain` no reciben respuesta. Con `onprem_dns_vm = true` la
+  VM DNS de prueba responde, sin pasos a mano. Orden: `0-bootstrap` con `onprem_dns_vm = true`
+  (le da a esta cuenta `compute.instanceAdmin.v1`), después `1-base` (crea la cuenta de la VM y
+  le da a `<prefix>-tf-net` `serviceAccountUser` sobre ella) y al final el hub. Si falta alguno,
+  el apply del hub falla al crear la VM (falla cerrado). `VERIFICAR-EN-APPLY` (en
+  `onprem_dns.tf`): que Debian 12 traiga `python3`, que el servicio arranque y que `dig
+  dns.<onprem_dns_domain>` desde un spoke devuelva la IP de la VM. El servidor se probó solo
+  localmente (respuestas A, NXDOMAIN, NODATA, REFUSED y NOTIMP por UDP y TCP).
 - **Rotación del secreto de la VPN real.** En el proveedor, `shared_secret` fuerza el
   reemplazo del túnel, y los túneles tienen nombre fijo (se destruyen antes de crearse). Por
   eso la versión es numérica y una rotación entra por PR, y se hace de a un túnel:
@@ -118,6 +135,8 @@ permisos de proyecto). Lo que esta raíz necesita:
 | Proyecto | `roles/compute.networkAdmin` | VPC, subredes, routers, rutas, HA VPN, Interconnect |
 | Proyecto | `roles/compute.securityAdmin` | Políticas de firewall de red del hub y de `onprem-sim`, sus reglas y asociaciones |
 | Proyecto | `roles/dns.admin` | Zonas y políticas de servidor DNS |
+| Proyecto | `roles/compute.instanceAdmin.v1` | Solo con `onprem_dns_vm = true` en `0-bootstrap`: la VM DNS de `onprem-sim`. Sin condición: con él, el hub también podría cambiar las VM de los entornos (riesgo aceptado mientras la opción esté activa) |
+| Cuenta `<prefix>-common-net-dns` | `roles/iam.serviceAccountUser` | Solo con `onprem_dns_vm = true`: adjuntar la cuenta a la VM DNS (lo da `1-base`) |
 | Bucket de estado | escritura de `2-networks/hub` | Estado |
 | Secreto `onprem_vpn_secret_id` | `roles/secretmanager.secretAccessor` | Solo con `simulate_onprem = false`: el secreto lo crea el equipo de red fuera de Terraform y le da este permiso a `<prefix>-tf-net` (paso manual) |
 
@@ -159,6 +178,7 @@ política de firewall de red global es HYPOTHESIS (`VERIFICAR-EN-APPLY`).
 
 | Name | Type |
 | ---- | ---- |
+| [google_compute_instance.onprem_dns](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_instance) | resource |
 | [google_dns_policy.onprem_sim](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/dns_policy) | resource |
 | [random_password.vpn_shared_secret](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
 | [google_secret_manager_secret_version.vpn_shared_secret](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/secret_manager_secret_version) | data source |
@@ -184,6 +204,8 @@ política de firewall de red global es HYPOTHESIS (`VERIFICAR-EN-APPLY`).
 | <a name="input_enable_interconnect"></a> [enable\_interconnect](#input\_enable\_interconnect) | Crea los VLAN attachments de Cloud Interconnect de interconnect\_attachments en el router primario del hub. Apagado por defecto. | `bool` | `false` | no |
 | <a name="input_enable_vpn_dr"></a> [enable\_vpn\_dr](#input\_enable\_vpn\_dr) | Crea la segunda HA VPN (dos túneles y BGP) en el Cloud Router del hub en dr\_region, y con simulate\_onprem = true su punta en onprem-sim. Sin ella, perder la región primaria deja a la región de DR sin camino a on-premises. | `bool` | `true` | no |
 | <a name="input_interconnect_attachments"></a> [interconnect\_attachments](#input\_interconnect\_attachments) | VLAN attachments de Cloud Interconnect (solo con enable\_interconnect = true). Mismo formato que la variable del módulo hybrid-connectivity: type DEDICATED (interconnect, bandwidth, vlan\_tag, candidate\_subnets) o PARTNER (edge\_availability\_domain). | <pre>map(object({<br/>    type                     = optional(string, "DEDICATED")<br/>    interconnect             = optional(string)<br/>    edge_availability_domain = optional(string)<br/>    bandwidth                = optional(string)<br/>    vlan_tag                 = optional(number)<br/>    candidate_subnets        = optional(list(string), [])<br/>    mtu                      = optional(number, 1440)<br/>  }))</pre> | `{}` | no |
+| <a name="input_onprem_dns_vm"></a> [onprem\_dns\_vm](#input\_onprem\_dns\_vm) | Crea en onprem-sim la VM DNS de prueba (onprem\_dns.tf): e2-micro sin IP pública, Shielded VM y OS Login, en la primera IP de onprem\_dns\_servers, que responde con autoridad dns.<onprem\_dns\_domain>. Solo con simulate\_onprem = true. Antes deben estar aplicados 0-bootstrap con onprem\_dns\_vm = true (rol de instancias del hub) y 1-base (cuenta <prefix>-common-net-dns). | `bool` | `false` | no |
+| <a name="input_onprem_dns_vm_zone"></a> [onprem\_dns\_vm\_zone](#input\_onprem\_dns\_vm\_zone) | Zona de la VM DNS de onprem-sim. null (por defecto): <primary\_region>-b. Debe ser una zona de primary\_region, donde está la subred de onprem-sim. | `string` | `null` | no |
 | <a name="input_onprem_sim_cidr"></a> [onprem\_sim\_cidr](#input\_onprem\_sim\_cidr) | Subred de la VPC simulada onprem-sim (plan: 192.168.0.0/24). Solo se usa con simulate\_onprem = true y debe caber en onprem\_cidrs. | `string` | `"192.168.0.0/24"` | no |
 | <a name="input_onprem_vpn_gateway_ips"></a> [onprem\_vpn\_gateway\_ips](#input\_onprem\_vpn\_gateway\_ips) | IP públicas del gateway VPN on-premises (1 o 2). Obligatorias con simulate\_onprem = false; deben ir vacías con simulate\_onprem = true. | `list(string)` | `[]` | no |
 | <a name="input_onprem_vpn_secret_id"></a> [onprem\_vpn\_secret\_id](#input\_onprem\_vpn\_secret\_id) | Secreto de Secret Manager con la llave compartida IKE de la VPN real, como projects/<proyecto>/secrets/<nombre>. Obligatorio con simulate\_onprem = false y null con simulate\_onprem = true. El valor nunca pasa por variables. | `string` | `null` | no |
@@ -205,6 +227,7 @@ política de firewall de red global es HYPOTHESIS (`VERIFICAR-EN-APPLY`).
 | <a name="output_hub_network_name"></a> [hub\_network\_name](#output\_hub\_network\_name) | Nombre de la VPC hub. |
 | <a name="output_hub_network_self_link"></a> [hub\_network\_self\_link](#output\_hub\_network\_self\_link) | self\_link de la VPC hub, para el peering y las zonas de peering DNS de los spokes. |
 | <a name="output_hub_routers"></a> [hub\_routers](#output\_hub\_routers) | Mapa región → nombre del Cloud Router del hub. |
+| <a name="output_onprem_dns_vm"></a> [onprem\_dns\_vm](#output\_onprem\_dns\_vm) | VM DNS de prueba de onprem-sim: { name, zone, ip, record } (record: el nombre que responde, dns.<onprem\_dns\_domain>), o null sin onprem\_dns\_vm. |
 | <a name="output_onprem_sim_firewall_policy_id"></a> [onprem\_sim\_firewall\_policy\_id](#output\_onprem\_sim\_firewall\_policy\_id) | ID de la política de firewall de red de la VPC onprem-sim (DNS desde 35.199.192.0/19 e IAP), o null con simulate\_onprem = false. |
 | <a name="output_onprem_sim_network_name"></a> [onprem\_sim\_network\_name](#output\_onprem\_sim\_network\_name) | Nombre de la VPC onprem-sim, o null con simulate\_onprem = false. |
 | <a name="output_spoke_supernets"></a> [spoke\_supernets](#output\_spoke\_supernets) | Mapa entorno → /16 del spoke que el hub anuncia a on-premises. Cada spoke comprueba que su spoke\_supernet coincida. |
