@@ -32,9 +32,8 @@ enable_backup      = true
 
 # Plano de control de GKE: el /28 sale de reserved_cidrs del spoke (gke_master y, con
 # enable_dr, gke_master_dr). Clústeres bnt-prod-app-gke y, en DR, bnt-prod-app-gke-dr (ADR 0029
-# §4). Workload Identity: la cuenta de Kubernetes app-prod/app actúa como la cuenta workload
-# (namespace por defecto <application>-<environment>, ADR 0029 §9).
-gke_workload_ksa_name = "app"
+# §4). Workload Identity: 1-base enlaza la cuenta workload a cada clúster (principalSet
+# kubernetes.cluster, ADR 0029 §9); cualquier pod del clúster actúa como workload.
 
 gke_authenticator_security_group = "gke-security-groups@example.com"
 gke_release_channel              = "STABLE"

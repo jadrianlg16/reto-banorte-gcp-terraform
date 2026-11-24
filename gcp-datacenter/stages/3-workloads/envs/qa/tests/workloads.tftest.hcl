@@ -57,8 +57,14 @@ override_data {
           )
         }
       }
+      # Un principalSet por clúster (primary en us-central1 y dr en us-east4), como 1-base.
       gke_workload_identity_members = {
-        for env in ["dev", "qa", "prod"] : env => { app = "serviceAccount:example-lz.svc.id.goog[app-${env}/app]" }
+        for env in ["dev", "qa", "prod"] : env => {
+          app = {
+            primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-${env}-app-gke"
+            dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-${env}-app-gke-dr"
+          }
+        }
       }
       off_hours_role_id    = "projects/example-lz/roles/bntOffHoursScheduler"
       security_alert_email = "gcp-security-admins@example.com"
@@ -294,10 +300,19 @@ run "prod_operacion_normal" {
     error_message = "GKE (workload), Cloud Run (run) y el MIG (mig) deben entrar a Cloud SQL por IAM."
   }
 
-  # Workload Identity: el enlace lo crea 1-base con el namespace <app>-<env> (ADR 0029 §9).
+  # Workload Identity: 1-base enlaza cada clúster del entorno (principalSet kubernetes.cluster,
+  # ADR 0029 §9) y la salida es la de gke_workload_identity_members de 1-base.
   assert {
-    condition     = output.gke_workload_identity_member == "serviceAccount:example-lz.svc.id.goog[app-prod/app]"
+    condition = output.gke_workload_identity_member == {
+      primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
+      dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
+    }
     error_message = "La salida gke_workload_identity_member debe ser la de gke_workload_identity_members de 1-base."
+  }
+  # El principalSet del clúster primario nombra el mismo clúster que crea esta raíz.
+  assert {
+    condition     = endswith(output.gke_workload_identity_member["primary"], "/locations/us-central1/clusters/${output.gke_cluster_names["us-central1"]}")
+    error_message = "El enlace de Workload Identity de 1-base debe nombrar el clúster primario de esta raíz."
   }
 
   # Balanceador externo con Cloud Armor y backends de los cómputos habilitados (GKE sin NEG aún).
@@ -497,11 +512,11 @@ run "prod_conmutacion_a_dr" {
     condition     = module.cloud_sql.instance_name == "bnt-prod-data-sql-usc1"
     error_message = "La conmutación no debe cambiar la instancia primaria de Cloud SQL."
   }
-  # Un solo enlace de Workload Identity (de 1-base): el pool es del proyecto y sirve a los dos
-  # clústeres.
+  # Un enlace de Workload Identity por clúster (de 1-base): el principalSet del clúster dr nombra
+  # el clúster de DR que crea esta raíz.
   assert {
-    condition     = output.gke_workload_identity_member == "serviceAccount:example-lz.svc.id.goog[app-prod/app]"
-    error_message = "El enlace de Workload Identity es uno por entorno y aplicación, no por clúster."
+    condition     = endswith(output.gke_workload_identity_member["dr"], "/locations/us-east4/clusters/${output.gke_cluster_names["us-east4"]}")
+    error_message = "Con DR, 1-base debe enlazar también el clúster <prefix>-<env>-<app>-gke-dr."
   }
 }
 
@@ -998,8 +1013,11 @@ run "llaves_con_la_forma_anterior_por_ubicacion" {
         runtime_service_accounts = {
           prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
         }
-        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
-        notification_channel_ids      = {}
+        gke_workload_identity_members = { prod = { app = {
+          primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
+          dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
+        } } }
+        notification_channel_ids = {}
       }
     }
   }
@@ -1050,8 +1068,11 @@ run "repositorio_serializado_como_json" {
         runtime_service_accounts = {
           prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
         }
-        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
-        notification_channel_ids      = {}
+        gke_workload_identity_members = { prod = { app = {
+          primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
+          dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
+        } } }
+        notification_channel_ids = {}
       }
     }
   }
@@ -1099,6 +1120,60 @@ run "gke_antes_del_enlace_de_workload_identity" {
   assert {
     condition     = output.gke_cluster_names == { "us-central1" = "bnt-prod-app-gke" } && output.gke_workload_identity_member == null
     error_message = "Sin el enlace de 1-base el clúster se planea igual y la salida es null."
+  }
+}
+
+# Conmutación con 1-base que solo enlazó el clúster primario (el entorno no está en
+# dr_environments de 1-base): el plan sigue y check.workload_identity_enlazada avisa que los pods
+# del clúster de DR no obtienen la cuenta workload.
+run "gke_dr_sin_enlace_del_cluster_de_dr" {
+  command = plan
+
+  variables {
+    dr_active          = true
+    enable_mig         = false
+    enable_cloud_run   = false
+    enable_internal_lb = false
+    lb_backend_paths   = {}
+    gke_lb_negs = {
+      primary = ["projects/example-lz/zones/us-central1-a/networkEndpointGroups/k8s1-web"]
+    }
+  }
+
+  override_data {
+    target = data.terraform_remote_state.base
+    values = {
+      outputs = {
+        kms_key_ids = {
+          prod = merge(
+            {
+              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "backup", "run"] :
+              use => "projects/example-lz/locations/us-central1/keyRings/bnt-prod-sec-kr-usc1/cryptoKeys/${use}"
+            },
+            {
+              for use in ["gke", "compute", "sql", "backup", "run"] :
+              "${use}_dr" => "projects/example-lz/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/${use}"
+            },
+            { storage_us = "projects/example-lz/locations/us/keyRings/bnt-prod-sec-kr-us/cryptoKeys/storage" },
+          )
+        }
+        artifact_registry_repositories = { prod = { app = "us-docker.pkg.dev/example-lz/bnt-prod-app" } }
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { prod = { app = {
+          primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
+        } } }
+        notification_channel_ids = {}
+      }
+    }
+  }
+
+  expect_failures = [check.workload_identity_enlazada]
+
+  assert {
+    condition     = output.gke_cluster_names["us-east4"] == "bnt-prod-app-gke-dr" && keys(output.gke_workload_identity_member) == ["primary"]
+    error_message = "Sin el enlace del clúster de DR el clúster se planea igual y la salida solo tiene primary."
   }
 }
 
@@ -1311,8 +1386,11 @@ run "rechaza_estado_sin_llave_de_dr" {
         runtime_service_accounts = {
           prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
         }
-        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
-        notification_channel_ids      = {}
+        gke_workload_identity_members = { prod = { app = {
+          primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
+          dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
+        } } }
+        notification_channel_ids = {}
       }
     }
   }
@@ -1393,8 +1471,11 @@ run "rechaza_repositorio_de_otro_proyecto" {
         runtime_service_accounts = {
           prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
         }
-        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
-        notification_channel_ids      = {}
+        gke_workload_identity_members = { prod = { app = {
+          primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
+          dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
+        } } }
+        notification_channel_ids = {}
       }
     }
   }
@@ -1547,10 +1628,10 @@ run "dev_gke_con_apagado_fuera_de_horario" {
     condition     = local.backup_window.start_hour == 8 && output.off_hours_shutdown.window.duration_sec == (21 * 60 - (7 * 60 + 30)) * 60
     error_message = "La ventana de respaldo empieza en la primera hora cerrada desde el encendido."
   }
-  # Namespace por defecto de dev.
+  # En dev el enlace de Workload Identity nombra el clúster bnt-dev-app-gke.
   assert {
-    condition     = output.gke_workload_identity_member == "serviceAccount:example-lz.svc.id.goog[app-dev/app]"
-    error_message = "En dev el namespace por defecto de Workload Identity es app-dev."
+    condition     = endswith(output.gke_workload_identity_member["primary"], "/locations/us-central1/clusters/bnt-dev-app-gke")
+    error_message = "En dev el enlace de Workload Identity es el del clúster bnt-dev-app-gke."
   }
 }
 
@@ -1655,9 +1736,11 @@ run "rechaza_apagado_sin_la_cuenta_de_1_base" {
         runtime_service_accounts = {
           dev = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-dev-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
         }
-        gke_workload_identity_members = { dev = { app = "serviceAccount:example-lz.svc.id.goog[app-dev/app]" } }
-        off_hours_role_id             = "projects/example-lz/roles/bntOffHoursScheduler"
-        notification_channel_ids      = {}
+        gke_workload_identity_members = { dev = { app = {
+          primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-dev-app-gke"
+        } } }
+        off_hours_role_id        = "projects/example-lz/roles/bntOffHoursScheduler"
+        notification_channel_ids = {}
       }
     }
   }

@@ -111,6 +111,31 @@ locals {
     }
   }
 
+  # Condición del rol del apagado (hallazgo N4 de la segunda revisión): solo la instancia de
+  # Cloud SQL y los clústeres de GKE del entorno. Cloud SQL (sqladmin.googleapis.com/Instance) y
+  # GKE (container.googleapis.com/Cluster, nombre projects/<id>/locations/<ubicación>/clusters/<c>)
+  # admiten resource.name ("Resource attributes for IAM Conditions"); la forma
+  # resource.type != … || nombre de "Attribute reference for IAM Conditions" limita cada parte a
+  # su tipo y deja pasar lo que se evalúa sobre otro tipo. Sin ella, la cuenta del apagado de dev
+  # (que tf-wl-dev adjunta a sus trabajos de Cloud Scheduler) podría parchear la instancia o
+  # cambiar los clústeres de prod con un trabajo que llame a esas API.
+  # VERIFICAR-EN-APPLY: que los tres trabajos (instances.patch, nodePools.setAutoscaling y
+  # setSize) respondan 2xx con esta condición sobre la instancia y el clúster del entorno, y que
+  # un trabajo de dev contra la instancia de qa reciba 403.
+  off_hours_condition = {
+    for e in var.environments : e => {
+      title       = "apagado-${e}"
+      description = "Solo la instancia de Cloud SQL ${var.prefix}-${e}-data- y los clústeres de GKE ${var.prefix}-${e}-."
+      expression = join(" && ", [
+        "(resource.type != \"sqladmin.googleapis.com/Instance\" || resource.name.startsWith(\"projects/${local.project_id}/instances/${var.prefix}-${e}-data-\"))",
+        "(${join(" || ", concat(
+          ["resource.type != \"container.googleapis.com/Cluster\""],
+          [for r in [var.primary_region, var.dr_region] : "resource.name.startsWith(\"projects/${local.project_id}/locations/${r}/clusters/${var.prefix}-${e}-\")"],
+        ))})",
+      ])
+    }
+  }
+
   # Asignaciones de proyecto (las agrega iam.tf a module.iam, con las de personas y agentes).
   runtime_project_bindings = concat(
     flatten([
@@ -138,10 +163,8 @@ locals {
       ] if contains(local.sql_login_uses, a.use)
     ]),
     # VERIFICAR-EN-APPLY: que el rol del apagado baste para las tres llamadas de los trabajos
-    # (gcloud scheduler jobs run de cada uno con respuesta 2xx). Sin condición: el rol junta
-    # permisos de Cloud SQL y de GKE, y una condición por nombre sobre un tipo que no la admite
-    # niega todo (ADR 0029 §3). La cuenta del apagado de dev podría detener la instancia o
-    # cambiar los pools de otro entorno del proyecto; sus trabajos solo apuntan a los de dev.
+    # (gcloud scheduler jobs run de cada uno con respuesta 2xx). Condicionado a la instancia y los
+    # clústeres del entorno (local.off_hours_condition).
     [
       for k, a in local.runtime_accounts : {
         key       = "runtime|${k}|${local.custom_role_ids["off_hours_scheduler"]}"
@@ -149,7 +172,7 @@ locals {
         resource  = local.project_id
         role      = local.custom_role_ids["off_hours_scheduler"]
         member    = "serviceAccount:${local.runtime_emails[k]}"
-        condition = null
+        condition = local.off_hours_condition[a.environment]
       } if a.use == "scheduler"
     ],
   )
@@ -162,12 +185,38 @@ locals {
     }
   ]...)
 
-  # Cuenta de Kubernetes de Workload Identity: namespace <app>-<env> y gke_workload_ksa_name. El
-  # pool <proyecto>.svc.id.goog es uno solo para el proyecto: lo que separa a los entornos es el
-  # namespace (ADR 0029 §9).
+  # Workload Identity por clúster (hallazgo N1 de la segunda revisión). El pool
+  # <proyecto>.svc.id.goog es uno solo para el proyecto, y un principal por namespace y cuenta de
+  # Kubernetes (serviceAccount:<proyecto>.svc.id.goog[<ns>/<ksa>]) vale desde cualquier clúster
+  # del proyecto: quien administre otro clúster crea el mismo namespace y obtiene la cuenta
+  # ("Identity sameness" de la documentación de Workload Identity Federation for GKE). Por eso el
+  # enlace usa el principalSet de "todos los pods de un clúster":
+  #   principalSet://iam.googleapis.com/projects/<número>/locations/global/workloadIdentityPools/
+  #   <proyecto>.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/
+  #   <proyecto>/locations/<ubicación>/clusters/<clúster>
+  # (tabla de tipos de principal de "About Workload Identity Federation for GKE", actualizada el
+  # 2026-11-23, y "Principal identifiers" de IAM). La documentación no ofrece un identificador
+  # que combine clúster, namespace y cuenta de Kubernetes (el de la cuenta por UID sí lo limita a
+  # un objeto de un clúster, pero el UID solo existe después de crear la cuenta en el clúster).
+  # CONSECUENCIA: cualquier pod del clúster, de cualquier namespace, que use una cuenta de
+  # Kubernetes anotada con la cuenta workload obtiene esa cuenta. Cada clúster es de un solo
+  # entorno y una sola aplicación (<prefix>-<env>-<app>-gke[-dr], ADR 0029 §4), así que la
+  # frontera es el clúster.
+  #
+  # Clústeres por convención: el primario en primary_region y, en dr_environments, el de DR en
+  # dr_region (3-workloads solo crea el de DR en esos entornos: necesita sus llaves de DR).
+  workload_identity_clusters = {
+    for c in flatten([
+      for t in setproduct(var.environments, sort(tolist(var.applications))) : concat(
+        [{ environment = t[0], application = t[1], key = "primary", location = var.primary_region, name = "${var.prefix}-${t[0]}-${t[1]}-gke" }],
+        contains(var.dr_environments, t[0]) ? [{ environment = t[0], application = t[1], key = "dr", location = var.dr_region, name = "${var.prefix}-${t[0]}-${t[1]}-gke-dr" }] : [],
+      )
+    ]) : "${c.environment}/${c.application}/${c.key}" => c
+  }
+
   workload_identity_members = {
-    for t in setproduct(var.environments, sort(tolist(var.applications))) :
-    "${t[0]}/${t[1]}" => "serviceAccount:${local.project_id}.svc.id.goog[${t[1]}-${t[0]}/${var.gke_workload_ksa_name}]"
+    for k, c in local.workload_identity_clusters :
+    k => "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${local.project_id}.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/${local.project_id}/locations/${c.location}/clusters/${c.name}"
   }
 }
 
@@ -222,20 +271,24 @@ resource "google_service_account_iam_member" "workloads_user" {
   member             = "serviceAccount:${local.stage_service_accounts["3-workloads/${each.value.environment}"]}"
 }
 
-# Workload Identity: la cuenta de Kubernetes <app>-<env>/<gke_workload_ksa_name> actúa como la
-# cuenta workload. El pool <proyecto>.svc.id.goog lo crea GKE al activar Workload Identity en el
-# primer clúster del proyecto y no lo borra aunque se borren todos los clústeres (documentación
-# de Workload Identity Federation for GKE,
+# Workload Identity: los pods del clúster del entorno y la aplicación actúan como la cuenta
+# workload (local.workload_identity_members). El pool <proyecto>.svc.id.goog lo crea GKE al
+# activar Workload Identity en el primer clúster del proyecto y no lo borra aunque se borren
+# todos los clústeres (documentación de Workload Identity Federation for GKE,
 # https://cloud.google.com/kubernetes-engine/docs/concepts/workload-identity). Antes de que
 # exista, la asignación falla (HYPOTHESIS): por eso solo se crea con
-# gke_workload_identity_bindings = true, después del primer clúster.
+# gke_workload_identity_bindings = true, después del primer clúster. El principalSet del clúster
+# de DR se enlaza antes de que el clúster exista (se crea con dr_active).
 # VERIFICAR-EN-APPLY: que la asignación falle sin el pool y funcione después del primer clúster
-# (gcloud iam workload-identity-pools describe <proyecto>.svc.id.goog --location=global), y que
-# un pod de <app>-<env> con la cuenta de Kubernetes anotada obtenga el token de la cuenta workload.
+# (gcloud iam workload-identity-pools describe <proyecto>.svc.id.goog --location=global); que IAM
+# acepte el principalSet kubernetes.cluster/… de un clúster que todavía no existe; que un pod del
+# clúster <prefix>-<env>-<app>-gke con una cuenta de Kubernetes anotada
+# (iam.gke.io/gcp-service-account) obtenga el token de la cuenta workload, y que un pod de otro
+# clúster con el mismo namespace y la misma cuenta de Kubernetes reciba un rechazo.
 resource "google_service_account_iam_member" "workload_identity" {
-  for_each = var.gke_workload_identity_bindings ? local.workload_identity_members : {}
+  for_each = var.gke_workload_identity_bindings ? local.workload_identity_clusters : {}
 
-  service_account_id = google_service_account.runtime["${each.key}/workload"].name
+  service_account_id = google_service_account.runtime["${each.value.environment}/${each.value.application}/workload"].name
   role               = "roles/iam.workloadIdentityUser"
-  member             = each.value
+  member             = local.workload_identity_members[each.key]
 }

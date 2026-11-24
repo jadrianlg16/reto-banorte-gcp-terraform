@@ -6,8 +6,10 @@ env_dev := {"environment": "dev", "prefix": "bnt"}
 
 env_sa(account) := sprintf("serviceAccount:%s@example-landing-zone.iam.gserviceaccount.com", [account])
 
-# Lo que declaran hoy las raíces de entorno (nombres de los planes reales de destroy del spoke y de
-# cargas de dev, scripts/testdata/destroy/).
+# Lo que declaran las raíces de entorno (nombres de los planes reales de destroy del spoke y de
+# cargas de dev, scripts/testdata/destroy/), sin IAM de proyecto ni de cuentas de servicio: lo
+# dan 1-base y 0-bootstrap. El IAM de recurso (secreto, repositorio, valor de etiqueta del spoke,
+# servicio de Cloud Run) se permite.
 env_root_compliant := [
 	mk_create("module.spoke.google_compute_network.this", "google_compute_network", {"name": "bnt-dev-net-spoke"}),
 	mk_create("module.spoke.google_compute_subnetwork.this[\"app\"]", "google_compute_subnetwork", {"name": "bnt-dev-net-app-usc1", "region": "us-central1"}),
@@ -15,14 +17,15 @@ env_root_compliant := [
 	mk_create("module.firewall.google_compute_network_firewall_policy.this", "google_compute_network_firewall_policy", {"name": "bnt-dev-net-fw"}),
 	mk_create("google_service_account.runtime[\"run\"]", "google_service_account", {"account_id": "bnt-dev-app-run"}),
 	mk_create("google_service_account.scheduler[\"this\"]", "google_service_account", {"account_id": "bnt-dev-app-sched"}),
-	mk_create("google_project_iam_member.runtime[\"run/roles/logging.logWriter\"]", "google_project_iam_member", {
-		"project": "example-landing-zone",
-		"role": "roles/logging.logWriter",
-		"member": env_sa("bnt-dev-app-run"),
+	mk_create("google_tags_tag_value_iam_member.workloads[\"lb_backend\"]", "google_tags_tag_value_iam_member", {
+		"tag_value": "tagValues/000000000001",
+		"role": "roles/resourcemanager.tagUser",
+		"member": env_sa("bnt-tf-wl-dev"),
 	}),
-	mk_create("module.cloud_sql.google_project_iam_member.login[\"run\"]", "google_project_iam_member", {
-		"project": "example-landing-zone",
-		"role": "roles/cloudsql.instanceUser",
+	mk_create("module.cloud_run[\"primary\"].google_cloud_run_v2_service_iam_member.invoker[\"run\"]", "google_cloud_run_v2_service_iam_member", {
+		"name": "bnt-dev-app-run-usc1",
+		"location": "us-central1",
+		"role": "roles/run.invoker",
 		"member": env_sa("bnt-dev-app-run"),
 	}),
 	mk_create("google_secret_manager_secret_iam_member.runtime[\"app-api-token/run\"]", "google_secret_manager_secret_iam_member", {
@@ -105,9 +108,12 @@ test_env_root_base_types_denied if {
 	count(all_denials(plan)) == 4
 }
 
-# Permisos de proyecto para principales que la raíz no creó (§4.2).
-test_env_root_foreign_project_members_denied if {
+# Roles de proyecto para cualquier principal (§4.2, hallazgo N5): también las cuentas del propio
+# entorno (<prefix>-<env>-...), que antes se admitían.
+test_env_root_project_members_denied if {
 	members := [
+		env_sa("bnt-dev-app-run"),
+		env_sa("bnt-dev-app-sched"),
 		env_sa("bnt-tf-wl-dev"),
 		env_sa("bnt-prod-app-run"),
 		"group:platform-devops@example.com",
@@ -125,25 +131,114 @@ test_env_root_foreign_project_members_denied if {
 	count(rule_denials(mk_plan_vars(changes, env_dev), "env_root_scope")) == count(members)
 }
 
-test_env_root_foreign_member_message if {
-	rc := mk_create("google_project_iam_member.pipeline", "google_project_iam_member", {
+# La cuenta de ejecución del propio entorno: el caso que la versión anterior de la regla dejaba
+# pasar (cloud-sql con grant_iam_login_roles = true, o un rol de proyecto escrito en la raíz).
+test_env_root_own_account_project_member_message if {
+	rc := mk_create("module.cloud_sql.google_project_iam_member.login[\"run\"]", "google_project_iam_member", {
 		"project": "example-landing-zone",
-		"role": "roles/editor",
-		"member": env_sa("bnt-tf-wl-dev"),
+		"role": "roles/cloudsql.instanceUser",
+		"member": env_sa("bnt-dev-app-run"),
 	})
 	rule_denials(mk_plan_vars([rc], env_dev), "env_root_scope") == {
-		"[env_root_scope] google_project_iam_member.pipeline: permiso de proyecto para serviceAccount:bnt-tf-wl-dev@example-landing-zone.iam.gserviceaccount.com: una raíz de entorno solo da roles de proyecto a las cuentas que crea (serviceAccount:bnt-dev-...) (ADR 0029 §4)",
+		"[env_root_scope] module.cloud_sql.google_project_iam_member.login[\"run\"]: google_project_iam_member: la raíz del entorno dev no da roles de proyecto ni administra el IAM de cuentas de servicio; lo hacen 0-bootstrap y 1-base (ADR 0029 §4)",
 	}
 }
 
-# Quitar un rol de proyecto a una cuenta ajena también es un permiso de proyecto.
+# Quitar un rol de proyecto también es IAM de proyecto, sea de una cuenta ajena o propia.
 test_env_root_member_remove_denied if {
-	rc := mk_create("google_project_iam_member_remove.this", "google_project_iam_member_remove", {
-		"project": "example-landing-zone",
-		"role": "roles/editor",
-		"member": env_sa("bnt-tf-base"),
-	})
-	count(rule_denials(mk_plan_vars([rc], env_dev), "env_root_scope")) == 1
+	changes := [
+		mk_create("google_project_iam_member_remove.ajena", "google_project_iam_member_remove", {
+			"project": "example-landing-zone",
+			"role": "roles/editor",
+			"member": env_sa("bnt-tf-base"),
+		}),
+		mk_create("google_project_iam_member_remove.propia", "google_project_iam_member_remove", {
+			"project": "example-landing-zone",
+			"role": "roles/editor",
+			"member": env_sa("bnt-dev-app-run"),
+		}),
+	]
+	count(rule_denials(mk_plan_vars(changes, env_dev), "env_root_scope")) == 2
+}
+
+# binding y policy de proyecto: los rechaza la regla de tipos únicos, una sola vez cada uno.
+test_env_root_project_binding_and_policy_denied_once if {
+	changes := [
+		mk_create("google_project_iam_binding.b", "google_project_iam_binding", {
+			"project": "example-landing-zone",
+			"role": "roles/viewer",
+			"members": [env_sa("bnt-dev-app-run")],
+		}),
+		mk_create("google_project_iam_policy.p", "google_project_iam_policy", {
+			"project": "example-landing-zone",
+			"policy_data": "{\"bindings\":[]}",
+		}),
+	]
+	denials := rule_denials(mk_plan_vars(changes, env_dev), "env_root_scope")
+	count(denials) == 2
+	every msg in denials {
+		contains(msg, "existe una vez por proyecto")
+	}
+}
+
+# IAM de cuentas de servicio (member, binding y policy), también sobre una cuenta del entorno y
+# para el enlace de Workload Identity: lo administra 1-base.
+test_env_root_service_account_iam_denied if {
+	sa := "projects/example-landing-zone/serviceAccounts/bnt-dev-app-workload@example-landing-zone.iam.gserviceaccount.com"
+	changes := [
+		mk_create("google_service_account_iam_member.workload_identity", "google_service_account_iam_member", {
+			"service_account_id": sa,
+			"role": "roles/iam.workloadIdentityUser",
+			"member": "principalSet://iam.googleapis.com/projects/000000000000/locations/global/workloadIdentityPools/example-landing-zone.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-landing-zone/locations/us-central1/clusters/bnt-dev-app-gke",
+		}),
+		mk_create("google_service_account_iam_binding.user", "google_service_account_iam_binding", {
+			"service_account_id": sa,
+			"role": "roles/iam.serviceAccountUser",
+			"members": [env_sa("bnt-dev-app-run")],
+		}),
+		mk_create("google_service_account_iam_policy.p", "google_service_account_iam_policy", {
+			"service_account_id": sa,
+			"policy_data": "{\"bindings\":[]}",
+		}),
+	]
+	denials := rule_denials(mk_plan_vars(changes, env_dev), "env_root_scope")
+	count(denials) == 3
+	every msg in denials {
+		contains(msg, "no da roles de proyecto ni administra el IAM de cuentas de servicio")
+	}
+}
+
+# La regla 3 es por tipo: sin prefijo en el plan y con el principal desconocido hasta el apply
+# también se rechaza.
+test_env_root_iam_grants_without_prefix_or_member if {
+	changes := [
+		mk_change("google_project_iam_member.runtime", "google_project_iam_member", ["create"], {"project": "example-landing-zone", "role": "roles/logging.logWriter"}, {"member": true}),
+		mk_change("google_service_account_iam_member.wi", "google_service_account_iam_member", ["create"], {"role": "roles/iam.workloadIdentityUser"}, {"service_account_id": true, "member": true}),
+	]
+	count(rule_denials(mk_plan_vars(changes, {"environment": "qa"}), "env_root_scope")) == 2
+}
+
+# El IAM de un recurso se permite en la raíz del entorno (no da permisos sobre el proyecto).
+test_env_root_resource_iam_allowed if {
+	changes := [
+		mk_create("google_tags_tag_value_iam_member.workloads", "google_tags_tag_value_iam_member", {
+			"tag_value": "tagValues/000000000001",
+			"role": "roles/resourcemanager.tagUser",
+			"member": env_sa("bnt-tf-wl-dev"),
+		}),
+		mk_create("google_cloud_run_v2_service_iam_member.invoker", "google_cloud_run_v2_service_iam_member", {
+			"name": "bnt-dev-app-run-usc1",
+			"location": "us-central1",
+			"role": "roles/run.invoker",
+			"member": env_sa("bnt-dev-app-run"),
+		}),
+		mk_create("google_storage_bucket_iam_member.reader", "google_storage_bucket_iam_member", {
+			"bucket": "bnt-dev-data-app-usc1",
+			"role": "roles/storage.objectViewer",
+			"member": env_sa("bnt-dev-app-run"),
+		}),
+	]
+	count(rule_denials(mk_plan_vars(changes, env_dev), "env_root_scope")) == 0
 }
 
 # Nombres sin `<prefix>-<env>-` (§4.3) en los tipos revisados.
@@ -176,14 +271,14 @@ test_env_root_prod_rejects_dev_names if {
 	plan := mk_plan_vars(env_root_compliant, {"environment": "prod", "prefix": "bnt"})
 	denials := rule_denials(plan, "env_root_scope")
 
-	# Red, subred, router, firewall, 2 cuentas, 2 permisos de proyecto y el bucket.
-	count(denials) == 9
+	# Red, subred, router, firewall, 2 cuentas y el bucket.
+	count(denials) == 7
 	every msg in denials {
 		contains(msg, "bnt-prod-")
 	}
 }
 
-# Sin prefijo en el plan, los nombres y los principales no se revisan; los tipos sí.
+# Sin prefijo en el plan, los nombres no se revisan; los tipos sí.
 test_env_root_without_prefix_checks_only_types if {
 	changes := array.concat(
 		[mk_create("google_compute_network.bad", "google_compute_network", {"name": "otra-red"})],
@@ -209,11 +304,11 @@ test_env_root_other_roots_ignored if {
 	count(rule_denials(mk_plan_vars(changes, {"environment": "common", "prefix": "bnt"}), "env_root_scope")) == 0
 }
 
-# Nombre o principal calculados en el apply: no se pueden leer.
+# Nombre calculado en el apply: no se puede leer.
 test_env_root_unknown_values_not_denied if {
 	plan := mk_plan_vars(
 		[
-			mk_change("google_project_iam_member.runtime", "google_project_iam_member", ["create"], {"project": "example-landing-zone", "role": "roles/logging.logWriter"}, {"member": true}),
+			mk_change("google_secret_manager_secret_iam_member.runtime", "google_secret_manager_secret_iam_member", ["create"], {"role": "roles/secretmanager.secretAccessor"}, {"secret_id": true, "member": true}),
 			mk_change("google_compute_network.this", "google_compute_network", ["create"], {}, {"name": true}),
 		],
 		env_dev,

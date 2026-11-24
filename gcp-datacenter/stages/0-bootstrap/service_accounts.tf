@@ -80,6 +80,63 @@ locals {
     }
   }
 
+  # Recursos del entorno en los servicios que admiten resource.name en condiciones (hallazgo N1 de
+  # la segunda revisión de seguridad). Solo Cloud SQL (Instance y BackupRun), GKE (Cluster) y
+  # Backup and DR (BackupVaults) figuran en "Resource attributes for IAM Conditions"
+  # (https://cloud.google.com/iam/docs/conditions-resource-attributes, actualizada el
+  # 2026-11-17); Memorystore for Redis, Filestore, Backup for GKE y Cloud Monitoring no, así que
+  # sus roles van sin condición (riesgo residual del ADR 0029 §9).
+  #
+  # Forma de la documentación de IAM para un rol con permisos de varios tipos ("Attribute
+  # reference for IAM Conditions", atributo resource.type): la comprobación del nombre solo
+  # aplica a los tipos que la admiten (resource.type != ... || nombre). Así los permisos que se
+  # evalúan sobre el proyecto (crear un clúster, listar, operaciones) siguen permitidos y los que
+  # se evalúan sobre un recurso de esos tipos quedan limitados a los del entorno.
+  # Formatos del nombre (misma página): projects/<id>/instances/<instancia> (Cloud SQL, también
+  # el prefijo de sus backupRuns), projects/<id>/locations/<ubicación>/clusters/<clúster> (GKE
+  # regional) y projects/<id>/locations/<ubicación>/backupVaults/<bóveda>.
+  # Nombres del entorno: instancias <prefix>-<env>-data-… (módulo cloud-sql), clústeres
+  # <prefix>-<env>-<app>-gke[-dr] (ADR 0029 §4) y bóvedas <prefix>-<env>-bkp-vault-… (módulo
+  # backup-dr), en primary_region o dr_region.
+  #
+  # Crear: la referencia de permisos de la API de GKE evalúa container.clusters.create sobre el
+  # proyecto (https://cloud.google.com/kubernetes-engine/docs/reference/api-permissions), así
+  # que la condición no limita el nombre de un clúster nuevo. Cloud SQL da como caso de uso
+  # "crear instancias con un prefijo" (https://cloud.google.com/sql/docs/postgres/iam-conditions),
+  # pero no dice cómo se evalúa al crear. La misma página dice que las condiciones no limitan
+  # las operaciones de usuarios ni de bases de datos (cloudsql.users.*, cloudsql.databases.*).
+  # VERIFICAR-EN-APPLY: que tf-wl-<env> cree y cambie su instancia de Cloud SQL (con réplica en
+  # DR), sus bases y usuarios IAM, su clúster y sus pools de GKE, y su bóveda, plan y asociación
+  # de Backup and DR con estas condiciones, y que tf-wl-dev reciba un rechazo al exportar o
+  # parchear la instancia de prod, al cambiar el clúster de prod o al borrar la bóveda de prod.
+  env_regions = [var.primary_region, var.dr_region]
+
+  workloads_conditions = {
+    for e in local.environments : e => {
+      cloudsql = {
+        title       = "cloudsql-${e}"
+        description = "Instancias de Cloud SQL y sus respaldos: solo ${var.prefix}-${e}-data-."
+        expression  = "(resource.type != \"sqladmin.googleapis.com/Instance\" && resource.type != \"sqladmin.googleapis.com/BackupRun\") || resource.name.startsWith(\"projects/${var.project_id}/instances/${var.prefix}-${e}-data-\")"
+      }
+      gke = {
+        title       = "gke-${e}"
+        description = "Clústeres de GKE: solo ${var.prefix}-${e}- en primary_region o dr_region."
+        expression = join(" || ", concat(
+          ["resource.type != \"container.googleapis.com/Cluster\""],
+          [for r in local.env_regions : "resource.name.startsWith(\"projects/${var.project_id}/locations/${r}/clusters/${var.prefix}-${e}-\")"],
+        ))
+      }
+      backupdr = {
+        title       = "backupdr-${e}"
+        description = "Bóvedas de Backup and DR: solo ${var.prefix}-${e}- en primary_region o dr_region."
+        expression = join(" || ", concat(
+          ["resource.type != \"backupdr.googleapis.com/BackupVaults\""],
+          [for r in local.env_regions : "resource.name.startsWith(\"projects/${var.project_id}/locations/${r}/backupVaults/${var.prefix}-${e}-\")"],
+        ))
+      }
+    }
+  }
+
   # Concesión delegada (mismo patrón que la antigua 4-projects/iam.tf): projectIamAdmin que solo
   # puede agregar o quitar estos roles. Una llamada sin cambios de bindings (por ejemplo, la
   # configuración de auditoría) tiene modifiedGrantsByRole = [] y pasa. Solo la tiene 1-base: las
@@ -194,26 +251,50 @@ locals {
     { role = "roles/servicenetworking.networksAdmin", condition = null }, # conexión de PSA
   ])
 
-  # Cargas (las que tenía la cuenta de la etapa 5). Compute, GKE, Cloud Run, Cloud SQL,
-  # Memorystore, Filestore, Backup and DR y Monitoring van sin condición (riesgo aceptado del
-  # ADR 0029 §3 y §9). Sin roles de cuentas de servicio ni de IAM de proyecto: las cuentas de
-  # ejecución las crea 1-base, que le da a esta cuenta serviceAccountUser solo sobre las de su
-  # entorno (stages/1-base/runtime_accounts.tf).
+  # Cargas (las que tenía la cuenta de la etapa 5). Cloud SQL, GKE y Backup and DR van
+  # condicionados a los recursos del entorno (local.workloads_conditions) y Cloud Storage a sus
+  # buckets. Compute, Cloud Run, Memorystore, Filestore, Backup for GKE, Certificate Manager y
+  # Monitoring van sin condición: no admiten resource.name, o su rol abarca tipos que no lo
+  # admiten (riesgo aceptado del ADR 0029 §3 y §9). Sin roles de cuentas de servicio ni de IAM de
+  # proyecto: las cuentas de ejecución las crea 1-base, que le da a esta cuenta serviceAccountUser
+  # solo sobre las de su entorno (stages/1-base/runtime_accounts.tf).
+  #
+  # GKE con container.clusterAdmin y no container.admin (hallazgo N1): clusterAdmin administra
+  # clústeres y pools (container.clusters.create, get, list, update y delete, y
+  # container.operations.*; los pools se crean y borran con container.clusters.update según la
+  # referencia de permisos de la API de GKE) sin permisos sobre objetos de Kubernetes. container.admin
+  # trae container.pods.create, pods.exec, secrets.get y serviceAccounts.createToken en todos
+  # los clústeres del proyecto: con ellos una cuenta de dev leería los Secrets o tomaría la
+  # identidad de los pods de prod. 3-workloads no usa el proveedor kubernetes. Backup for GKE
+  # tiene su propio rol (gkebackup.admin).
+  #
+  # Monitoring con roles finos y no monitoring.editor (hallazgo N2): monitoring.editor trae
+  # serviceusage.services.enable y serviceusage.consumerpolicy.update. El módulo observability
+  # crea canales de correo (notificationChannelEditor), verificaciones de disponibilidad
+  # (uptimeCheckConfigEditor), alertas (alertPolicyEditor), el servicio y el SLO
+  # (servicesEditor) y el tablero (dashboardEditor). Ninguno de los cinco trae serviceusage.*;
+  # sus únicos *TagBinding son de alertas y tableros (referencia de roles de Monitoring,
+  # actualizada el 2026-11-17). VERIFICAR-EN-APPLY: que observability aplique con estos cinco
+  # roles (alertas que citan canales y el SLO, y el tablero).
   workloads_roles = {
     for e in local.environments : e => concat([
-      { role = "roles/backupdr.admin", condition = null },            # bóveda, planes y asociaciones
-      { role = "roles/certificatemanager.editor", condition = null }, # certificados y autorizaciones DNS
-      { role = "roles/cloudsql.admin", condition = null },            # instancias, réplicas, bases y usuarios IAM
-      { role = "roles/compute.instanceAdmin.v1", condition = null },  # plantillas, MIG y autoescaladores
-      { role = "roles/compute.loadBalancerAdmin", condition = null }, # balanceadores, NEG, IP y SSL
-      { role = "roles/compute.securityAdmin", condition = null },     # Cloud Armor
-      { role = "roles/compute.networkUser", condition = null },       # subredes del spoke
-      { role = "roles/container.admin", condition = null },           # clústeres y pools de GKE
-      { role = "roles/file.editor", condition = null },               # Filestore
-      { role = "roles/gkebackup.admin", condition = null },           # Backup for GKE
-      { role = "roles/monitoring.editor", condition = null },         # canales, alertas, uptime, tableros y SLO
-      { role = "roles/redis.admin", condition = null },               # Memorystore
-      { role = "roles/run.admin", condition = null },                 # Cloud Run y su IAM de invocador
+      { role = "roles/backupdr.admin", condition = local.workloads_conditions[e].backupdr },    # bóveda, planes y asociaciones
+      { role = "roles/certificatemanager.editor", condition = null },                           # certificados y autorizaciones DNS
+      { role = "roles/cloudsql.admin", condition = local.workloads_conditions[e].cloudsql },    # instancias, réplicas, bases y usuarios IAM
+      { role = "roles/compute.instanceAdmin.v1", condition = null },                            # plantillas, MIG y autoescaladores
+      { role = "roles/compute.loadBalancerAdmin", condition = null },                           # balanceadores, NEG, IP y SSL
+      { role = "roles/compute.securityAdmin", condition = null },                               # Cloud Armor
+      { role = "roles/compute.networkUser", condition = null },                                 # subredes del spoke
+      { role = "roles/container.clusterAdmin", condition = local.workloads_conditions[e].gke }, # clústeres y pools de GKE
+      { role = "roles/file.editor", condition = null },                                         # Filestore
+      { role = "roles/gkebackup.admin", condition = null },                                     # Backup for GKE
+      { role = "roles/monitoring.alertPolicyEditor", condition = null },                        # alertas
+      { role = "roles/monitoring.dashboardEditor", condition = null },                          # tablero
+      { role = "roles/monitoring.notificationChannelEditor", condition = null },                # canales de correo
+      { role = "roles/monitoring.servicesEditor", condition = null },                           # servicio y SLO
+      { role = "roles/monitoring.uptimeCheckConfigEditor", condition = null },                  # verificaciones de disponibilidad
+      { role = "roles/redis.admin", condition = null },                                         # Memorystore
+      { role = "roles/run.admin", condition = null },                                           # Cloud Run y su IAM de invocador
       { role = "roles/storage.admin", condition = local.storage_prefix[e] },
       # Sin tagUser de proyecto: lo trae con iam.serviceAccounts.deleteTagBinding, que la
       # denegación no puede negar (hallazgo 1). El spoke del entorno le da tagUser solo sobre sus

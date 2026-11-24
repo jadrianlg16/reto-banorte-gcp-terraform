@@ -20,7 +20,7 @@ Todos empiezan con `<prefix>-<env>-`.
 
 | Carga | Interruptor | Módulo | Nombre | Notas |
 |---|---|---|---|---|
-| GKE | `enable_gke` | `gke` | `bnt-<env>-app-gke` (`bnt-<env>-app-gke-dr` en DR) | nombre por convención (ADR 0029 §4: lo usa la regla por clúster de Binary Authorization de `1-base`); subred `app`, rangos secundarios `pods`/`services`, plano de control en `reserved_cidrs["gke_master"]` del spoke, llave `gke`, nodos con la cuenta `gke-nodes` y la etiqueta segura `lb_backend`; regional en prod; el enlace de Workload Identity de `<app>-<env>`/`gke_workload_ksa_name` hacia la cuenta `workload` lo crea `1-base` |
+| GKE | `enable_gke` | `gke` | `bnt-<env>-app-gke` (`bnt-<env>-app-gke-dr` en DR) | nombre por convención (ADR 0029 §4: lo usa la regla por clúster de Binary Authorization de `1-base`); subred `app`, rangos secundarios `pods`/`services`, plano de control en `reserved_cidrs["gke_master"]` del spoke, llave `gke`, nodos con la cuenta `gke-nodes` y la etiqueta segura `lb_backend`; regional en prod; el enlace de Workload Identity de todo el clúster (principalSet `kubernetes.cluster`) hacia la cuenta `workload` lo crea `1-base` |
 | MIG | `enable_mig` | `compute-mig` | `bnt-<env>-app-mig-usc1` | subred `app`, llave `compute`, cuenta `mig`, etiquetas seguras `lb_backend` e `iap_ssh` (`resource_manager_tags`), imagen endurecida por variable (`mig_image`, sin valor por defecto) |
 | Cloud Run | `enable_cloud_run` | `cloud-run` | `bnt-<env>-app-run-usc1` | salida directa a la VPC por la subred `run`, llave `run`, cuenta `run`, `public_via_load_balancer = true` (ADR 0020) |
 | Cloud SQL | siempre | `cloud-sql` | `bnt-<env>-data-<sql_instance_name>-usc1` | PostgreSQL, IP privada en el rango de PSA, llave `sql`, usuarios IAM = cuentas de ejecución con cómputo encendido (`workload` con GKE, `run` con Cloud Run, `mig` con el MIG; ADR 0015), sin roles de proyecto (`grant_iam_login_roles = false`: los da `1-base`); con `enable_backup`, horario y retención los define el plan de Backup and DR; con `enable_dr`, réplica `bnt-<env>-data-<sql_instance_name>-use4` con la llave `sql` de DR |
@@ -198,7 +198,8 @@ Prueba sin GCP: `terraform test` (proveedores simulados y estados de `1-base` y 
 simulados; `tests/workloads.tftest.hcl` cubre prod normal, la conmutación con y sin NEG de DR,
 los dos pasos de la vuelta con `dr_teardown`, el certificado interno de DR antes del incidente,
 dev, qa, la primera ejecución sin cómputo, las cuentas de `1-base`, GKE antes del enlace de
-Workload Identity, la forma anterior de `kms_key_ids`, el apagado fuera de horario y entradas
+Workload Identity y la conmutación sin el enlace del clúster de DR, la forma anterior de
+`kms_key_ids`, el apagado fuera de horario y entradas
 rechazadas, entre ellas una red o un repositorio de otro proyecto, un estado de `1-base` sin
 las cuentas de ejecución y el apagado en prod o sin la cuenta de `1-base`).
 
@@ -206,9 +207,12 @@ Pasos fuera de Terraform: registros DNS A de `domain_names` hacia `lb_ip_address
 certificado se activa entonces); registros de `internal_lb_dns_authorization_records_by_region`
 (las dos regiones con `enable_dr`) en la zona pública del dominio interno; registros A de
 `internal_lb_dns_records` en el DNS interno; `CREATE EXTENSION pgaudit;` en cada base; los
-valores de los secretos (los carga una persona); la cuenta de Kubernetes
-`<application>-<env>`/`gke_workload_ksa_name` (de `1-base`) con la anotación
-`iam.gke.io/gcp-service-account` = correo de `service_accounts["workload"]`. Las imágenes de Cloud Run y de GKE deben estar en el
+valores de los secretos (los carga una persona); la cuenta de Kubernetes de la aplicación con
+la anotación `iam.gke.io/gcp-service-account` = correo de `service_accounts["workload"]`.
+`1-base` enlaza la cuenta `workload` a todo el clúster (`gke_workload_identity_member`:
+principalSet `kubernetes.cluster` por clúster), no a una cuenta de Kubernetes: cualquier pod del
+clúster puede actuar como `workload`, así que el clúster solo corre cargas de esta aplicación y
+entorno. Las imágenes de Cloud Run y de GKE deben estar en el
 repositorio del entorno (`artifact_registry_repositories` de `1-base`): Binary Authorization
 niega las demás. Se referencian con una etiqueta de versión o un digest (`@sha256:...`), nunca
 `latest`: el repositorio tiene etiquetas inmutables.
@@ -222,13 +226,17 @@ esta raíz no se los da a sí misma. Lo que necesita para aplicar esta raíz:
   `run` y `sched` de su entorno, que `1-base` le da sobre cada cuenta
   (`google_service_account_iam_member.workloads_user`). No crea cuentas ni administra su IAM, y
   no tiene `projectIamAdmin`.
-- Cargas: `roles/backupdr.admin`, `roles/certificatemanager.editor`, `roles/cloudsql.admin`,
-  `roles/compute.instanceAdmin.v1`, `roles/compute.loadBalancerAdmin`,
+- Cargas: `roles/backupdr.admin` (condicionado a las bóvedas `<prefix>-<env>-`),
+  `roles/certificatemanager.editor`, `roles/cloudsql.admin` (condicionado a las instancias
+  `<prefix>-<env>-data-`), `roles/compute.instanceAdmin.v1`, `roles/compute.loadBalancerAdmin`,
   `roles/compute.securityAdmin` (Cloud Armor), `roles/compute.networkUser` (subredes del
-  spoke), `roles/container.admin`, `roles/file.editor`, `roles/gkebackup.admin`,
-  `roles/monitoring.editor`, `roles/redis.admin`, `roles/run.admin`,
-  `roles/cloudscheduler.admin` (dev y qa) y `roles/storage.admin` condicionado a
-  `projects/_/buckets/<prefix>-<env>-`.
+  spoke), `roles/container.clusterAdmin` (condicionado a los clústeres `<prefix>-<env>-` de
+  `primary_region` y `dr_region`; sin permisos sobre objetos de Kubernetes),
+  `roles/file.editor`, `roles/gkebackup.admin`, `roles/monitoring.alertPolicyEditor`,
+  `roles/monitoring.dashboardEditor`, `roles/monitoring.notificationChannelEditor`,
+  `roles/monitoring.servicesEditor`, `roles/monitoring.uptimeCheckConfigEditor`,
+  `roles/redis.admin`, `roles/run.admin`, `roles/cloudscheduler.admin` (dev y qa) y
+  `roles/storage.admin` condicionado a `projects/_/buckets/<prefix>-<env>-`.
 - Etiquetas seguras: `roles/resourcemanager.tagUser` solo sobre los valores `lb_backend` e
   `iap_ssh` del spoke de su entorno (§7.4), que le da `2-networks/envs/<env>` para crear
   plantillas y pools con esas etiquetas; ningún rol de etiquetas en el proyecto (el `tagUser` de
@@ -350,7 +358,7 @@ esta raíz no se los da a sí misma. Lo que necesita para aplicar esta raíz:
 | <a name="output_cloud_run_service_names"></a> [cloud\_run\_service\_names](#output\_cloud\_run\_service\_names) | Mapa región → nombre del servicio de Cloud Run (vacío con enable\_cloud\_run = false). |
 | <a name="output_filestore_ip_address"></a> [filestore\_ip\_address](#output\_filestore\_ip\_address) | IP privada del servidor NFS de Filestore (null con enable\_filestore = false). |
 | <a name="output_gke_cluster_names"></a> [gke\_cluster\_names](#output\_gke\_cluster\_names) | Mapa región → nombre del clúster de GKE (vacío con enable\_gke = false; con dr\_active incluye dr\_region). |
-| <a name="output_gke_workload_identity_member"></a> [gke\_workload\_identity\_member](#output\_gke\_workload\_identity\_member) | Miembro serviceAccount:<proyecto>.svc.id.goog[<application>-<environment>/<cuenta>] que actúa como la cuenta workload (ADR 0029 §9). Lo enlaza 1-base (gke\_workload\_identity\_bindings); null sin enable\_gke o mientras 1-base no lo enlace. |
+| <a name="output_gke_workload_identity_member"></a> [gke\_workload\_identity\_member](#output\_gke\_workload\_identity\_member) | Mapa clúster (primary y, en los dr\_environments de 1-base, dr) → principalSet de Workload Identity Federation for GKE de todos los pods del clúster <prefix>-<environment>-<application>-gke[-dr], que actúa como la cuenta workload (ADR 0029 §9). Lo enlaza 1-base (gke\_workload\_identity\_bindings); null sin enable\_gke o mientras 1-base no lo enlace. |
 | <a name="output_internal_lb_certificate_ids"></a> [internal\_lb\_certificate\_ids](#output\_internal\_lb\_certificate\_ids) | Mapa región → ID del certificado de Certificate Manager del balanceador interno (la de DR existe con enable\_dr, antes de dr\_active). Vacío sin enable\_internal\_lb. |
 | <a name="output_internal_lb_dns_authorization_records"></a> [internal\_lb\_dns\_authorization\_records](#output\_internal\_lb\_dns\_authorization\_records) | Dominio → registro DNS (name, type, data) que hay que crear para emitir el certificado del balanceador interno de la región activa. |
 | <a name="output_internal_lb_dns_authorization_records_by_region"></a> [internal\_lb\_dns\_authorization\_records\_by\_region](#output\_internal\_lb\_dns\_authorization\_records\_by\_region) | Mapa región → dominio → registro DNS de autorización del certificado interno de esa región. Con enable\_dr incluye dr\_region aunque dr\_active sea false: esos registros se crean antes de un incidente. |

@@ -342,15 +342,27 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "Toda cuenta que escribe se liga a attribute.deploy (main, flujo del repositorio y entorno), nunca a attribute.environment."
   }
+  # Hallazgo N3: exactamente _terraform-root.yml de main y solo los eventos de apply.yml y
+  # destroy.yml (push y workflow_dispatch).
   assert {
     condition = google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.deploy"] == join(" ", [
       "('environment' in assertion",
       "&& assertion.ref == 'refs/heads/main'",
       "&& 'job_workflow_ref' in assertion",
-      "&& assertion.job_workflow_ref.startsWith('example-org/example-repo/.github/workflows/'))",
+      "&& assertion.job_workflow_ref == 'example-org/example-repo/.github/workflows/_terraform-root.yml@refs/heads/main'",
+      "&& 'event_name' in assertion",
+      "&& (assertion.event_name == 'push' || assertion.event_name == 'workflow_dispatch'))",
       "? assertion.environment : 'none'",
     ])
-    error_message = "attribute.deploy exige main, un flujo de .github/workflows/ de este repositorio y un entorno; si no, 'none'."
+    error_message = "attribute.deploy exige main, _terraform-root.yml de main de este repositorio, push o workflow_dispatch y un entorno; si no, 'none'."
+  }
+  assert {
+    condition = alltrue([
+      !strcontains(google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.deploy"], "startsWith"),
+      !strcontains(google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.deploy"], "pull_request"),
+      !strcontains(google_iam_workload_identity_pool_provider.github.attribute_mapping["attribute.deploy"], "workflow_run"),
+    ])
+    error_message = "attribute.deploy no admite prefijos de job_workflow_ref ni eventos de PR o de otros flujos."
   }
   assert {
     condition = alltrue([
@@ -398,7 +410,7 @@ run "plan_con_valores_de_ejemplo" {
     condition = alltrue([
       google_iam_deny_policy.pipeline["this"].parent == "cloudresourcemanager.googleapis.com%2Fprojects%2Fexample-project-id",
       google_iam_deny_policy.pipeline["this"].name == "bnt-bootstrap-sec-deny-pipeline",
-      length(google_iam_deny_policy.pipeline["this"].rules) == 3,
+      length(google_iam_deny_policy.pipeline["this"].rules) == 4,
       length(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denied_principals) == 9,
       google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denial_condition[0].expression == "resource.matchTag('example-project-id/bnt-proteccion', 'etapa-0')",
       length(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denial_condition) == 0,
@@ -437,13 +449,88 @@ run "plan_con_valores_de_ejemplo" {
     error_message = "La regla sin condición niega a las nueve cuentas los tokens y firmas de cualquier cuenta de servicio, sin negar actAs."
   }
   assert {
-    # Lo que las cuentas sí hacen: objetos de su estado, cuota del proyecto e IAM delegado.
+    # Lo que las cuentas sí hacen: objetos de su estado, cuota del proyecto
+    # (serviceusage.services.use, también como permiso de un grupo serviceusage.*) e IAM delegado.
     condition = alltrue([for r in google_iam_deny_policy.pipeline["this"].rules : alltrue([for p in r.deny_rule[0].denied_permissions :
       (!startswith(p, "storage.googleapis.com/objects.") || p == "storage.googleapis.com/objects.setIamPolicy") &&
-      !startswith(p, "serviceusage.googleapis.com/") &&
+      !contains(["serviceusage.googleapis.com/services.use", "serviceusage.googleapis.com/services.*", "serviceusage.googleapis.com/*.*", "serviceusage.googleapis.com/*.use"], p) &&
       p != "cloudresourcemanager.googleapis.com/projects.setIamPolicy"
     ])])
-    error_message = "La denegación no puede quitar los objetos del estado, el proyecto de cuota ni el IAM delegado."
+    error_message = "La denegación no puede quitar los objetos del estado, el proyecto de cuota (services.use) ni el IAM delegado."
+  }
+  # Hallazgo N2: ninguna cuenta del pipeline habilita, deshabilita ni cambia la política de
+  # consumidor de servicios (solo 0-bootstrap, que aplica una persona, habilita APIs).
+  assert {
+    condition = alltrue([for p in ["consumerpolicy.update", "services.enable", "services.disable"] :
+      contains(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denied_permissions, "serviceusage.googleapis.com/${p}")
+    ])
+    error_message = "La regla sin condición niega a las nueve cuentas consumerpolicy.update, services.enable y services.disable."
+  }
+  # Hallazgo N4: nadie crea llaves de cuentas de servicio. Sin excepción: no hay variable que
+  # identifique a quien administra la etapa 0 (deny_policy.tf).
+  assert {
+    condition = alltrue([
+      google_iam_deny_policy.pipeline["this"].rules[3].deny_rule[0].denied_principals == tolist(["principalSet://goog/public:all"]),
+      google_iam_deny_policy.pipeline["this"].rules[3].deny_rule[0].denied_permissions == tolist(["iam.googleapis.com/serviceAccountKeys.create"]),
+      length(google_iam_deny_policy.pipeline["this"].rules[3].deny_rule[0].denial_condition) == 0,
+      try(length(google_iam_deny_policy.pipeline["this"].rules[3].deny_rule[0].exception_principals), 0) == 0,
+    ])
+    error_message = "La cuarta regla niega serviceAccountKeys.create a principalSet://goog/public:all, sin condición."
+  }
+}
+
+# Hallazgos N1 y N2 de la segunda revisión: roles de tf-wl-<env> sin permisos sobre objetos de
+# Kubernetes ni de Service Usage, y Cloud SQL, GKE y Backup and DR limitados al entorno.
+run "roles_de_cargas_por_entorno" {
+  command = plan
+
+  assert {
+    condition = alltrue([for k, b in module.stage_iam.bindings :
+      !contains(["roles/container.admin", "roles/container.developer", "roles/monitoring.editor", "roles/monitoring.admin"], b.role)
+    ])
+    error_message = "Ninguna cuenta del pipeline recibe container.admin, container.developer, monitoring.editor ni monitoring.admin."
+  }
+  assert {
+    condition = alltrue(flatten([for e in ["dev", "qa", "prod"] : [
+      for r in [
+        "roles/container.clusterAdmin", "roles/monitoring.alertPolicyEditor", "roles/monitoring.dashboardEditor",
+        "roles/monitoring.notificationChannelEditor", "roles/monitoring.servicesEditor", "roles/monitoring.uptimeCheckConfigEditor",
+      ] : contains(keys(module.stage_iam.bindings), "project|3-workloads/${e}|${r}")
+    ]]))
+    error_message = "tf-wl-<env> recibe container.clusterAdmin y los cinco roles finos de Monitoring."
+  }
+  assert {
+    condition = alltrue([
+      module.stage_iam.conditions["project|3-workloads/dev|roles/cloudsql.admin"].expression == "(resource.type != \"sqladmin.googleapis.com/Instance\" && resource.type != \"sqladmin.googleapis.com/BackupRun\") || resource.name.startsWith(\"projects/example-project-id/instances/bnt-dev-data-\")",
+      module.stage_iam.conditions["project|3-workloads/prod|roles/container.clusterAdmin"].expression == join(" || ", [
+        "resource.type != \"container.googleapis.com/Cluster\"",
+        "resource.name.startsWith(\"projects/example-project-id/locations/us-central1/clusters/bnt-prod-\")",
+        "resource.name.startsWith(\"projects/example-project-id/locations/us-east4/clusters/bnt-prod-\")",
+      ]),
+      module.stage_iam.conditions["project|3-workloads/qa|roles/backupdr.admin"].expression == join(" || ", [
+        "resource.type != \"backupdr.googleapis.com/BackupVaults\"",
+        "resource.name.startsWith(\"projects/example-project-id/locations/us-central1/backupVaults/bnt-qa-\")",
+        "resource.name.startsWith(\"projects/example-project-id/locations/us-east4/backupVaults/bnt-qa-\")",
+      ]),
+    ])
+    error_message = "cloudsql.admin, container.clusterAdmin y backupdr.admin de tf-wl-<env> se limitan a las instancias, clústeres y bóvedas de su entorno."
+  }
+  # Cada condición nombra solo su entorno: ninguna de dev menciona qa ni prod.
+  assert {
+    condition = alltrue(flatten([for e in ["dev", "qa", "prod"] : [
+      for r in ["roles/cloudsql.admin", "roles/container.clusterAdmin", "roles/backupdr.admin"] : [
+        for o in ["dev", "qa", "prod"] :
+        strcontains(module.stage_iam.conditions["project|3-workloads/${e}|${r}"].expression, "/bnt-${o}-") == (o == e)
+      ]
+    ]]))
+    error_message = "La condición de cada entorno solo admite los recursos <prefix>-<env>- de ese entorno."
+  }
+  # Sin resource.name en la documentación de condiciones: van sin condición (riesgo residual).
+  assert {
+    condition = alltrue([for r in ["roles/redis.admin", "roles/file.editor", "roles/gkebackup.admin", "roles/monitoring.alertPolicyEditor"] :
+      module.stage_iam.conditions["project|3-workloads/prod|${r}"] == null
+    ])
+    error_message = "Memorystore, Filestore, Backup for GKE y Monitoring no admiten condiciones por nombre: van sin condición."
   }
 }
 
@@ -516,9 +603,10 @@ run "sin_etiquetas" {
     condition = alltrue([
       length(google_tags_tag_key.protection) == 0,
       length(google_tags_tag_binding.pipeline_accounts) == 0,
-      length(google_iam_deny_policy.pipeline["this"].rules) == 2,
+      length(google_iam_deny_policy.pipeline["this"].rules) == 3,
       length(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denial_condition) == 0,
       length(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denial_condition) == 0,
+      google_iam_deny_policy.pipeline["this"].rules[2].deny_rule[0].denied_principals == tolist(["principalSet://goog/public:all"]),
     ])
     error_message = "Sin etiquetas, la denegación solo lleva las reglas sin condición."
   }

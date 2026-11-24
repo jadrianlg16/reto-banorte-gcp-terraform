@@ -128,20 +128,8 @@ variable "off_hours_environments" {
   }
 }
 
-variable "gke_workload_ksa_name" {
-  description = "Nombre de la cuenta de servicio de Kubernetes que actúa como la cuenta workload de cada aplicación (Workload Identity), en el namespace <app>-<env>."
-  type        = string
-  default     = "app"
-  nullable    = false
-
-  validation {
-    condition     = can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", var.gke_workload_ksa_name)) && var.gke_workload_ksa_name != "default"
-    error_message = "gke_workload_ksa_name debe ser un nombre DNS-1123 de hasta 63 caracteres y no la cuenta default del namespace."
-  }
-}
-
 variable "gke_workload_identity_bindings" {
-  description = "true: crea el enlace de Workload Identity (roles/iam.workloadIdentityUser) de <app>-<env>/<gke_workload_ksa_name> en la cuenta workload de cada entorno y aplicación. Exige que ya exista el pool <proyecto>.svc.id.goog, que GKE crea con el primer clúster con Workload Identity del proyecto: false (por defecto) hasta el primer apply de 3-workloads con enable_gke, y después true."
+  description = "true: crea el enlace de Workload Identity (roles/iam.workloadIdentityUser) en la cuenta workload de cada entorno y aplicación para todos los pods del clúster <prefix>-<env>-<app>-gke (y del de DR, <prefix>-<env>-<app>-gke-dr, en dr_environments): principalSet kubernetes.cluster/… de Workload Identity Federation for GKE. Exige que ya exista el pool <proyecto>.svc.id.goog, que GKE crea con el primer clúster con Workload Identity del proyecto: false (por defecto) hasta el primer apply de 3-workloads con enable_gke, y después true."
   type        = bool
   default     = false
   nullable    = false

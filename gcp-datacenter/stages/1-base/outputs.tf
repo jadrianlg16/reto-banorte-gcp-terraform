@@ -40,10 +40,13 @@ output "runtime_service_accounts" {
 }
 
 output "gke_workload_identity_members" {
-  description = "Mapa entorno → aplicación → miembro serviceAccount:<proyecto>.svc.id.goog[<app>-<env>/<cuenta>] que actúa como la cuenta workload, o null mientras gke_workload_identity_bindings sea false (el enlace no existe)."
+  description = "Mapa entorno → aplicación → clúster (primary y, en dr_environments, dr) → principalSet de Workload Identity Federation for GKE de todos los pods de ese clúster (…/kubernetes.cluster/https://container.googleapis.com/v1/projects/<proyecto>/locations/<ubicación>/clusters/<prefix>-<env>-<app>-gke[-dr]) que actúa como la cuenta workload, o null mientras gke_workload_identity_bindings sea false (el enlace no existe)."
   value = {
     for e in var.environments : e => {
-      for a in var.applications : a => try(google_service_account_iam_member.workload_identity["${e}/${a}"].member, null)
+      for a in var.applications : a => var.gke_workload_identity_bindings ? {
+        for k, c in local.workload_identity_clusters : c.key => google_service_account_iam_member.workload_identity[k].member
+        if c.environment == e && c.application == a
+      } : null
     }
   }
 }

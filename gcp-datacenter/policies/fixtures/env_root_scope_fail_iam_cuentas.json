@@ -1,0 +1,134 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "variables": {
+    "environment": {
+      "value": "dev"
+    },
+    "prefix": {
+      "value": "bnt"
+    },
+    "project_id": {
+      "value": "example-project"
+    },
+    "primary_region": {
+      "value": "us-central1"
+    }
+  },
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_project_iam_member.runtime[\"workload/roles/logging.logWriter\"]",
+          "mode": "managed",
+          "type": "google_project_iam_member",
+          "name": "runtime",
+          "index": "workload/roles/logging.logWriter",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "role": "roles/logging.logWriter",
+            "member": "serviceAccount:bnt-dev-app-workload@example-project.iam.gserviceaccount.com",
+            "condition": []
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "google_service_account_iam_member.workload_identity[\"primary\"]",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "workload_identity",
+          "index": "primary",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "service_account_id": "projects/example-project/serviceAccounts/bnt-dev-app-workload@example-project.iam.gserviceaccount.com",
+            "role": "roles/iam.workloadIdentityUser",
+            "member": "principalSet://iam.googleapis.com/projects/000000000000/locations/global/workloadIdentityPools/example-project.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-project/locations/us-central1/clusters/bnt-dev-app-gke",
+            "condition": []
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "google_project_iam_member.runtime[\"workload/roles/logging.logWriter\"]",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "runtime",
+      "index": "workload/roles/logging.logWriter",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "role": "roles/logging.logWriter",
+          "member": "serviceAccount:bnt-dev-app-workload@example-project.iam.gserviceaccount.com",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.workload_identity[\"primary\"]",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "workload_identity",
+      "index": "primary",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "service_account_id": "projects/example-project/serviceAccounts/bnt-dev-app-workload@example-project.iam.gserviceaccount.com",
+          "role": "roles/iam.workloadIdentityUser",
+          "member": "principalSet://iam.googleapis.com/projects/000000000000/locations/global/workloadIdentityPools/example-project.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-project/locations/us-central1/clusters/bnt-dev-app-gke",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0",
+        "expressions": {
+          "project": {
+            "constant_value": "example-project"
+          },
+          "region": {
+            "references": [
+              "var.primary_region"
+            ]
+          }
+        }
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-24T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

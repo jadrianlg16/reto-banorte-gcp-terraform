@@ -29,8 +29,9 @@
 #
 # Llaves de GCP_STAGE_SERVICE_ACCOUNTS (salida stage_service_accounts de 0-bootstrap): 1-base,
 # 2-networks, 2-networks/<env> y 3-workloads/<env>. Cada cuenta que escribe solo acepta tokens
-# de main, de un flujo de .github/workflows/ de este repositorio y de su entorno de GitHub
-# (`common` para tf-base y tf-net): attribute.deploy de stages/0-bootstrap/wif.tf (ADR 0029 §3).
+# de main, del trabajo de _terraform-root.yml en main (job_workflow_ref exacto), de un evento
+# push o workflow_dispatch y de su entorno de GitHub (`common` para tf-base y tf-net):
+# attribute.deploy de stages/0-bootstrap/wif.tf (ADR 0029 §3).
 #
 # Los spokes (2-networks/envs/<env>) quedan en serie por el encadenado entre entornos, también
 # con entornos apagados (cada spoke sigue dependiendo del trabajo del entorno anterior, aunque se

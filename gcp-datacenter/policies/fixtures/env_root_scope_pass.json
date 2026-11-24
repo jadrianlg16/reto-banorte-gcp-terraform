@@ -38,22 +38,6 @@
           "sensitive_values": {}
         },
         {
-          "address": "google_project_iam_member.runtime[\"run/roles/logging.logWriter\"]",
-          "mode": "managed",
-          "type": "google_project_iam_member",
-          "name": "runtime",
-          "index": "run/roles/logging.logWriter",
-          "provider_name": "registry.terraform.io/hashicorp/google",
-          "schema_version": 0,
-          "values": {
-            "project": "example-project",
-            "role": "roles/logging.logWriter",
-            "member": "serviceAccount:bnt-dev-app-run@example-project.iam.gserviceaccount.com",
-            "condition": []
-          },
-          "sensitive_values": {}
-        },
-        {
           "address": "google_secret_manager_secret_iam_member.runtime[\"app-api-token/run\"]",
           "mode": "managed",
           "type": "google_secret_manager_secret_iam_member",
@@ -260,32 +244,6 @@
           "id": true,
           "name": true,
           "unique_id": true
-        },
-        "before_sensitive": false,
-        "after_sensitive": {}
-      }
-    },
-    {
-      "address": "google_project_iam_member.runtime[\"run/roles/logging.logWriter\"]",
-      "mode": "managed",
-      "type": "google_project_iam_member",
-      "name": "runtime",
-      "index": "run/roles/logging.logWriter",
-      "provider_name": "registry.terraform.io/hashicorp/google",
-      "change": {
-        "actions": [
-          "create"
-        ],
-        "before": null,
-        "after": {
-          "project": "example-project",
-          "role": "roles/logging.logWriter",
-          "member": "serviceAccount:bnt-dev-app-run@example-project.iam.gserviceaccount.com",
-          "condition": []
-        },
-        "after_unknown": {
-          "id": true,
-          "etag": true
         },
         "before_sensitive": false,
         "after_sensitive": {}
