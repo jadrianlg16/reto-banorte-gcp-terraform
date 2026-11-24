@@ -7,11 +7,12 @@ terraform {
 
 provider "google" {}
 
-# Spoke de prod con DR: subredes en las dos regiones, PSA, peering con el hub y NAT.
+# Spoke de prod con DR: subredes en las dos regiones, PSA, peering con el hub y NAT. El hub
+# vive en el mismo proyecto (ADR 0029).
 module "network_spoke" {
   source = "../.."
 
-  project_id  = "example-prod-net-spoke"
+  project_id  = "example-landing-zone"
   prefix      = "bnt"
   environment = "prod"
   enable_dr   = true
@@ -21,7 +22,7 @@ module "network_spoke" {
     dr      = "us-east4"
   }
 
-  hub_network_self_link = "projects/example-net-hub/global/networks/bnt-common-net-hub"
+  hub_network_self_link = "projects/example-landing-zone/global/networks/bnt-common-net-hub"
 
   subnet_cidrs = {
     app           = "10.30.0.0/20"

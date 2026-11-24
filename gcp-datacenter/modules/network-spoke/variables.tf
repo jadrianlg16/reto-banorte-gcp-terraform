@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "ID del proyecto net-spoke del entorno (host de Shared VPC) donde se crea la VPC."
+  description = "ID del proyecto donde se crea la VPC spoke y sus recursos (con el ADR 0029, el proyecto único de la landing zone, el mismo del hub)."
   type        = string
 
   validation {
@@ -103,7 +103,7 @@ variable "subnet_cidrs" {
 }
 
 variable "hub_network_self_link" {
-  description = "self_link (o ID projects/<proyecto>/global/networks/<nombre>) de la VPC hub. Se usa para el peering en ambos sentidos: el lado del hub se crea en el proyecto del hub."
+  description = "self_link (o ID projects/<proyecto>/global/networks/<nombre>) de la VPC hub. Se usa para el peering en ambos sentidos: el lado del hub se crea sobre esa red, en su proyecto."
   type        = string
 
   validation {

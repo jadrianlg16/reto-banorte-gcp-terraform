@@ -1,0 +1,50 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+# Valor real: la salida project_id de 0-bootstrap (el proyecto único, ADR 0029).
+project_id = "example-landing-zone"
+prefix     = "bnt"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# Plan de direccionamiento (contrato §5).
+hub_supernet = "10.0.0.0/16"
+hub_cidrs = {
+  hub    = "10.0.0.0/24"
+  hub_dr = "10.0.1.0/24"
+}
+spoke_supernets = {
+  dev  = "10.10.0.0/16"
+  qa   = "10.20.0.0/16"
+  prod = "10.30.0.0/16"
+}
+onprem_cidrs   = ["192.168.0.0/16"]
+vpn_bgp_ranges = ["169.254.0.0/30", "169.254.0.4/30"]
+hub_asn        = 64514
+onprem_asn     = 65001
+
+# Segunda HA VPN en dr_region (menos preferida que la primaria).
+enable_vpn_dr         = true
+vpn_dr_bgp_ranges     = ["169.254.0.8/30", "169.254.0.12/30"]
+vpn_dr_route_priority = 200
+
+# On-premises simulado (ADR 0006). Con on-premises real:
+#   simulate_onprem           = false
+#   onprem_vpn_gateway_ips    = ["203.0.113.10", "203.0.113.11"]
+#   onprem_vpn_secret_id      = "projects/<proyecto>/secrets/<nombre>"
+#   onprem_vpn_secret_version = "1"
+#   # Rotación de un túnel a la vez (opcional): primary-if0, primary-if1, dr-if0, dr-if1.
+#   onprem_vpn_secret_version_overrides = { "primary-if0" = "2" }
+simulate_onprem = true
+onprem_sim_cidr = "192.168.0.0/24"
+
+onprem_dns_domain  = "corp.example.com."
+onprem_dns_servers = ["192.168.0.10"]
+
+enable_interconnect = false
+
+labels = {
+  app         = "network"
+  owner       = "example-team"
+  cost_center = "example-cc"
+}
