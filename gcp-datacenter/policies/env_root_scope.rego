@@ -12,10 +12,14 @@
 # 2. Tipos por entorno que el ADR pasa a `1-base` (§4, "Llaves y secretos" e "Imágenes"):
 #    llaveros y llaves de KMS, contenedores de secretos y repositorios de Artifact Registry. La
 #    raíz del entorno solo da permisos sobre ellos.
-# 3. Permisos de proyecto (`google_project_iam_member` y `_member_remove`) para un principal que
-#    la raíz no creó (§4.2: cuentas del pipeline, grupos, agentes de servicio, la cuenta de Compute
-#    por defecto): todo principal que no sea `serviceAccount:<prefix>-<env>-...`. Las cuentas de
-#    ejecución y del apagado (`<prefix>-<env>-<app>-<uso>`, ADR 0017) cumplen.
+# 3. IAM de proyecto y de cuentas de servicio (§4.2, hallazgo N5 de la revisión R1): todo
+#    `google_project_iam_member` y `google_project_iam_member_remove`, sea cual sea el principal
+#    (también las cuentas `<prefix>-<env>-...`), y todo `google_service_account_iam_*` (`_member`,
+#    `_binding`, `_policy`). Los roles de proyecto de las cuentas de ejecución, Cloud SQL por IAM y
+#    el enlace de Workload Identity los da `1-base`; los de las cuentas del pipeline, `0-bootstrap`.
+#    `google_project_iam_binding` y `_policy` ya los rechaza la regla 1 (una vez por proyecto). El
+#    IAM de un recurso (secretos, repositorios, valores de etiqueta, servicios de Cloud Run,
+#    buckets...) sí se permite: no da permisos sobre otros recursos del proyecto.
 # 4. Nombres sin `<prefix>-<env>-` (§4.3), solo en los tipos que el ADR identifica por el nombre:
 #    los que no llevan etiquetas y se reconocen por él al buscar huérfanos (§8: VPC, subredes,
 #    routers, políticas de firewall de red y cuentas de servicio), y los buckets, porque el
@@ -23,10 +27,11 @@
 #    no se revisan: GCP les da el nombre (alertas, claves de etiqueta), son hijos que llevan el
 #    nombre del padre (bases de datos de Cloud SQL, registros DNS) o se reconocen por la etiqueta
 #    `env`.
-# 3 y 4 toman el prefijo de la variable `prefix` del plan; sin ella no se revisan.
+# 1, 2 y 3 se revisan por tipo; 4 toma el prefijo de la variable `prefix` del plan y sin ella no se
+# revisa.
 #
-# Valores desconocidos: un nombre o un principal que se calcula en el apply no se puede leer y no
-# se rechaza.
+# Valores desconocidos: un nombre que se calcula en el apply no se puede leer y no se rechaza (1, 2
+# y 3 no leen valores).
 package main
 
 env_root_environments := {"dev", "qa", "prod"}
@@ -84,6 +89,12 @@ env_root_base_types := {
 
 env_root_project_member_types := {"google_project_iam_member", "google_project_iam_member_remove"}
 
+# IAM de proyecto o de cuentas de servicio (regla 3). binding y policy de proyecto van en
+# env_root_singleton_types (regla 1), que se compara con scripts/destroy-plan-check.py.
+env_root_iam_grant(type) if type in env_root_project_member_types
+
+env_root_iam_grant(type) if startswith(type, "google_service_account_iam_")
+
 # Atributo con el nombre, por tipo (§4.3).
 env_root_name_attrs := {
 	"google_compute_network": "name",
@@ -93,12 +104,6 @@ env_root_name_attrs := {
 	"google_compute_region_network_firewall_policy": "name",
 	"google_service_account": "account_id",
 	"google_storage_bucket": "name",
-}
-
-# Principal creado por la raíz: una cuenta de servicio cuyo ID empieza con `<prefix>-<env>-`.
-env_root_own_principal(member, marker) if {
-	startswith(member, "serviceAccount:")
-	startswith(substring(member, count("serviceAccount:"), -1), marker)
 }
 
 deny contains msg if {
@@ -122,15 +127,12 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	marker := env_root_marker
+	env := env_root_env
 	some rc in planned_resources
-	rc.type in env_root_project_member_types
-	member := object.get(rc.change.after, "member", null)
-	is_string(member)
-	not env_root_own_principal(member, marker)
+	env_root_iam_grant(rc.type)
 	msg := message("env_root_scope", rc, sprintf(
-		"permiso de proyecto para %s: una raíz de entorno solo da roles de proyecto a las cuentas que crea (serviceAccount:%s...) (ADR 0029 §4)",
-		[member, marker],
+		"%s: la raíz del entorno %s no da roles de proyecto ni administra el IAM de cuentas de servicio; lo hacen 0-bootstrap y 1-base (ADR 0029 §4)",
+		[rc.type, env],
 	))
 }
 
