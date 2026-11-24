@@ -727,6 +727,22 @@ sys.exit(0 if a == b and any(c > 127 for c in a) else 1)
 check "cut-plan: recortar un recorte con texto no ASCII da los mismos bytes UTF-8" 0 $?
 "$PY" scripts/cut-plan.py "$f" 'no\.coincide' >/dev/null 2>&1
 check "cut-plan: una expresión sin coincidencias falla" 1 $?
+# Variables: conserva solo environment y prefix (policies/env_root_scope.rego reconoce con ellas
+# la raíz de entorno); nada más del plan, ni project_id ni state_bucket.
+"$PY" scripts/cut-plan.py scripts/testdata/destroy/plan-real-spoke-dev.json \
+  'module\.spoke\.google_compute_network\.this' >"$tmp/cut-env.json"
+"$PY" -c '
+import json, sys
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+ok = p.get("variables") == {"environment": {"value": "dev"}, "prefix": {"value": "bnt"}} and len(p["resource_changes"]) == 1
+sys.exit(0 if ok else 1)
+' "$tmp/cut-env.json"
+check "cut-plan: conserva variables.environment y variables.prefix, y ninguna otra variable" 0 $?
+"$PY" -c '
+import json, sys
+sys.exit(1 if "variables" in json.load(open(sys.argv[1], encoding="utf-8")) else 0)
+' "$tmp/cut.json"
+check "cut-plan: un plan sin esas variables no gana la sección variables" 0 $?
 
 # --- check-main-tip.sh ---------------------------------------------------------------------
 # Repositorio de "desarrollo" que publica en un remoto local; la ejecución corre en un clon (como
@@ -1287,6 +1303,41 @@ sys.exit(1 if bad else 0)
 rc=$?
 check "destroy.yml: solo manual, dev/qa, incluir_red falso por defecto, concurrencia de apply.yml, 3-workloads → [spoke] → huérfanos del proyecto, guardias y SHA $(cat "$tmp/destroy-wf.txt")" 0 "$rc"
 
+# Tipos que existen una vez por proyecto: PROJECT_SINGLETONS de destroy-plan-check.py y los de
+# policies/env_root_scope.rego (conjunto env_root_singleton_types más las familias de
+# env_root_singleton) tienen que coincidir. El rego agrega google_project, que
+# destroy-plan-check.py trata aparte. Se lee el rego como texto, sin evaluarlo.
+"$PY" - scripts/destroy-plan-check.py policies/env_root_scope.rego >"$tmp/singletons.txt" 2>&1 <<'PYEOF'
+import ast, re, sys
+py = open(sys.argv[1], encoding="utf-8").read()
+rego = open(sys.argv[2], encoding="utf-8").read()
+m = re.search(r"^PROJECT_SINGLETONS = (\{.*?\})\n", py, re.S | re.M)
+singletons = ast.literal_eval(m.group(1)) if m else set()
+m = re.search(r"^env_root_singleton_types := \{(.*?)\}", rego, re.S | re.M)
+rego_set = set(re.findall(r'"([a-z0-9_]+)"', m.group(1))) if m else set()
+prefixes = re.findall(r'^env_root_singleton\(type\) if startswith\(type, "([a-z0-9_]+)"\)', rego, re.M)
+patterns = [re.compile(p) for p in re.findall(r"^env_root_singleton\(type\) if regex\.match\(`([^`]+)`, type\)", rego, re.M)]
+def in_rego(t):
+    return t in rego_set or any(t.startswith(p) for p in prefixes) or any(p.search(t) for p in patterns)
+bad = []
+if not singletons or not rego_set or not prefixes or not patterns:
+    bad.append("no se pudo leer la lista (PROJECT_SINGLETONS %d, rego %d, familias %d+%d)"
+               % (len(singletons), len(rego_set), len(prefixes), len(patterns)))
+only_py = sorted(t for t in singletons if not in_rego(t))
+only_rego = sorted(t for t in rego_set - {"google_project"} if t not in singletons)
+if only_py:
+    bad.append("solo en PROJECT_SINGLETONS: %s" % only_py)
+if only_rego:
+    bad.append("solo en env_root_scope.rego: %s" % only_rego)
+for fam in prefixes + [p.pattern for p in patterns]:
+    if not any(t.startswith(fam) if fam in prefixes else re.search(fam, t) for t in singletons):
+        bad.append("la familia %s del rego no cubre ningún tipo de PROJECT_SINGLETONS" % fam)
+print("; ".join(bad) if bad else "%d tipos, %d por familia" % (len(singletons), sum(1 for t in singletons if t not in rego_set)))
+sys.exit(1 if bad else 0)
+PYEOF
+rc=$?
+check "destroy-plan-check: PROJECT_SINGLETONS coincide con los tipos únicos de env_root_scope.rego ($(cat "$tmp/singletons.txt"))" 0 "$rc"
+
 # Conftest sobre los planes de destrucción (las políticas no deben rechazar un plan sin `after`).
 conftest_cmd="${CONFTEST_CMD:-$(command -v conftest 2>/dev/null || true)}"
 [ -z "$conftest_cmd" ] && [ -x "$HOME/go/bin/conftest" ] && conftest_cmd="$HOME/go/bin/conftest"
@@ -1295,6 +1346,39 @@ if [ -n "$conftest_cmd" ]; then
   "$conftest_cmd" test "$d/plan-real-spoke-dev.json" "$d/plan-real-workloads-dev.json" \
     "$d/plan-real-protegido.json" --policy policies --no-color >/dev/null 2>&1
   check "conftest: las políticas aceptan los planes de destrucción reales" 0 $?
+  # Un recorte de cut-plan.py de una raíz de entorno lleva environment y prefix, así que
+  # env_root_scope lo revisa: la VPC real del spoke (pasada a creación) pasa, y un tipo único del
+  # proyecto agregado al mismo recorte se rechaza solo por env_root_scope. Sin las variables, la
+  # regla no lo ve.
+  "$PY" - "$tmp/cut-env.json" "$tmp" <<'PYEOF'
+import copy, json, os, sys
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+rc = p["resource_changes"][0]
+rc["change"] = dict(rc["change"], actions=["create"], after=rc["change"]["before"], before=None,
+                    after_unknown={}, before_sensitive=False)
+def write(name, plan):
+    with open(os.path.join(sys.argv[2], name), "w", encoding="utf-8") as out:
+        json.dump(plan, out)
+write("env-pasa.json", p)
+bad = copy.deepcopy(p)
+bad["resource_changes"].append({"address": "google_project_service.extra", "mode": "managed",
+                                "type": "google_project_service", "name": "extra",
+                                "change": {"actions": ["create"], "before": None,
+                                           "after": {"service": "aiplatform.googleapis.com"}, "after_unknown": {}}})
+write("env-falla.json", bad)
+no_vars = copy.deepcopy(bad)
+no_vars.pop("variables")
+write("env-sin-variables.json", no_vars)
+PYEOF
+  "$conftest_cmd" test "$tmp/env-pasa.json" --policy policies --no-color >"$tmp/ct1.txt" 2>&1
+  rc1=$?
+  "$conftest_cmd" test "$tmp/env-falla.json" --policy policies --no-color >"$tmp/ct2.txt" 2>&1
+  rc2=$?
+  "$conftest_cmd" test "$tmp/env-sin-variables.json" --policy policies --no-color >"$tmp/ct3.txt" 2>&1
+  rc3=$?
+  [ "$rc1" = 0 ] && [ "$rc2" != 0 ] && grep -q '\[env_root_scope\].*google_project_service' "$tmp/ct2.txt" &&
+    [ "$(grep -c '^FAIL' "$tmp/ct2.txt")" = 1 ] && ! grep -q 'env_root_scope' "$tmp/ct3.txt"
+  check "conftest: un recorte con environment y prefix activa env_root_scope (pasa la VPC real, se rechaza un tipo único; sin variables no se revisa)" 0 $?
 else
   echo "INFO  conftest no está en el PATH: no se prueba Conftest sobre los planes de destrucción"
 fi

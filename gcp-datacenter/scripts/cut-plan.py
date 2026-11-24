@@ -8,13 +8,18 @@ Conserva:
 - `format_version` y `terraform_version`;
 - los `resource_changes` cuya dirección completa (`address`) coincide entera con alguna REGEX;
 - de `configuration`, solo los módulos y recursos de esos cambios (las políticas leen la
-  configuración para saber si un atributo se declaró; ver policies/compute_public_ip.rego).
+  configuración para saber si un atributo se declaró; ver policies/compute_public_ip.rego);
+- de `variables`, solo `environment` y `prefix`, si el plan las trae: con ellas
+  policies/env_root_scope.rego reconoce el plan de una raíz de entorno (sin `environment` no lo
+  revisa), así que también se pueden sacar planes `_real_` de esa regla. Ninguna de las dos es
+  sensible; las demás variables no se copian.
 
 Reemplaza por "REDACTADO" los valores que el plan marca como sensibles (`after_sensitive`,
 `before_sensitive`): `terraform show -json` los trae en claro.
 
-Descarta `planned_values`, `prior_state`, `variables`, `output_changes`, `relevant_attributes`,
-`checks` y `timestamp`: las políticas no los leen y solo agrandan el archivo.
+Descarta `planned_values`, `prior_state`, el resto de `variables`, `output_changes`,
+`relevant_attributes`, `checks` y `timestamp`: las políticas no los leen y solo agrandan el
+archivo.
 
 Sale con código 1 si alguna REGEX no coincide con ningún recurso (evita planes de ejemplo vacíos
 por un error de escritura). Solo biblioteca estándar; Python 3.8 o posterior.
@@ -23,6 +28,9 @@ por un error de escritura). Solo biblioteca estándar; Python 3.8 o posterior.
 import json
 import re
 import sys
+
+# Variables del plan que se conservan (policies/env_root_scope.rego).
+KEPT_VARIABLES = ("environment", "prefix")
 
 
 def module_names(module_address):
@@ -119,6 +127,11 @@ def main(argv):
     root = plan.get("configuration", {}).get("root_module")
     if root is not None:
         out["configuration"] = {"root_module": prune_module(root, tree)}
+    variables = plan.get("variables")
+    if isinstance(variables, dict):
+        kept_vars = {k: variables[k] for k in KEPT_VARIABLES if isinstance(variables.get(k), dict)}
+        if kept_vars:
+            out["variables"] = kept_vars
     # UTF-8 explícito: con la codificación de la consola (cp1252 en Windows) los acentos de los
     # planes salían como bytes que no son UTF-8 válido.
     text = json.dumps(out, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
