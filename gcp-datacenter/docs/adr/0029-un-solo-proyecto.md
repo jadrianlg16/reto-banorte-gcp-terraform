@@ -205,7 +205,9 @@ Una raíz de entorno (`2-networks/envs/<env>`, `3-workloads/envs/<env>`) **no pu
    que limita GCP, ADR 0017).
 
 La regla de Conftest `env_root_scope` la revisa en el plan de cada PR cuando la variable
-`environment` vale `dev`, `qa` o `prod` (`policies/env_root_scope.rego`; punto 146).
+`environment` vale `dev`, `qa` o `prod` (`policies/env_root_scope.rego`; punto 146). Diferencia
+conocida: la regla todavía admite permisos de proyecto para cuentas `<prefix>-<env>-…` (el punto
+2 de arriba no la deja); sin `projectIamAdmin`, `tf-wl-<env>` no podría aplicarlos.
 
 Por eso pasan a `1-base`:
 

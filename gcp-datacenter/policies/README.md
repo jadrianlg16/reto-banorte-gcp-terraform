@@ -84,8 +84,11 @@ declaran esa variable. Rechaza:
    `google_kms_crypto_key`, `google_secret_manager_secret` y
    `google_artifact_registry_repository`. La raíz del entorno solo da permisos sobre ellos.
 3. `google_project_iam_member` (y `_member_remove`) para un principal que no sea
-   `serviceAccount:<prefix>-<env>-...` (§4.2: cuentas del pipeline, grupos, agentes de servicio, la
-   cuenta de Compute por defecto, cuentas de otro entorno).
+   `serviceAccount:<prefix>-<env>-...` (cuentas del pipeline, grupos, agentes de servicio, la
+   cuenta de Compute por defecto, cuentas de otro entorno). El ADR 0029 enmendado (§4, punto 2)
+   ya no admite ningún permiso de proyecto en una raíz de entorno, porque las cuentas de ejecución
+   las crea `1-base`; la regla todavía deja pasar las `<prefix>-<env>-...`. En la práctica no
+   cambia nada: `tf-wl-<env>` no tiene `projectIamAdmin` y el apply fallaría.
 4. Nombres sin `<prefix>-<env>-` (§4.3), solo en `google_compute_network`,
    `google_compute_subnetwork`, `google_compute_router`, las políticas de firewall de red (global
    y regional), `google_service_account` (`account_id`) y `google_storage_bucket`. Son los que el
