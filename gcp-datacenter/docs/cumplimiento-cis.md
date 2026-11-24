@@ -249,10 +249,9 @@ dice si el marco CIS v3.0 de Compliance Manager tiene un control para esa recome
 
 Las nueve filas con estado Desviación y la parte que no cubren dos filas Código (parcial). El
 porqué, el riesgo y la corrección completa están en el
-[ADR 0027](adr/0027-desviaciones-aceptadas-del-cis.md) (y, para 1.1.3, en el ADR 0029); el
-cliente tiene que aceptarlas o pedir que se construya la corrección. El ADR 0027 se escribió para
-el diseño de varios proyectos: las filas 1.1.3, 1.6, 2.1 y 2.3 cambian con el rediseño y hay que
-revisarlas ahí.
+[ADR 0027](adr/0027-desviaciones-aceptadas-del-cis.md), enmendado el 2026-11-24 con el código
+final (filas 1.1.3, 1.6, 2.1, 2.3 y 3.8), y en el ADR 0029 §9; el cliente tiene que aceptarlas o
+pedir que se construya la corrección.
 
 | 5.0 | Qué no se cumple | SCC | Severidad (Prowler) | Para cumplir | Esfuerzo |
 |---|---|---|---|---|---|

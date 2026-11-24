@@ -7,7 +7,10 @@ región primaria (estado, VPN de DR, balanceador interno por región) está en e
 [0022](0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md).
 Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md)) los
 llaveros por ubicación los crea `1-base` (antes la etapa 2) y `gcp.resourceLocations` solo existe
-si hay organización.
+si hay organización. Enmendado otra vez el 2026-11-24: `1-base` crea solo las llaves que alguien
+usa; las de `dr_region` y la `storage` de la multirregión `us` existen solo para los entornos de
+`dr_environments` (por defecto prod), y sin organización la regla de Conftest
+`resource_locations` revisa las ubicaciones en el plan (punto 147).
 
 Tipo: Conforme.
 
@@ -25,9 +28,11 @@ and DR (`backup-dr`) y las subredes `*_dr` del plan de direccionamiento (§5).
 `primary_region = "us-central1"` y `dr_region = "us-east4"`, ambas como variables de todas las
 raíces que las usan. Los nombres de recursos regionales agregan el código corto que sale de un
 mapa (`usc1`, `use4`, y `nas1` para `northamerica-south1`), nunca escrito a mano. `1-base`
-crea además llaveros en la multirregión `us` para los buckets de doble región y los
-repositorios de Artifact Registry, porque la llave de un bucket o de un repositorio debe estar
-en la misma ubicación que él.
+crea además llaveros en la multirregión `us` para los buckets de doble región (solo los entornos
+de `dr_environments`) y los repositorios de Artifact Registry (en `artifact_registry_location`),
+porque la llave de un bucket o de un repositorio debe estar en la misma ubicación que él. Un
+entorno de `3-workloads` con `enable_dr` que no esté en `dr_environments` falla en su plan por
+falta de llaves.
 
 Nada que la conmutación necesite vive solo en la región primaria (ADR 0022): el bucket de
 estado y su llave están en la multirregión `us` (etapa 0, `state_bucket_location`); el hub tiene
