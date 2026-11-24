@@ -96,7 +96,9 @@ protegido con una etiqueta, porque las condiciones de denegación solo reconocen
   el IAM del llavero y de la llave, cambiar la llave y destruir versiones; el IAM de las cuentas
   del pipeline, suplantarlas (`actAs`, `getAccessToken`, `signJwt`…), cambiarlas o borrarlas.
 - Regla 2, sin condición: crear, cambiar o borrar pools y proveedores de WIF y roles
-  personalizados, crear llaves de cuentas de servicio y borrar el proyecto.
+  personalizados, crear llaves de cuentas de servicio, pedir tokens o firmas de cualquier cuenta
+  de servicio (`getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, `signJwt`;
+  `actAs` no, porque adjuntar las cuentas de ejecución lo necesita) y borrar el proyecto.
 - Regla 3, sin condición: leer valores de secretos (`versions.access`). Se niega a todas las
   cuentas del pipeline salvo `tf-net`, que lee la clave compartida de la VPN del hub.
 - Las reglas 1 y 2 se niegan a las nueve cuentas. Nada niega los objetos del estado, el proyecto

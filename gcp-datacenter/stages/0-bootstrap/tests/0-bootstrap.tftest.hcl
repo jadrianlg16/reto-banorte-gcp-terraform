@@ -418,6 +418,18 @@ run "plan_con_valores_de_ejemplo" {
     error_message = "Se niega cambiar o borrar el bucket, suplantar o cambiar el IAM de las cuentas, el proveedor de WIF y los roles personalizados."
   }
   assert {
+    # Sin condición: ninguna cuenta del pipeline pide tokens ni firmas de ninguna cuenta de
+    # servicio del proyecto (tampoco de las de ejecución, cuyo IAM administra tf-base). actAs no
+    # se niega aquí: adjuntar cuentas de ejecución lo necesita.
+    condition = alltrue(concat(
+      [for p in ["getAccessToken", "getOpenIdToken", "implicitDelegation", "signBlob", "signJwt"] :
+      contains(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denied_permissions, "iam.googleapis.com/serviceAccounts.${p}")],
+      [!contains(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denied_permissions, "iam.googleapis.com/serviceAccounts.actAs")],
+      [length(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denied_principals) == 9],
+    ))
+    error_message = "La regla sin condición niega a las nueve cuentas los tokens y firmas de cualquier cuenta de servicio, sin negar actAs."
+  }
+  assert {
     # Lo que las cuentas sí hacen: objetos de su estado, cuota del proyecto e IAM delegado.
     condition = alltrue([for r in google_iam_deny_policy.pipeline["this"].rules : alltrue([for p in r.deny_rule[0].denied_permissions :
       (!startswith(p, "storage.googleapis.com/objects.") || p == "storage.googleapis.com/objects.setIamPolicy") &&

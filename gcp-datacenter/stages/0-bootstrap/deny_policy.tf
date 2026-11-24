@@ -76,9 +76,22 @@ locals {
     "secretmanager.googleapis.com/versions.access",
   ]
 
-  # En todo el proyecto: WIF, roles personalizados, llaves de cuentas y borrar el proyecto.
-  # Ninguna cuenta del pipeline los necesita.
+  # En todo el proyecto: WIF, roles personalizados, llaves de cuentas, borrar el proyecto y
+  # obtener tokens o firmas de cualquier cuenta de servicio. Ninguna cuenta del pipeline los
+  # necesita: adjuntar una cuenta de ejecución a un nodo, una VM, un servicio de Cloud Run o un
+  # trabajo de Cloud Scheduler pide actAs (que no se niega aquí), no un token. Así una cuenta que
+  # se diera serviceAccountTokenCreator sobre una cuenta de ejecución (tf-base administra su IAM)
+  # no podría actuar como ella fuera de Terraform. La toma de las cuentas del pipeline por WIF no
+  # se ve afectada: quien pide su token es la identidad federada, no la cuenta. Todos figuran en
+  # la lista de permisos admitidos en políticas de denegación (actualizada el 2026-11-18).
+  # VERIFICAR-EN-APPLY: que crear un trabajo de Cloud Scheduler con oauth_token de la cuenta sched
+  # y un clúster de GKE con la cuenta gke-nodes funcione con esta regla (solo piden actAs).
   untagged_denied_permissions = [
+    "iam.googleapis.com/serviceAccounts.getAccessToken",
+    "iam.googleapis.com/serviceAccounts.getOpenIdToken",
+    "iam.googleapis.com/serviceAccounts.implicitDelegation",
+    "iam.googleapis.com/serviceAccounts.signBlob",
+    "iam.googleapis.com/serviceAccounts.signJwt",
     "iam.googleapis.com/workloadIdentityPools.create",
     "iam.googleapis.com/workloadIdentityPools.update",
     "iam.googleapis.com/workloadIdentityPools.delete",
@@ -179,7 +192,7 @@ resource "google_iam_deny_policy" "pipeline" {
   }
 
   rules {
-    description = "Las cuentas del pipeline no pueden cambiar WIF, roles personalizados, crear llaves de cuentas ni borrar el proyecto."
+    description = "Las cuentas del pipeline no pueden cambiar WIF ni roles personalizados, crear llaves, pedir tokens o firmas de cuentas de servicio ni borrar el proyecto."
     deny_rule {
       denied_principals  = local.denied_principals
       denied_permissions = local.untagged_denied_permissions
