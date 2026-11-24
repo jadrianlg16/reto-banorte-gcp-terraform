@@ -68,9 +68,9 @@ nombre de recurso con la forma `resource.type != <tipo> || resource.name.startsW
 entorno>)`, porque Cloud SQL (`Instance`, `BackupRun`), GKE (`Cluster`) y Backup and DR
 (`BackupVaults`) figuran en "Resource attributes for IAM Conditions"; los demás tipos de esos
 roles (y crear un clúster, que GKE comprueba en el proyecto) quedan sin límite. Compute, Cloud
-Run, Memorystore, Filestore, Backup for GKE y Monitoring no figuran en esa página y van sin
-condición: una cuenta de dev puede tocar recursos de prod de esos servicios (riesgo aceptado,
-ADR 0029 §3 y §9). `container.clusterAdmin` (y no `container.admin`) no trae permisos sobre
+Run, Memorystore, Filestore, Backup for GKE, Certificate Manager y Monitoring van sin condición:
+no admiten `resource.name`, o su rol abarca tipos que no lo admiten. Una cuenta de dev puede
+tocar recursos de prod de esos servicios (riesgo aceptado, ADR 0029 §3 y §9). `container.clusterAdmin` (y no `container.admin`) no trae permisos sobre
 objetos de Kubernetes (pods, secretos, tokens de cuentas de Kubernetes); Monitoring va con roles
 finos en lugar de `monitoring.editor`, que trae permisos `serviceusage.*`.
 
