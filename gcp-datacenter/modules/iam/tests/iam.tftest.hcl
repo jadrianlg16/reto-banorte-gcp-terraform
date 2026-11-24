@@ -9,22 +9,21 @@ variables {
       member   = "group:example-auditors@example.com"
     },
     {
-      scope    = "folder"
-      resource = "folders/111111111111"
-      role     = "roles/viewer"
-      member   = "group:example-developers@example.com"
-    },
-    {
       scope    = "project"
       resource = "example-project-id"
       role     = "roles/logging.viewer"
       member   = "serviceAccount:example-sa@example-project-id.iam.gserviceaccount.com"
     },
     {
-      scope    = "billing_account"
-      resource = "000000-000000-000000"
-      role     = "roles/billing.user"
+      key      = "storage-admin-dev"
+      scope    = "project"
+      resource = "example-project-id"
+      role     = "roles/storage.admin"
       member   = "serviceAccount:example-sa@example-project-id.iam.gserviceaccount.com"
+      condition = {
+        title      = "solo-buckets-dev"
+        expression = "resource.name.startsWith(\"projects/_/buckets/example-dev-\")"
+      }
     },
     {
       scope    = "service_account"
@@ -76,9 +75,7 @@ run "una_asignacion_aditiva_por_scope" {
   assert {
     condition = alltrue([
       length(google_organization_iam_member.this) == 1,
-      length(google_folder_iam_member.this) == 1,
-      length(google_project_iam_member.this) == 1,
-      length(google_billing_account_iam_member.this) == 1,
+      length(google_project_iam_member.this) == 2,
       length(google_service_account_iam_member.this) == 1,
       length(google_storage_bucket_iam_member.this) == 1,
       length(google_kms_key_ring_iam_member.this) == 1,
@@ -95,6 +92,10 @@ run "una_asignacion_aditiva_por_scope" {
   assert {
     condition     = google_storage_bucket_iam_member.this["state-writer"].condition[0].title == "solo-prefijo"
     error_message = "La llave explícita se usa y la condición se pasa al recurso."
+  }
+  assert {
+    condition     = google_project_iam_member.this["storage-admin-dev"].condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/example-dev-\")"
+    error_message = "Un rol de proyecto condicionado (storage.admin por prefijo del entorno) lleva su condición."
   }
   assert {
     condition     = length(google_project_iam_member.this["project|example-project-id|roles/logging.viewer|serviceAccount:example-sa@example-project-id.iam.gserviceaccount.com"].condition) == 0
@@ -114,7 +115,7 @@ run "una_asignacion_aditiva_por_scope" {
     error_message = "La subred se separa en proyecto, región y nombre."
   }
   assert {
-    condition     = length(output.members) == 4
+    condition     = length(output.members) == 3
     error_message = "members lista cada miembro una sola vez."
   }
 }
@@ -186,6 +187,22 @@ run "rechaza_scope_desconocido" {
     bindings = [{
       scope    = "dataset"
       resource = "example"
+      role     = "roles/viewer"
+      member   = "group:example@example.com"
+    }]
+  }
+
+  expect_failures = [var.bindings]
+}
+
+# ADR 0029: sin carpetas ni cuentas de facturación administradas por el pipeline.
+run "rechaza_scope_folder" {
+  command = plan
+
+  variables {
+    bindings = [{
+      scope    = "folder"
+      resource = "folders/111111111111"
       role     = "roles/viewer"
       member   = "group:example@example.com"
     }]

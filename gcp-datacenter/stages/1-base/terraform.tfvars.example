@@ -1,0 +1,58 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+project_id     = "example-project-id"
+prefix         = "bnt"
+name_suffix    = ""
+primary_region = "us-central1"
+dr_region      = "us-east4"
+# Valor real: la salida state_bucket de 0-bootstrap (<prefix>-bootstrap-ops-tfstate[-<name_suffix>]).
+state_bucket = "bnt-bootstrap-ops-tfstate"
+
+# Solo si el proyecto está dentro de una organización (si no, dejar comentados).
+# org_id                = "000000000000"
+# directory_customer_id = "C00000000"
+# access_policy_id      = "000000000000"
+
+applications = ["app"]
+
+# Contenedores de secretos por entorno (sin valores; los carga una persona, ADR 0015).
+secret_names = {
+  dev  = ["db-password"]
+  qa   = ["db-password"]
+  prod = ["db-password"]
+}
+
+# Quién publica imágenes en cada repositorio (entorno → aplicación → miembros).
+# artifact_registry_publishers = {
+#   dev = { app = ["serviceAccount:ci-app@example-project-id.iam.gserviceaccount.com"] }
+# }
+
+# Alertas de auditoría (CIS 2.5 a 2.12).
+security_alert_email = "seguridad@example.com"
+
+# Grupos de solo lectura (opcionales; solo grupos, nunca user:).
+groups = {
+  readers         = "gcp-readers@example.com"
+  security_admins = "gcp-security-admins@example.com"
+  auditors        = "gcp-auditors@example.com"
+}
+
+# Contactos esenciales (CIS 1.17): correo → categorías. Entre todos deben cubrir LEGAL,
+# SECURITY, SUSPENSION y TECHNICAL.
+essential_contacts = {
+  "admin@example.com"     = ["LEGAL", "SUSPENSION", "TECHNICAL"]
+  "seguridad@example.com" = ["SECURITY", "TECHNICAL"]
+}
+essential_contacts_language = "es"
+
+log_retention_days   = 365
+log_retention_locked = false
+
+# Notificación de hallazgos de SCC: solo después de activar SCC a mano en el proyecto.
+enable_scc_notification = false
+
+labels = {
+  app         = "landing-zone"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}

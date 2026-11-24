@@ -1,21 +1,24 @@
 # Módulo `log-export`
 
-Crea un bucket de Cloud Storage para logs y, si se indica `parent`, el sink de Logging que
-exporta hacia él desde una organización, una carpeta o un proyecto, junto con el permiso
-`roles/storage.objectCreator` para la identidad que escribe el sink. La especificación
-(sección "Componentes del datacenter", registro y auditoría) pide un bucket de logs con
-retención bloqueable: por eso la política de retención siempre existe (`retention_days`, de
-30 a 36 500 días) y su bloqueo lo controla `retention_locked`, que es **irreversible** una vez
-aplicado. Además quedan como valores fijos: CMEK obligatorio (`kms_key`), acceso uniforme,
-prevención de acceso público `enforced`, versionado activo y sin `force_destroy`. Las
-versiones no actuales se borran cuando vence la retención.
+Crea un bucket de Cloud Storage para logs y, si se indica `parent = "projects/<id>"`, el sink
+de Logging del proyecto que exporta hacia él, junto con el permiso
+`roles/storage.objectCreator` para la identidad que escribe el sink. En el diseño de un solo
+proyecto (ADR 0029 §7) el sink es de proyecto: ya no hay sinks agregados de organización ni de
+carpeta. La especificación (sección "Componentes del datacenter", registro y auditoría) pide un
+bucket de logs con retención bloqueable: por eso la política de retención siempre existe
+(`retention_days`, de 30 a 36 500 días) y su bloqueo lo controla `retention_locked`, que es
+**irreversible** una vez aplicado. Además quedan como valores fijos: CMEK obligatorio
+(`kms_key`), acceso uniforme, prevención de acceso público `enforced`, versionado activo y sin
+`force_destroy`. Las versiones no actuales se borran cuando vence la retención.
 
 Notas de uso:
 
-- Con `parent` de organización o carpeta y `include_children = true` (por defecto) el sink es
-  agregado. Con `parent` de proyecto se usa una identidad de escritura propia del sink.
-- Con `parent = null` solo se crea el bucket: sirve cuando el sink lo crea otro módulo (por
-  ejemplo `org`), que recibe la salida `destination`.
+- El sink usa una identidad de escritura propia (`unique_writer_identity = true`).
+- `exclusions` descarta entradas antes de exportarlas. `1-base` excluye los registros de acceso
+  a datos del propio bucket de logs: con `DATA_WRITE` de Cloud Storage activo, cada escritura
+  del sink generaría otra entrada que volvería al bucket.
+- Con `parent = null` solo se crea el bucket: sirve cuando el sink lo crea otra raíz, que
+  recibe la salida `destination`.
 - El módulo da al agente de Cloud Storage del proyecto permiso para cifrar con `kms_key`
   (`grant_kms_to_storage_agent`). La llave debe estar en la misma ubicación que el bucket.
 - El filtro por defecto exporta los registros de auditoría.
@@ -43,8 +46,6 @@ No modules.
 | Name | Type |
 | ---- | ---- |
 | [google_kms_crypto_key_iam_member.storage_agent](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
-| [google_logging_folder_sink.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/logging_folder_sink) | resource |
-| [google_logging_organization_sink.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/logging_organization_sink) | resource |
 | [google_logging_project_sink.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/logging_project_sink) | resource |
 | [google_storage_bucket.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/storage_bucket) | resource |
 | [google_storage_bucket_iam_member.writer](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/storage_bucket_iam_member) | resource |
@@ -59,15 +60,15 @@ No modules.
 | <a name="input_labels"></a> [labels](#input\_labels) | Etiquetas comunes. Obligatorias: env, app, owner, cost\_center, managed\_by. | `map(string)` | n/a | yes |
 | <a name="input_location"></a> [location](#input\_location) | Ubicación del bucket: una región (us-central1), una doble región o una multirregión (US). Debe estar permitida por gcp.resourceLocations. | `string` | n/a | yes |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa en los nombres (por ejemplo, bnt). | `string` | n/a | yes |
-| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | Proyecto donde se crea el bucket de logs (por ejemplo, el proyecto logging de common). | `string` | n/a | yes |
+| <a name="input_project_id"></a> [project\_id](#input\_project\_id) | Proyecto donde se crea el bucket de logs (el proyecto único, ADR 0029). | `string` | n/a | yes |
 | <a name="input_retention_days"></a> [retention\_days](#input\_retention\_days) | Días que cada objeto queda protegido contra borrado y reemplazo (política de retención del bucket). | `number` | n/a | yes |
 | <a name="input_access_logs_bucket"></a> [access\_logs\_bucket](#input\_access\_logs\_bucket) | Bucket que recibe los registros de acceso de este bucket. null: sin registros de acceso (los registros de auditoría de Cloud Storage siguen activos). | `string` | `null` | no |
+| <a name="input_exclusions"></a> [exclusions](#input\_exclusions) | Exclusiones del sink: entradas que cumplen filter no se exportan aunque cumplan el filtro del sink. Campos: name (único, letras, dígitos, guion o guion bajo), filter, description (opcional) y disabled (opcional, false). Sin efecto si parent es null. | <pre>list(object({<br/>    name        = string<br/>    filter      = string<br/>    description = optional(string)<br/>    disabled    = optional(bool, false)<br/>  }))</pre> | `[]` | no |
 | <a name="input_filter"></a> [filter](#input\_filter) | Filtro de Logging del sink. Por defecto, los registros de auditoría (actividad de administración, acceso a datos, eventos del sistema y política denegada). "" exporta todo. | `string` | `"logName:\"cloudaudit.googleapis.com\""` | no |
 | <a name="input_grant_kms_to_storage_agent"></a> [grant\_kms\_to\_storage\_agent](#input\_grant\_kms\_to\_storage\_agent) | Si es true, el módulo da roles/cloudkms.cryptoKeyEncrypterDecrypter sobre kms\_key al agente de servicio de Cloud Storage del proyecto. false si ese permiso lo asigna otra etapa. | `bool` | `true` | no |
-| <a name="input_include_children"></a> [include\_children](#input\_include\_children) | Solo para parent de organización o carpeta: si es true, el sink es agregado e incluye los logs de todas las carpetas y proyectos hijos. | `bool` | `true` | no |
 | <a name="input_name"></a> [name](#input\_name) | Parte de recurso del nombre. Bucket: <prefix>-<environment>-ops-<name>[-<name\_suffix>]; sink: <prefix>-<environment>-ops-<name>-sink. | `string` | `"audit-logs"` | no |
 | <a name="input_name_suffix"></a> [name\_suffix](#input\_name\_suffix) | Sufijo opcional para que el nombre del bucket sea único a nivel mundial (normalmente el project\_suffix de la raíz). Vacío: sin sufijo. | `string` | `""` | no |
-| <a name="input_parent"></a> [parent](#input\_parent) | Recurso cuyos logs se exportan: "organizations/<n>", "folders/<n>" o "projects/<id>". null: solo se crea el bucket (otro módulo, por ejemplo org, crea el sink). | `string` | `null` | no |
+| <a name="input_parent"></a> [parent](#input\_parent) | Proyecto cuyos logs se exportan: "projects/<id>" (sink de proyecto, ADR 0029 §7). null: solo se crea el bucket (el sink lo crea otra raíz con la salida destination). | `string` | `null` | no |
 | <a name="input_project_number"></a> [project\_number](#input\_project\_number) | Número de project\_id (opcional). Pasarlo cuando el proyecto se crea en el mismo plan: el agente de Cloud Storage se consulta con el número, que no se conoce hasta el apply, y así la consulta no corre en el plan contra un proyecto que todavía no existe. null: se consulta con project\_id (proyecto que ya existe). | `string` | `null` | no |
 | <a name="input_retention_locked"></a> [retention\_locked](#input\_retention\_locked) | Si es true, bloquea la política de retención. IRREVERSIBLE: una vez aplicado, la retención no se puede acortar ni quitar, y el bucket no se puede borrar hasta que venza el último objeto. | `bool` | `false` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | Clase de almacenamiento por defecto del bucket. | `string` | `"STANDARD"` | no |

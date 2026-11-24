@@ -13,7 +13,7 @@ variables {
   location       = "us-central1"
   kms_key        = "projects/example-security/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
   retention_days = 365
-  parent         = "organizations/000000000000"
+  parent         = "projects/bnt-common-logging"
   labels = {
     env         = "common"
     app         = "logging"
@@ -23,7 +23,7 @@ variables {
   }
 }
 
-run "bucket_con_exigencias_y_sink_de_organizacion" {
+run "bucket_con_exigencias_y_sink_de_proyecto" {
   command = plan
 
   assert {
@@ -60,16 +60,16 @@ run "bucket_con_exigencias_y_sink_de_organizacion" {
   }
   assert {
     condition = alltrue([
-      google_logging_organization_sink.this["this"].name == "bnt-common-ops-audit-logs-sink",
-      google_logging_organization_sink.this["this"].org_id == "000000000000",
-      google_logging_organization_sink.this["this"].include_children == true,
-      google_logging_organization_sink.this["this"].destination == "storage.googleapis.com/bnt-common-ops-audit-logs",
+      google_logging_project_sink.this["this"].name == "bnt-common-ops-audit-logs-sink",
+      google_logging_project_sink.this["this"].project == "bnt-common-logging",
+      google_logging_project_sink.this["this"].unique_writer_identity == true,
+      google_logging_project_sink.this["this"].destination == "storage.googleapis.com/bnt-common-ops-audit-logs",
     ])
-    error_message = "El sink de organización debe ser agregado y apuntar al bucket."
+    error_message = "El sink de proyecto debe tener identidad propia y apuntar al bucket."
   }
   assert {
-    condition     = length(google_logging_folder_sink.this) == 0 && length(google_logging_project_sink.this) == 0
-    error_message = "Solo se crea el sink del tipo de padre."
+    condition     = length(google_logging_project_sink.this["this"].exclusions) == 0
+    error_message = "Sin exclusions, el sink no lleva exclusiones."
   }
   assert {
     condition     = google_storage_bucket_iam_member.writer["this"].role == "roles/storage.objectCreator"
@@ -90,34 +90,37 @@ run "bloqueo_por_variable" {
   }
 }
 
-run "sink_de_carpeta" {
+run "sufijo_y_exclusiones" {
   command = plan
 
   variables {
-    parent      = "folders/111111111111"
     name_suffix = "x7k2"
+    exclusions = [
+      {
+        name        = "bucket-de-logs"
+        description = "Acceso a datos del bucket de logs."
+        filter      = "logName:\"cloudaudit.googleapis.com%2Fdata_access\" AND resource.labels.bucket_name=\"bnt-common-ops-audit-logs-x7k2\""
+      },
+      {
+        name     = "apagada"
+        filter   = "severity<WARNING"
+        disabled = true
+      },
+    ]
   }
 
-  assert {
-    condition     = google_logging_folder_sink.this["this"].folder == "folders/111111111111" && length(google_logging_organization_sink.this) == 0
-    error_message = "Con una carpeta como padre se crea el sink de carpeta."
-  }
   assert {
     condition     = google_storage_bucket.this.name == "bnt-common-ops-audit-logs-x7k2"
     error_message = "El sufijo se agrega al nombre del bucket."
   }
-}
-
-run "sink_de_proyecto" {
-  command = plan
-
-  variables {
-    parent = "projects/bnt-prod-app"
-  }
-
   assert {
-    condition     = google_logging_project_sink.this["this"].project == "bnt-prod-app" && google_logging_project_sink.this["this"].unique_writer_identity == true
-    error_message = "Con un proyecto como padre se crea el sink de proyecto con identidad propia."
+    condition = alltrue([
+      length(google_logging_project_sink.this["this"].exclusions) == 2,
+      google_logging_project_sink.this["this"].exclusions[0].name == "bucket-de-logs",
+      google_logging_project_sink.this["this"].exclusions[0].disabled == false,
+      google_logging_project_sink.this["this"].exclusions[1].disabled == true,
+    ])
+    error_message = "Las exclusiones pasan al sink en orden, con disabled = false por defecto."
   }
 }
 
@@ -129,30 +132,36 @@ run "solo_bucket" {
   }
 
   assert {
-    condition = (
-      length(google_logging_organization_sink.this) + length(google_logging_folder_sink.this) +
-      length(google_logging_project_sink.this) + length(google_storage_bucket_iam_member.writer) == 0
-    )
+    condition     = length(google_logging_project_sink.this) + length(google_storage_bucket_iam_member.writer) == 0
     error_message = "Sin parent no se crean sink ni permiso de escritura."
   }
   assert {
-    condition     = output.writer_identity == null && output.destination == "storage.googleapis.com/bnt-common-ops-audit-logs"
-    error_message = "Sin parent, writer_identity es null y destination sirve para otro sink."
+    condition     = output.writer_identity == null && output.sink_name == null && output.destination == "storage.googleapis.com/bnt-common-ops-audit-logs"
+    error_message = "Sin parent, writer_identity y sink_name son null y destination sirve para otro sink."
   }
 }
 
-# La carpeta padre se crea en el mismo plan: el for_each de los sinks debe seguir conocido.
-run "padre_desconocido_en_el_plan" {
+run "rechaza_padre_de_organizacion" {
   command = plan
 
-  module {
-    source = "./tests/setup/unknown_parent"
+  variables {
+    parent = "organizations/000000000000"
   }
 
-  assert {
-    condition     = output.sink_name == "bnt-prod-ops-data-access-logs-sink"
-    error_message = "Con una carpeta creada en el mismo plan se crea igual el sink de carpeta."
+  expect_failures = [var.parent]
+}
+
+run "rechaza_exclusiones_repetidas" {
+  command = plan
+
+  variables {
+    exclusions = [
+      { name = "x", filter = "severity<WARNING" },
+      { name = "x", filter = "severity<ERROR" },
+    ]
   }
+
+  expect_failures = [var.exclusions]
 }
 
 run "rechaza_retencion_corta" {

@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "Proyecto donde se crea el bucket de logs (por ejemplo, el proyecto logging de common)."
+  description = "Proyecto donde se crea el bucket de logs (el proyecto único, ADR 0029)."
   type        = string
   nullable    = false
 
@@ -132,13 +132,13 @@ variable "access_logs_bucket" {
 }
 
 variable "parent" {
-  description = "Recurso cuyos logs se exportan: \"organizations/<n>\", \"folders/<n>\" o \"projects/<id>\". null: solo se crea el bucket (otro módulo, por ejemplo org, crea el sink)."
+  description = "Proyecto cuyos logs se exportan: \"projects/<id>\" (sink de proyecto, ADR 0029 §7). null: solo se crea el bucket (el sink lo crea otra raíz con la salida destination)."
   type        = string
   default     = null
 
   validation {
-    condition     = var.parent == null || can(regex("^(organizations/[0-9]+|folders/[0-9]+|projects/[a-z][a-z0-9-]{4,28}[a-z0-9])$", var.parent))
-    error_message = "parent debe ser organizations/<n>, folders/<n>, projects/<id> o null."
+    condition     = var.parent == null || can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.parent))
+    error_message = "parent debe ser projects/<id> o null (ya no hay sinks de organización ni de carpeta)."
   }
 }
 
@@ -149,11 +149,25 @@ variable "filter" {
   nullable    = false
 }
 
-variable "include_children" {
-  description = "Solo para parent de organización o carpeta: si es true, el sink es agregado e incluye los logs de todas las carpetas y proyectos hijos."
-  type        = bool
-  default     = true
-  nullable    = false
+variable "exclusions" {
+  description = "Exclusiones del sink: entradas que cumplen filter no se exportan aunque cumplan el filtro del sink. Campos: name (único, letras, dígitos, guion o guion bajo), filter, description (opcional) y disabled (opcional, false). Sin efecto si parent es null."
+  type = list(object({
+    name        = string
+    filter      = string
+    description = optional(string)
+    disabled    = optional(bool, false)
+  }))
+  default  = []
+  nullable = false
+
+  validation {
+    condition     = alltrue([for e in var.exclusions : can(regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$", e.name)) && trimspace(e.filter) != ""])
+    error_message = "Cada exclusión necesita name (hasta 100 caracteres: letras, dígitos, guion o guion bajo) y un filter no vacío."
+  }
+  validation {
+    condition     = length(var.exclusions) == length(distinct([for e in var.exclusions : e.name]))
+    error_message = "Los nombres de las exclusiones no se pueden repetir."
+  }
 }
 
 variable "labels" {

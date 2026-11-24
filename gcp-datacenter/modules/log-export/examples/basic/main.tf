@@ -5,23 +5,29 @@ terraform {
   }
 }
 
-# Valores de ejemplo: proyecto, carpeta y llave son marcadores.
+# Valores de ejemplo: proyecto y llave son marcadores.
 module "log_export" {
   source = "../.."
 
-  project_id       = "example-logging-project"
+  project_id       = "example-project-id"
   prefix           = "bnt"
-  environment      = "prod"
-  name             = "data-access-logs"
+  environment      = "common"
+  name             = "audit-logs"
   location         = "us-central1"
-  kms_key          = "projects/example-security-project/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
+  kms_key          = "projects/example-project-id/locations/us-central1/keyRings/example-ring/cryptoKeys/example-key"
   retention_days   = 365
   retention_locked = false
-  parent           = "folders/000000000000"
-  filter           = "logName:\"cloudaudit.googleapis.com%2Fdata_access\""
+  parent           = "projects/example-project-id"
+
+  # Los registros de acceso a datos del propio bucket no vuelven al bucket.
+  exclusions = [{
+    name        = "bucket-de-logs"
+    description = "Acceso a datos del bucket de logs."
+    filter      = "logName:\"cloudaudit.googleapis.com%2Fdata_access\" AND resource.type=\"gcs_bucket\" AND resource.labels.bucket_name=\"bnt-common-ops-audit-logs\""
+  }]
 
   labels = {
-    env         = "prod"
+    env         = "common"
     app         = "logging"
     owner       = "example-team"
     cost_center = "example-000"
