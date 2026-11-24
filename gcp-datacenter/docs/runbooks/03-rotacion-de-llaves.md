@@ -15,29 +15,40 @@ se marca "pendiente de verificar".
 
 ## Prerrequisitos
 
-- Inventario de llaves (todas `ENCRYPT_DECRYPT`, rotación `7776000s` = 90 días,
-  `prevent_destroy`, módulo `kms`):
+- **Inventario.** Todas las llaves son `ENCRYPT_DECRYPT`, rotan cada `7776000s` (90 días) y
+  tienen `prevent_destroy` (módulo `kms`). Todas viven en el proyecto único:
 
-  | Etapa | Proyecto | Llavero | Llaves |
-  |---|---|---|---|
-  | 0 | `<prefix>-bootstrap-seed` | `<prefix>-bootstrap-sec-keyring-us` (ubicación `us`, la de `state_bucket_location`) | `<prefix>-bootstrap-sec-state` (bucket de estado) |
-  | 1 | `<prefix>-common-logging` | `<prefix>-common-sec-keyring-<código>` (`primary_region`) | `<prefix>-common-sec-logs` (bucket de logs), `<prefix>-common-sec-pubsub` (tema de SCC) |
-  | 2 | `<prefix>-common-security` | `<prefix>-<env>-sec-keyring-{usc1,use4,us}` | `<prefix>-<env>-sec-<uso>`; usos `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run`, `artifacts` en las regiones; `storage`, `backup` y `artifacts` en `us` |
+  | Raíz | Llavero | Llaves |
+  |---|---|---|
+  | `0-bootstrap` | `<prefix>-bootstrap-sec-keyring-us` (ubicación de `state_bucket_location`, `us` por defecto) | `<prefix>-bootstrap-sec-state` (bucket de estado) |
+  | `1-base`, común | `<prefix>-common-sec-keyring-usc1` (`primary_region`) | `<prefix>-common-sec-logs` (bucket de logs), `<prefix>-common-sec-pubsub` (tema de SCC) |
+  | `1-base`, por entorno | `<prefix>-<env>-sec-keyring-usc1` y `-use4` | `<prefix>-<env>-sec-<uso>` con los usos `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run` y `artifacts` |
+  | `1-base`, por entorno | `<prefix>-<env>-sec-keyring-us` | `storage`, `backup` y `artifacts` (buckets de doble región y repositorios multirregionales) |
 
-  (`<código>` sale del mapa de códigos cortos: `usc1` para `us-central1`. La llave `artifacts`
-  de `us` cifra los repositorios multirregionales de Artifact Registry de la etapa 4, ADR 0024.)
-  Para la llave del estado: `LOC=us`, no `primary_region`.
-- Identidad con `roles/cloudkms.admin` sobre el proyecto de la llave (la cuenta de
-  `<prefix>-tf-4-projects` solo puede cambiar el IAM de las llaves con su rol personalizado, no
-  rotarlas). En este diseño la tienen
-  la cuenta `<prefix>-tf-2-security` (proyecto `security`), la `<prefix>-tf-1-org` (dueña de
-  `logging`) y la persona administradora de la etapa 0 (dueña del semilla). El grupo
-  `security_admins` solo tiene `roles/cloudkms.viewer`: la operación manual requiere el acceso
-  de emergencia, que no está construido ([pendientes](../pendientes-apply.md), §5).
-- Variables de la sesión:
+  Los llaveros de entorno existen para cada entorno de `environments` de `1-base` (`dev`, `qa` y
+  `prod` por defecto), aunque el entorno no tenga cargas. `3-workloads` lee los IDs de la salida
+  `kms_key_ids` de `1-base`: entorno → `<uso>` (región primaria), `<uso>_dr` o `<uso>_us` → ID.
+
+- **Quién puede rotar.** Hace falta `roles/cloudkms.admin` sobre la llave:
+
+  | Identidad | Alcance |
+  |---|---|
+  | `<prefix>-tf-base` | Todo KMS del proyecto salvo el llavero del estado (condición en `0-bootstrap`). El pipeline no tiene un trabajo de rotación manual |
+  | `<prefix>-tf-wl-<env>` | Solo el IAM de las llaves de su entorno (`TfKmsSecretIamGranter`), no las rota |
+  | Grupo `security_admins` | Solo `roles/cloudkms.viewer` |
+  | Persona dueña del proyecto (`owner`) | Todo, incluida la llave del estado |
+
+  La operación manual la hace hoy la persona dueña. La política de denegación de `0-bootstrap`
+  impide a las nueve cuentas del pipeline cambiar la llave del estado o destruir sus versiones,
+  no a las personas. El acceso de emergencia sigue sin construirse
+  ([pendientes](../pendientes-apply.md), §5).
+
+- **Variables de la sesión:**
 
   ```bash
-  KEY=<nombre-de-la-llave>; KEYRING=<llavero>; LOC=<ubicación>; PROJECT=<proyecto>
+  PROJECT=<ID>; KEY=<nombre-de-la-llave>; KEYRING=<llavero>; LOC=<ubicación>
+  gcloud kms keyrings list --location="$LOC" --project="$PROJECT"
+  gcloud kms keys list --keyring="$KEYRING" --location="$LOC" --project="$PROJECT"
   ```
 
 ## Pasos
@@ -51,10 +62,10 @@ se marca "pendiente de verificar".
      --format="value(rotationPeriod,nextRotationTime,primary.name)"
    ```
 
-   `rotationPeriod` debe ser `7776000s` o menos. El periodo de las llaves de la etapa 2 sale de
-   `key_rotation_period` (la validación rechaza más de 90 días y menos de un día; la política
-   `kms_rotation` de Conftest también); las de las etapas 0 y 1 usan el valor por defecto del
-   módulo. Para cambiarlo: PR a `key_rotation_period` y apply de la etapa 2.
+   `rotationPeriod` debe ser `7776000s` o menos. En `1-base` sale de `key_rotation_period` (la
+   validación rechaza más de 90 días y menos de un día; la política `kms_rotation` de Conftest
+   también) y vale para las llaves comunes y las de los tres entornos. La llave del estado usa el
+   valor por defecto del módulo. Para cambiarlo: PR a `key_rotation_period` y `apply.yml`.
 
 ### B. Rotación manual
 
@@ -75,24 +86,30 @@ se marca "pendiente de verificar".
 
 | Servicio (llave) | Al rotar | Para re-cifrar |
 |---|---|---|
-| Cloud Storage: estado (`state`), bucket de la aplicación (`storage`) | Los objetos nuevos usan la versión primaria; los existentes conservan la suya. Cada apply escribe un estado nuevo; las `state_versions_to_keep` (20) versiones viejas del estado conservan la versión anterior | Reescribir los objetos: `gcloud storage objects update "gs://<bucket>/**" --encryption-key=<id-de-la-llave>` (pendiente de verificar en buckets con versionado: la generación vieja sigue con la versión vieja hasta que el ciclo de vida la borre) |
-| Bucket de logs (`logs`) | Igual que Cloud Storage | Con política de retención, los objetos no se pueden reemplazar hasta vencer: no se re-cifran. La versión vieja queda habilitada al menos `log_retention_days` (365 por defecto) |
+| Cloud Storage: estado (`state`), bucket de la aplicación (`storage`) | Los objetos nuevos usan la versión primaria; los existentes conservan la suya. Cada apply escribe un estado nuevo; las versiones viejas del estado (`state_versions_to_keep`, 20) conservan la anterior | Reescribir los objetos: `gcloud storage objects update "gs://<bucket>/**" --encryption-key=<id-de-la-llave>` (pendiente de verificar con versionado: la generación vieja sigue con la versión vieja hasta que el ciclo de vida la borre) |
+| Bucket de logs (`logs`) | Igual que Cloud Storage | Con política de retención, los objetos no se reemplazan hasta vencer: no se re-cifran. La versión vieja queda habilitada al menos `log_retention_days` (365 en el ejemplo) |
 | Cloud SQL (`sql`) | Los datos existentes siguen con la versión vieja | Sin re-cifrado automático; revisar la documentación vigente de CMEK de Cloud SQL antes de deshabilitar una versión (pendiente de verificar) |
-| Discos de VM del MIG (`compute`) y de nodos de GKE (`compute`, `gke`) | Un disco conserva la versión con que se creó | Recrear: `gcloud compute instance-groups managed rolling-action replace <mig> --region=<región> --project=<proyecto-de-servicio>`; para GKE, recrear o actualizar el pool de nodos |
+| Discos de VM del MIG (`compute`) y de nodos de GKE (`gke`) | Un disco conserva la versión con que se creó | Recrear: `gcloud compute instance-groups managed rolling-action replace <mig> --region=<región> --project="$PROJECT"`; en GKE, recrear o actualizar el pool de nodos |
 | Secretos de Kubernetes (`gke`, cifrado de la capa de aplicación) | Siguen con la versión vieja | Reescribirlos: `kubectl get secrets --all-namespaces -o json \| kubectl replace -f -` (pendiente de verificar) |
-| Secret Manager (`secrets`) | Cada versión del secreto conserva la versión de llave con que se creó | El equipo dueño agrega una versión nueva con el mismo valor y deshabilita la vieja |
+| Secret Manager (`secrets`) | Cada versión del secreto conserva la versión de llave con que se creó | Quien carga los valores agrega una versión nueva con el mismo valor y deshabilita la vieja |
 | Memorystore (`redis`), Filestore (`filestore`) | Sin re-cifrado automático (pendiente de verificar) | Recrear la instancia si hay que retirar la versión |
-| Backup for GKE y Backup and DR (`backup`) | Los respaldos existentes conservan la versión | Vencen a los 30 días de retención: mantener la versión vieja al menos ese tiempo |
+| Backup for GKE (`backup`) | Los respaldos existentes conservan la versión | Vencen con su retención: mantener la versión vieja al menos ese tiempo |
 | Cloud Run (`run`), Pub/Sub de SCC (`pubsub`) | Pendiente de verificar | Nueva revisión de Cloud Run; los mensajes de Pub/Sub tienen retención corta |
-| Artifact Registry (`artifacts`) | Las capas de las imágenes existentes conservan la versión con que se cifraron (pendiente de verificar) | Volver a subir las imágenes que sigan en uso; mantener la versión vieja habilitada mientras haya imágenes desplegadas con ella (un nodo o una revisión que no puede descargar su imagen no arranca) |
+| Artifact Registry (`artifacts`) | Las capas de las imágenes existentes conservan la versión (pendiente de verificar) | Volver a subir las imágenes en uso; mantener la versión vieja mientras haya imágenes desplegadas con ella (un nodo o una revisión que no puede descargar su imagen no arranca) |
+
+Los agentes de servicio son uno por proyecto y cifran con las llaves de los tres entornos (riesgo
+aceptado, ADR 0029 §4): deshabilitar una versión de una llave de dev no afecta a prod, porque
+cada entorno tiene sus propias llaves, pero quitarle el permiso a un agente sí afecta a todos.
 
 ### C. Versión comprometida
 
 El material de una llave no se puede exportar de Cloud KMS; "comprometida" significa que una
 identidad no autorizada pudo usarla.
 
-4. Cortar el acceso primero: quitar el rol de la identidad (PR al IAM de la etapa que lo
-   otorgó) y revisar los registros de auditoría de Cloud KMS en el bucket de logs.
+4. Cortar el acceso primero: quitar el rol de la identidad (PR a la raíz que lo otorgó:
+   `0-bootstrap` para las cuentas del pipeline, `1-base` para agentes y grupos, `3-workloads`
+   para las cuentas de ejecución) y revisar los registros de acceso a datos de Cloud KMS en el
+   bucket de logs (ADR 0029 §7 los activa).
 5. Identificar las versiones y crear una primaria nueva (paso 2):
 
    ```bash
@@ -107,10 +124,9 @@ identidad no autorizada pudo usarla.
    gcloud kms keys versions disable <n> --key="$KEY" --keyring="$KEYRING" --location="$LOC" --project="$PROJECT"
    ```
 
-   Todo dato aún cifrado con ella deja de poder leerse: instancias de Cloud SQL, discos,
-   objetos o estados viejos. Si la llave es la del estado (`state`), las versiones viejas del
-   estado quedan ilegibles; si es la de logs con retención bloqueada, los logs retenidos
-   también.
+   Todo dato aún cifrado con ella deja de poder leerse: instancias de Cloud SQL, discos, objetos
+   o estados viejos. Si es la llave del estado, las versiones viejas del estado quedan
+   ilegibles; si es la de logs con retención bloqueada, los logs retenidos también.
 8. Vigilar errores de descifrado durante un ciclo completo de uso (respaldos, despliegues,
    consultas). Solo entonces, programar la destrucción:
 
@@ -118,9 +134,9 @@ identidad no autorizada pudo usarla.
    gcloud kms keys versions destroy <n> --key="$KEY" --keyring="$KEYRING" --location="$LOC" --project="$PROJECT"
    ```
 
-   La destrucción ocurre después de `destroy_scheduled_duration` (`2592000s`, 30 días, por
-   defecto en el módulo). La llave misma no se puede destruir desde Terraform
-   (`prevent_destroy`): retirarla exige un PR que quite ese bloque, revisado por seguridad.
+   La destrucción ocurre después de `destroy_scheduled_duration` (`2592000s`, 30 días, valor por
+   defecto del módulo). La llave misma no se destruye desde Terraform (`prevent_destroy`), y los
+   llaveros no se pueden borrar en GCP.
 
 ## Verificación
 
@@ -130,12 +146,16 @@ gcloud kms keys describe "$KEY" --keyring="$KEYRING" --location="$LOC" --project
 gcloud storage objects describe "gs://<bucket>/<objeto>" --format="value(kms_key)"
 ```
 
-La primaria es la versión nueva y está `ENABLED`; un objeto reescrito muestra la versión nueva
-en su llave. `terraform plan -detailed-exitcode` de la etapa dueña de la llave sale con 0.
+La primaria es la versión nueva y está `ENABLED`; un objeto reescrito muestra la versión nueva en
+su llave. `drift.yml` no abre incidencia de la raíz dueña de la llave.
 
 ## Reversión
 
 - Versión deshabilitada por error: `gcloud kms keys versions enable <n> …` (mismos parámetros).
 - Destrucción programada por error, dentro de los 30 días:
   `gcloud kms keys versions restore <n> …` y después `enable`.
-- Primaria equivocada: `gcloud kms keys set-primary-version "$KEY" --version=<n> --keyring="$KEYRING" --location="$LOC" --project="$PROJECT"`.
+- Primaria equivocada:
+  `gcloud kms keys set-primary-version "$KEY" --version=<n> --keyring="$KEYRING" --location="$LOC" --project="$PROJECT"`.
+
+El inventario anterior, con llaves repartidas en varios proyectos, está en la rama
+`archivo/multiproyecto`.
