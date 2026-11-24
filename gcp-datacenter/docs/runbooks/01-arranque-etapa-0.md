@@ -10,7 +10,7 @@ GitHub. Incluye los controles del CIS que viven fuera de Terraform.
 
 Nada de esto se ha ejecutado todavía. Es el procedimiento diseñado, pendiente de verificar en el
 primer despliegue ([pendientes](../pendientes-apply.md), puntos 1, 2, 9, 13, 22, 23, 27, 31,
-32, 33 y 56).
+32, 33, 56, 125, 126, 127, 128, 137 y 147).
 
 ## Cuándo usarlo
 
@@ -35,13 +35,16 @@ primer despliegue ([pendientes](../pendientes-apply.md), puntos 1, 2, 9, 13, 22,
   | `roles/owner` | el proyecto | todo lo de la etapa |
   | `roles/iam.denyAdmin` | el proyecto | la política de denegación, si `enable_deny_policy = true`; `owner` no lo incluye |
   | `roles/billing.costsManager` | la cuenta de facturación | el presupuesto del proyecto |
-  | permiso para dar `roles/orgpolicy.policyAdmin` | la organización | solo con `org_id` |
-  | `roles/accesscontextmanager.policyAdmin` | la política de acceso | solo con `access_policy_id` |
+  | `roles/orgpolicy.policyAdmin` | la organización | solo con `org_id`: esta etapa crea las políticas de organización del proyecto (pendiente 125) |
+  | `roles/accesscontextmanager.policyAdmin` (o `policyEditor` sobre la política) | la organización | solo con `access_policy_id`: esta etapa crea el perímetro de VPC-SC (pendiente 126) |
+
+  Ninguna cuenta del pipeline recibe roles de organización ni de la política de acceso: lo de
+  organización solo lo aplica esta persona.
 
 - **Valores que hay que tener a mano:** el ID del proyecto, la cuenta de facturación
   (`XXXXXX-XXXXXX-XXXXXX`), `<prefix>` (2 a 6 minúsculas o dígitos, empieza con letra; ejemplo
-  `bnt`), `<dueño>/<repositorio>` y, solo si el proyecto va dentro de una organización, `org_id` y
-  `access_policy_id`.
+  `bnt`), `<dueño>/<repositorio>` y, solo si el proyecto va dentro de una organización, `org_id`,
+  `directory_customer_id` y `access_policy_id`.
 
 ## Pasos
 
@@ -60,10 +63,13 @@ de la persona que aplica.
    ```
 
    Con organización, el proyecto se crea dentro de ella (`--organization=<org_id>`) y hay que
-   anotar dos valores: `org_id` (`gcloud organizations list`) y, si existe, el número de la
-   política de Access Context Manager (`gcloud access-context-manager policies list
-   --organization=<org_id>`; solo puede haber una por organización). Con ellos, `1-base` crea las
-   políticas de organización en el proyecto y el perímetro de VPC-SC en dry-run.
+   anotar tres valores: `org_id` (`gcloud organizations list`), el ID de cliente de Cloud
+   Identity (`directory_customer_id`, `C…`; HYPOTHESIS: la columna `DIRECTORY_CUSTOMER_ID` de la
+   misma lista) y,
+   si existe, el número de la política de Access Context Manager (`gcloud access-context-manager
+   policies list --organization=<org_id>`; solo puede haber una por organización). Con ellos,
+   `0-bootstrap` (paso 5) crea las políticas de organización en el proyecto y el perímetro de
+   VPC-SC en dry-run. Los aplicas tú, no el pipeline.
 
    Confirma los roles de la persona (la tabla de prerrequisitos):
 
@@ -150,7 +156,10 @@ de la persona que aplica.
    | Variable | Valor |
    |---|---|
    | `project_id`, `billing_account` | los del paso 1 |
-   | `org_id`, `access_policy_id` | solo con organización; si no, comentadas (`null`) |
+   | `org_id`, `directory_customer_id`, `access_policy_id` | solo con organización; si no, comentadas (`null`). `directory_customer_id` y `access_policy_id` exigen `org_id`. Van aquí, no en `GCP_TFVARS_JSON` |
+   | `additional_allowed_locations` | solo con `org_id`: ubicaciones extra de `gcp.resourceLocations` además de las dos regiones; por defecto `["us"]` (estado, llaveros y repositorios) |
+   | `vpc_sc_restricted_services` | solo con `access_policy_id`: servicios del perímetro; el valor por defecto ya trae los que usa el diseño y debe incluir `storage.googleapis.com` |
+   | `onprem_dns_vm` | `false` (por defecto). `true` solo para la VM DNS de prueba de `onprem-sim`, junto con `simulate_onprem = true` y `onprem_dns_vm = true` en `2-networks`: le da a `tf-net` `compute.instanceAdmin.v1` (pendiente 128) |
    | `prefix`, `name_suffix` | `name_suffix` hace único el nombre del bucket (los nombres de bucket son globales) |
    | `primary_region`, `dr_region` | `us-central1` y `us-east4` |
    | `github_repository`, `github_repository_id`, `github_repository_owner_id` | el nombre es informativo; WIF confía en los dos números (entre comillas) |
@@ -177,12 +186,23 @@ de la persona que aplica.
      bucket `bnt-bootstrap-ops-tfstate[-<name_suffix>]` en `US`;
    - nueve cuentas (`bnt-tf-base`, `bnt-tf-net`, `bnt-tf-net-{dev,qa,prod}`,
      `bnt-tf-wl-{dev,qa,prod}`, `bnt-tf-read`) y ningún `roles/owner`, `roles/editor` ni
-     `iam.serviceAccountAdmin`;
-   - cinco roles personalizados, el pool `bnt-bootstrap-sec-wif-pool` y el proveedor con
-     `attribute_condition` sobre `assertion.repository_id` y `assertion.repository_owner_id`;
+     `iam.serviceAccountAdmin`; `bnt-tf-wl-*` sin `iam.serviceAccountUser` de proyecto ni
+     `tagUser`, y `bnt-tf-net` con `compute.instanceAdmin.v1` solo si `onprem_dns_vm = true`;
+   - cuatro roles personalizados (`TfSecretContainerAdmin`, `TfServiceAccountManager`,
+     `TfNetworkTagManager` y `OffHoursScheduler`, con el prefijo), el pool
+     `bnt-bootstrap-sec-wif-pool` y el proveedor con `attribute_condition` sobre
+     `assertion.repository_id` y `assertion.repository_owner_id` y el atributo
+     `attribute.deploy` (las cuentas que escriben solo desde `main`; `pipeline.md` §5,
+     pendientes 123 y 124);
+   - `roles/resourcemanager.tagUser` en el proyecto para el agente de GKE y para
+     `<número>@cloudservices.gserviceaccount.com` (pendiente 137);
    - la etiqueta `bnt-proteccion = etapa-0` con sus enlaces y la política
-     `bnt-bootstrap-sec-deny-pipeline` (según las dos banderas), y el presupuesto
-     `bnt-bootstrap-ops-budget`.
+     `bnt-bootstrap-sec-deny-pipeline` (según las dos banderas; la regla sin etiqueta también
+     niega a las nueve cuentas pedir tokens o firmar como otra cuenta, pendiente 127), y el
+     presupuesto `bnt-bootstrap-ops-budget`;
+   - solo con organización: `google_org_policy_policy` con padre `projects/<ID>` (al final, después
+     de las cuentas, sus roles y el bucket) y, con `access_policy_id`, el perímetro
+     `bnt_common_sec_perimeter` en dry-run alrededor del proyecto.
 
    Si la creación del bucket falla por permisos sobre la llave, repite `terraform plan` y
    `terraform apply`: el permiso del agente de Cloud Storage puede tardar en propagarse
@@ -368,7 +388,7 @@ por recurso, como dice el ADR 0029 §8:
 - **Volver el estado a local:** `cp backend_override.tf.example backend_override.tf` y
   `terraform init -migrate-state`.
 - **Apagar el pipeline:** `gh variable set GCP_ENABLED --body "false"`: los trabajos de GCP se
-  omiten.
+  omiten. Para dejar fuera solo dev o qa, `GCP_DISABLED_ENVS` (`pipeline.md` §1.2).
 - **Entornos dev y qa:** `destroy.yml` (cargas y, con `incluir_red = true`, el spoke). Queda a
   propósito lo que vive en `1-base`: llaves, repositorios y contenedores de secretos. prod, el
   hub y `1-base` no tienen flujo de destroy (guía del colaborador, sección I).
@@ -393,6 +413,18 @@ terraform apply tfplan
 
 Si cambia `stage_service_accounts`, `read_service_account` o `workload_identity_provider`,
 actualiza la variable de GitHub que le corresponde (paso 7).
+
+Casos que piden volver a aplicar esta etapa:
+
+- **VM DNS de `onprem-sim`:** `onprem_dns_vm = true` aquí primero (rol de VM del hub); después
+  `onprem_dns_vm = true` en la llave `stages/2-networks` de `GCP_TFVARS_JSON` y `apply.yml`, que
+  aplica `1-base` (cuenta `<prefix>-common-net-dns`) antes que el hub (la VM). Para quitarla, al
+  revés: primero `false` en el hub y `apply.yml` (borra la VM con el rol todavía puesto), después
+  `false` aquí; el siguiente `apply.yml` quita la cuenta en `1-base`.
+- **Organización nueva o política de acceso nueva:** `org_id`, `directory_customer_id` o
+  `access_policy_id` aquí, con los roles de organización de los prerrequisitos.
+- **Repositorio renombrado:** `github_repository` aquí. Hasta volver a aplicar, ninguna cuenta que
+  escribe obtiene token (`attribute.deploy` queda en `none`; `pipeline.md` §5).
 
 El arranque anterior, con organización, carpetas y proyecto semilla, está en la rama
 `archivo/multiproyecto`.

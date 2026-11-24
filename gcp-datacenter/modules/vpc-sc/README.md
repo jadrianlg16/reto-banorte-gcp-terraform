@@ -6,8 +6,10 @@ reglas de salida opcionales (`egress_policies`) y el alta de los proyectos de `r
 perímetro. Trabaja sobre una política de Access Context Manager que ya existe
 (`access_policy_id`, obligatoria): la política es una por organización y no la crea el pipeline.
 
-En el diseño de un solo proyecto (ADR 0029 §1) el perímetro es opcional: `1-base` lo crea solo si
-hay organización y llega `access_policy_id`, con `environment = "common"`. Rodea todo el
+En el diseño de un solo proyecto (ADR 0029 §1) el perímetro es opcional: `0-bootstrap` lo crea
+(`stages/0-bootstrap/org.tf`) solo si hay organización y llega `access_policy_id`, con
+`environment = "common"`; lo aplica la persona de la etapa 0, con
+`roles/accesscontextmanager.policyAdmin` (pendiente 126). Rodea todo el
 proyecto, queda en dry-run y no separa entornos. La especificación (sección "Componentes del
 datacenter", seguridad) pide un perímetro para los datos: por eso `restricted_services` debe
 incluir al menos `storage.googleapis.com` (validación), los recursos deben ser números de
@@ -28,7 +30,7 @@ administra este módulo (construidas desde sus recursos; no incluyen reglas de o
 
 ## Proyectos y reglas de entrada agregados desde otras raíces
 
-Con un solo proyecto, `1-base` mete el proyecto completo y ninguna otra raíz agrega altas. El
+Con un solo proyecto, `0-bootstrap` mete el proyecto completo y ninguna otra raíz agrega altas. El
 mecanismo de recursos separados se conserva porque es el que piden las páginas del proveedor
 6.x y deja abierta la puerta a otras altas sin drift:
 

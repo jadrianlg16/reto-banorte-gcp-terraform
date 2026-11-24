@@ -1,7 +1,7 @@
 # Módulo `gke`
 
-Crea un clúster de GKE estándar y sus pools de nodos (`gke_node_pools`) en el proyecto de
-servicio, sobre la VPC compartida del proyecto host (red y subred llegan como self links) y en
+Crea un clúster de GKE estándar y sus pools de nodos (`gke_node_pools`) en el proyecto único
+(ADR 0029), sobre la VPC del spoke de su entorno (red y subred llegan como self links) y en
 modo VPC nativo con los rangos secundarios con nombre de la subred. Cumple lo que la sección
 "Componentes del datacenter" de la especificación exige al cómputo en contenedores, como
 valores fijos y no como opciones: nodos privados, Workload Identity, Binary Authorization
@@ -15,17 +15,18 @@ protección contra borrado siempre activa en prod.
 
 Decisión sobre el endpoint del plano de control: privado por defecto
 (`enable_private_endpoint = true`), con acceso global dentro de la VPC y redes autorizadas por
-variable. Terraform no lo necesita (la etapa 5 solo usa la API de Google), y `kubectl` llega
+variable. Terraform no lo necesita (`3-workloads` solo usa la API de Google), y `kubectl` llega
 desde la VPC del spoke o desde los rangos de `master_authorized_networks`. Como el peering del
 plano de control no es transitivo, desde el hub u on-premises hace falta un bastión en el
 spoke o el endpoint basado en DNS de GKE (no construido). En prod el endpoint privado es
 obligatorio (validación); en dev y qa se puede abrir el público, y entonces el módulo exige al
 menos un rango autorizado y rechaza `/0`.
 
-La llave KMS (`kms_key`, uso `gke` de la etapa 2) debe estar en la misma región que el
-clúster, y la subred también. El agente de servicio de GKE del proyecto de servicio necesita
-`roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave y el usuario de subred en el host
-(los da la etapa 4). La política de Binary Authorization del proyecto no la crea este módulo.
+La llave KMS (`kms_key`, uso `gke` de `1-base`) debe estar en la misma región que el
+clúster, y la subred también. El agente de servicio de GKE necesita
+`roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave, que da `1-base` (`kms.tf`); sin
+Shared VPC la subred es del mismo proyecto. La política de Binary Authorization del proyecto no
+la crea este módulo.
 Las reglas de firewall del spoke usan etiquetas seguras: `node_resource_manager_tags`
 (`tagKeys/<id>` → `tagValues/<id>`, vacío por defecto) las pone en los nodos de todos los
 pools, por ejemplo `lb_backend` para que el balanceador llegue a los NEG de GKE.
@@ -36,7 +37,7 @@ Apagado fuera de horario (ADR 0028, solo dev y qa; se rechaza en prod): con
 trabajos de Cloud Scheduler del módulo `off-hours-shutdown` desactivan el autoescalado y llevan
 el pool a 0 de noche, y lo devuelven en la mañana con los límites de `gke_node_pools`. Cambiar
 `scheduled_scaling` reemplaza los pools (crea los nuevos y borra los viejos). El clúster sigue
-cobrando su cuota con los pools en 0. La salida `node_pools` da a la etapa 5 lo que necesitan
+cobrando su cuota con los pools en 0. La salida `node_pools` da a `3-workloads` lo que necesitan
 los trabajos.
 
 Nombre del clúster: por defecto `<prefix>-<environment>-app-<name>-<código de región>`. Con

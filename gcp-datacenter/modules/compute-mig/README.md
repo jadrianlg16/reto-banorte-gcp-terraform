@@ -1,6 +1,6 @@
 # Módulo `compute-mig`
 
-Crea, en el proyecto de servicio, una plantilla regional de instancias, un grupo de instancias
+Crea, en el proyecto único (ADR 0029), una plantilla regional de instancias, un grupo de instancias
 administrado (MIG) regional con autocuración y actualización progresiva, su autoescalador
 regional y una verificación de salud global. Cumple lo que la sección "Componentes del
 datacenter" de la especificación exige a las cargas en VM, como valores fijos: Shielded VM
@@ -8,17 +8,16 @@ datacenter" de la especificación exige a las cargas en VM, como valores fijos: 
 por defecto; en prod se rechazan las imágenes públicas base de Google), autoescalado
 (`min_replicas` <= `max_replicas`, y al menos 2 en prod) con autocuración, y sin IP pública
 (la interfaz no tiene `access_config` ni `ipv6_access_config` y es `stack_type = "IPV4_ONLY"`). Además fija el cifrado CMEK del disco de arranque con
-`kms_key` (uso `compute` de la etapa 2, en la misma región), la cuenta de servicio dedicada (se
+`kms_key` (uso `compute` de `1-base`, en la misma región), la cuenta de servicio dedicada (se
 rechaza la de Compute por defecto), OS Login, bloqueo de llaves SSH del proyecto y puerto
 serie apagado, y expone puertos con nombre para el balanceador.
 
-La subred llega como self link de la VPC compartida del proyecto host. La salida
-`instance_group` es el backend que recibe el módulo `load-balancer`; la verificación de salud
-es global y sirve a la autocuración (un balanceador interno regional crea la suya). El agente
-de servicio de Compute del proyecto de servicio necesita
-`roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave y el usuario de subred en el host
-(los da la etapa 4). Las reglas de firewall del spoke usan etiquetas seguras: se pasan en
-`resource_manager_tags` como `tagKeys/<id>` → `tagValues/<id>`.
+La subred llega como self link de la VPC del spoke, en el mismo proyecto (sin Shared VPC). La
+salida `instance_group` es el backend que recibe el módulo `load-balancer`; la verificación de
+salud es global y sirve a la autocuración (un balanceador interno regional crea la suya). El
+agente de servicio de Compute necesita `roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la
+llave, que da `1-base` (`kms.tf`). Las reglas de firewall del spoke usan etiquetas seguras: se
+pasan en `resource_manager_tags` como `tagKeys/<id>` → `tagValues/<id>`.
 
 Apagado fuera de horario (ADR 0028, solo dev y qa; se rechaza en prod): con `business_hours`
 el autoescalador usa un programa de escalado (`business-hours`) como única señal, con

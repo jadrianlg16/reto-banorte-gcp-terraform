@@ -1,9 +1,12 @@
 # Pruebas de integración y de extremo a extremo (Terratest)
 
-> **Estado al 21 nov 2026: estas pruebas solo se han compilado (`go build`, `go vet`,
-> `go test -run XXX`) y se ha comprobado que sin variables de entorno todas se omiten. Nunca
-> se han ejecutado contra GCP.** Nada de lo que comprueban está verificado; cuando corran por
-> primera vez, cada fallo es un hallazgo del módulo o de la prueba, no una regresión.
+> **Estado al 24 nov 2026: las pruebas que tocan GCP solo se han compilado (`go vet`,
+> `go test -run XXX`) y se ha comprobado que sin variables de entorno se omiten. Nunca se han
+> ejecutado contra GCP.** Nada de lo que comprueban está verificado; cuando corran por primera
+> vez, cada fallo es un hallazgo del módulo o de la prueba, no una regresión. Las pruebas sin
+> GCP (las de `config.example.json`, de tipos, de conectividad con respuestas escritas a mano y
+> de `helpers`) sí corren: `go vet ./...` y `go test -count=1 ./...` en el trabajo
+> `go (vet y pruebas sin GCP)` de `pr.yml`, en cada PR.
 
 Niveles del contrato (§9.2) que viven aquí:
 
@@ -73,7 +76,7 @@ vive en el código.
 | `TERRATEST_LANDING_ZONE_PROJECT_ID` | Proyecto de la landing zone. Si está definida e igual a `TERRATEST_PROJECT_ID`, cada prueba de integración se detiene con un error (`helpers.RequireProjectEnv`). En CI la exporta `terratest.yml` desde `GCP_TFVARS_JSON.common.project_id`; en local, exportarla a mano | Opcional (guarda) |
 | `TEST_EPHEMERAL_PROJECTS` | `true`: un proyecto efímero por prueba en vez del proyecto único (necesita las tres de abajo) | Opcional |
 | `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | Solo con `TEST_EPHEMERAL_PROJECTS=true` |
-| `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de los proyectos efímeros. Opcional: sin ella se usa la organización | Proyectos efímeros |
+| `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de los proyectos efímeros. Opcional: sin ella se usa la organización. Solo tiene sentido con `TEST_EPHEMERAL_PROJECTS=true` y una organización (sin organización no hay carpetas); el modo por defecto no la usa | Proyectos efímeros |
 | `TERRATEST_ORG_ID` | Número de la organización. Sin ella se omiten las pruebas que solo valen con organización (`helpers.RequireOrganization`, con la marca `[sin-organizacion]` en el motivo; esas omisiones no cuentan contra `TERRATEST_MAX_SKIPS`) | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
 | `GOOGLE_CLOUD_PROJECT` | Proyecto por defecto de `gcloud` y del proveedor | Recomendado |
 | `TEST_REGION` / `TEST_DR_REGION` | Regiones (por defecto `us-central1` / `us-east4`). Deben estar en los mapas de códigos cortos de los módulos | Opcional |
@@ -136,9 +139,12 @@ Desde `gcp-datacenter/tests`. Las pruebas largas necesitan `-timeout` mayor que 
 (10 min por defecto).
 
 ```bash
-# Compilar todo sin ejecutar ninguna prueba (lo que hace CI siempre).
+# Compilar todo sin ejecutar ninguna prueba (trabajo compile de terratest.yml).
 go vet ./...
 go test -count=1 -run XXX ./...
+
+# Correr las pruebas sin GCP (las demás se omiten solas): trabajo go de pr.yml.
+go test -count=1 ./...
 
 # Una sola prueba de integración, en el proyecto único de pruebas.
 export TERRATEST_PROJECT_ID=...
@@ -161,6 +167,13 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 
 ## Qué hace CI
 
+`.github/workflows/pr.yml`, en cada PR y sin GCP: el trabajo `go (vet y pruebas sin GCP)` corre
+`go vet ./...` y `go test -count=1 ./...`. Las pruebas que necesitan GCP se omiten por falta de
+variables; las demás (`TestConfigExampleRoots`, `TestConfigExampleBinaryAuthorization`,
+`TestJSONFitsType`, `TestEvaluateConnectivity`, las de `helpers`, etc.) tienen que pasar. Es una
+comprobación obligatoria de la protección de `main` que la persona agrega en GitHub
+(`docs/pipeline.md` §4).
+
 `.github/workflows/terratest.yml` (raíz del repositorio):
 
 - **compile** (siempre): `go vet ./...` y `go test -count=1 -run XXX ./...`. Compila los binarios de
@@ -179,7 +192,9 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
   se omiten con la marca `[sin-organizacion]` (`helpers.OrgSkipMarker`) y no cuentan, porque
   sin organización no hay cómo correrlas; se listan igual, marcadas "sin organización: no
   cuenta". Con `TERRATEST_ORG_ID` definido cuentan como cualquier otra (por ejemplo, si falta
-  `TEST_ALLOW_ORG`).
+  `TEST_ALLOW_ORG`). Probado con una salida real de `go test -json` en `selftest.sh`; en la
+  primera corrida nocturna sin organización queda por comprobar (punto 145 de
+  `docs/pendientes-apply.md`).
 - La prueba de extremo a extremo no corre en CI: se lanza a mano.
 - `TestDevSmoke` corre en `apply.yml` (trabajo `dev / prueba de humo`), no aquí, con
   `TEST_SMOKE=true`, `TEST_E2E_STATE_BUCKET` y la cuenta de lectura `GCP_AUDIT_SERVICE_ACCOUNT`
@@ -192,9 +207,9 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestStorage` | storage | CMEK con la llave pedida, versionado, acceso uniforme, PAP `enforced`, reglas de ciclo de vida, etiquetas, sin `allUsers` |
 | `TestKMS` | kms | Rotación ≤ 90 días y próxima rotación, `ENCRYPT_DECRYPT`, nombres §4.2, `encrypter_decrypters` |
 | `TestSecrets` | secrets | Sin versiones (nunca valores), réplica con CMEK en la región, etiquetas, accessor |
-| `TestLogExport` | log-export | CMEK, retención de 30 días sin bloquear, PAP, sink de proyecto al bucket con la exclusión del propio bucket, `writer_identity` con `objectCreator` |
+| `TestLogExport` | log-export | CMEK, retención de 30 días sin bloquear, PAP, sink de proyecto al bucket con la exclusión del propio bucket (que la API devuelva el filtro idéntico: punto 149), `writer_identity` con `objectCreator` |
 | `TestIAM` | iam | Rol de proyecto aditivo, rol condicionado en bucket |
-| `TestOrg` | org | Exactamente las siete políticas (ocho con `TEST_DIRECTORY_CUSTOMER_ID`) con su valor, con padre `projects/<id>` |
+| `TestOrg` | org | Exactamente las siete políticas (ocho con `TEST_DIRECTORY_CUSTOMER_ID`) con su valor, con padre `projects/<id>`, y que el destroy las quite (punto 148) |
 | `TestVPCSC` | vpc-sc | Perímetro `common` en dry-run explícito sobre una política existente, proyecto en el perímetro, `storage` restringido, regla de entrada |
 | `TestNetworkHub` | network-hub | VPC personalizada, PGA y flow logs al 100 % (valor por defecto) en cada subred, router por región con ASN 64514 |
 | `TestNetworkSpoke` | network-spoke | PGA y flow logs al 100 % (valor por defecto), rangos secundarios, proxy-only, PSA, peering en ambos sentidos con rutas personalizadas, NAT |
@@ -264,10 +279,11 @@ Ya no hace falta `TERRATEST_ORG_ID`: el proyecto y su número salen de las salid
   identidad publicadora en la prueba). Si se cambia `cloud_run_image`, hay que cambiar el patrón;
   `TestConfigExampleBinaryAuthorization` (sin GCP) lo comprueba contra la validación de la
   variable en la raíz de `stages/` que la declare. **VERIFICAR-EN-APPLY**: que el `*` final
-  admita la etiqueta `:latest`. Las pruebas de integración no cambian: no aplican `1-base`.
-  HYPOTHESIS: si el proyecto único de pruebas es el mismo de la landing zone, su política de
-  Binary Authorization también vale para `TestCloudRun` y `TestGKE`; por eso conviene un proyecto
-  de pruebas aparte.
+  admita la etiqueta `:latest`. Las pruebas de integración no cambian: no aplican `1-base`. Como
+  el proyecto de pruebas no puede ser el de la landing zone (guarda de `TERRATEST_PROJECT_ID`,
+  arriba), la política de Binary Authorization de `1-base` no vale para `TestCloudRun` ni
+  `TestGKE`; manda la que tenga el proyecto de pruebas (punto 120 de
+  `docs/pendientes-apply.md`).
 - **VPN de DR del hub.** `enable_vpn_dr = true` explícito, como en el diseño: el hub crea 8
   túneles (2 HA VPN de 2 túneles en el hub y sus puntas en `onprem-sim`). Se mantiene para que
   0 → 3 mida el tiempo y el costo del diseño real; con un tiempo acotado se puede poner `false`

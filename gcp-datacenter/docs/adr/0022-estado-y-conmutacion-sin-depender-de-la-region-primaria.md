@@ -7,7 +7,10 @@ Aceptado, 2026-11-21. Completa los ADR 0002, 0005, 0006 y 0008.
 Enmendado el 2026-11-24: con el proyecto único ([ADR 0029](0029-un-solo-proyecto.md)) lo que
 decía "etapa 3, hub" está en `stages/2-networks` y lo de la "etapa 5" en
 `stages/3-workloads/envs/<env>`; la raíz de cargas es nueva y no tiene bloques `moved` (el estado
-empieza de cero). La decisión no cambia.
+empieza de cero). La decisión no cambia. Enmendado otra vez el 2026-11-24: las llaves KMS de
+`dr_region` (`<uso>_dr`) y la `storage` de la multirregión `us` existen solo para los entornos de
+`dr_environments` de `1-base` (por defecto prod); un entorno con `enable_dr` que no esté en esa
+lista falla en el plan por falta de llaves.
 
 Tipo: Aclaración.
 

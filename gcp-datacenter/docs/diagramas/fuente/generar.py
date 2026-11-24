@@ -182,8 +182,11 @@ def d2() -> Diagrama:
     # onprem-sim
     D.tarjeta("fw-onp", G["x"], cy("onp"), G["w"], 84, "cat-security", "Firewall propio",
               "Política de firewall de red", "DNS desde 35.199.192.0/19 e IAP", dentro="b-onp")
+    # La VM DNS de prueba (stages/2-networks/onprem_dns.tf) vive en esta subred, en una zona de la
+    # región primaria, y solo existe con onprem_dns_vm = true.
     D.caja("sn-onp", C1["sx"], cy("onp") - 2, C1["sw"], 88, "subred", "Subred onprem-sim",
-           cuerpo=["192.168.0.0/24", "la VPN anuncia solo esta subred"], dentro="use1")
+           cuerpo=["192.168.0.0/24 · la única que anuncia la VPN", "VM DNS de prueba (opcional: onprem_dns_vm)"],
+           dentro="use1")
     D.tarjeta("vpn-onp", C1["cx"], cy("onp"), C1["cw"], 84, "cat-networking", "Gateway HA VPN",
               "Cloud VPN (HA) + Cloud Router", "lado on-premises · ASN 65001", dentro="use1")
     D.tarjeta("vpn-onp-dr", C4["cx"] - 160, cy("onp"), C4["cw"] + 160, 84, "cat-networking", "Gateway de DR",
@@ -357,13 +360,14 @@ def d4() -> Diagrama:
     D.caja("proj", 330, 136, 1280, 882, "proyecto", "Proyecto único", dentro="gc")
 
     # A. Identidad del pipeline
-    D.caja("ident", 350, 172, 650, 432, "logico", "Identidad del pipeline", sub="0-bootstrap", dentro="proj")
+    D.caja("ident", 350, 172, 650, 432, "logico", "Identidad del pipeline", sub="0-bootstrap · nueve cuentas",
+           dentro="proj")
     D.tarjeta("wif", 366, 210, 264, 100, "cat-security", "Identidad federada", "Workload Identity Federation",
               "sin llaves JSON", dentro="ident")
     D.tarjeta("estado", 366, 336, 264, 92, "cloud-storage", "Estado de Terraform", "Cloud Storage",
               "CMEK · un prefijo por raíz", dentro="ident")
     D.tarjeta("deny", 366, 470, 264, 112, "cat-security", "Protección del estado", "IAM Deny + etiqueta",
-              "nadie del pipeline borra el bucket ni cambia WIF", dentro="ident")
+              "nadie del pipeline borra el bucket, cambia WIF ni pide tokens", dentro="ident")
     D.flecha([D.p("deny", "t"), D.p("estado", "b")], "protege", punteada=True, en=(498, 449))
     cuentas = [
         ("sa-common", "Cuentas de common", "tf-base · tf-net", "", 64),
@@ -381,7 +385,7 @@ def d4() -> Diagrama:
         y += h + 10
 
     # B. Registro y auditoría
-    D.caja("audit", 1020, 172, 570, 432, "logico", "Registro y auditoría", sub="1-base, una vez por proyecto",
+    D.caja("audit", 1020, 172, 570, 432, "logico", "Registro, auditoría y cuentas", sub="1-base, una vez por proyecto",
            dentro="proj")
     # El bucket de logs es de Cloud Storage (módulo log-export). Las métricas de las alertas se
     # calculan sobre los registros en Cloud Logging, no sobre el bucket: la flecha sale de los
@@ -396,6 +400,10 @@ def d4() -> Diagrama:
               dentro="audit")
     D.tarjeta("alertas", 1320, 484, 254, 108, "cat-observability", "Alertas de auditoría", "Cloud Monitoring",
               "métricas de logs del CIS: IAM, firewall, rutas, red", dentro="audit")
+    # Cuentas de ejecución de las cargas (stages/1-base/runtime_accounts.tf): las crea 1-base con
+    # sus permisos; tf-wl-<env> solo puede adjuntar las de su entorno (serviceAccountUser).
+    D.tarjeta("sa-run", 1050, 458, 240, 88, "cat-security", "Cuentas de cargas", "una por entorno, app y uso",
+              "tf-wl-<env> solo las adjunta", dentro="audit", icono_px=34)
     D.flecha([D.p("logs", "b"), D.p("bucket", "t")], "sink", en=(1170, 338))
     D.flecha([D.p("kms-logs", "l"), D.p("bucket", "r")], punteada=True)
     lx, ly = D.p("logs", "l")
@@ -407,7 +415,7 @@ def d4() -> Diagrama:
            dentro="proj")
     D.tarjeta("sched", 366, 690, 264, 104, "cat-integration", "Programador", "Cloud Scheduler",
               "lun-vie 07:00 a 20:00, America/Monterrey", dentro="apagado")
-    D.tarjeta("sa-sched", 366, 860, 264, 120, "cat-security", "Cuenta -sched", "una por entorno y aplicación",
+    D.tarjeta("sa-sched", 366, 860, 264, 120, "cat-security", "Cuenta -sched", "la crea 1-base, una por entorno y app",
               "rol OffHoursScheduler de 0-bootstrap", dentro="apagado")
     D.flecha([D.p("sa-sched", "t"), D.p("sched", "b")], "firma con", punteada=True, en=(498, 827))
     obj = [
@@ -436,7 +444,10 @@ def d4() -> Diagrama:
               "plan de respaldo en us-east4", dentro="dr4")
 
     # Fuera
-    D.tarjeta("actions", 40, 210, 250, 80, "gen-flujo", "GitHub Actions", "trabajo con environment")
+    # Centro a la altura de la flecha OIDC (y = 250). Las cuentas que escriben solo aceptan un
+    # trabajo de main con environment (attribute.deploy de stages/0-bootstrap/wif.tf).
+    D.tarjeta("actions", 40, 200, 250, 100, "gen-flujo", "GitHub Actions", "trabajo con environment",
+              "para escribir: solo desde main")
     D.flecha([D.p("actions", "r"), D.p("wif", "l", 0.4)], "OIDC", en=(328, 230))
     D.tarjeta("correo", 1660, 480, 220, 90, "gen-correo", "Correo de alertas", "canales y contactos esenciales")
     D.flecha([D.p("alertas", "r", 0.4), (1660, D.p("alertas", "r", 0.4)[1])])
@@ -471,7 +482,7 @@ def d5() -> Diagrama:
 
     carril("l1", 136, 160, "1 · Pull request", "pr.yml", [
         ("pr", "gen-repositorio", "Pull request", "rama fix/… o verif/…", "nada directo a main"),
-        ("rev", "gen-politica", "Revisiones sin GCP", "check.sh y 3 scripts más",
+        ("rev", "gen-politica", "Revisiones sin GCP", "check.sh, 3 scripts y Go",
          "fmt, validate, tflint, checkov, terraform test"),
         ("plan1", "gen-plan", "Plan por raíz", "cuenta tf-read", "-lock=false, resumen y costo en el PR"),
         ("conf1", "gen-politica", "Conftest", "políticas sobre el plan", "una violación bloquea el merge"),
@@ -514,15 +525,16 @@ def d5() -> Diagrama:
         ("dnet", "gen-borrar", "Destroy de la red", "2-networks/<env>", "solo con incluir_red = true", True),
         ("huerf", "cat-management", "Huérfanos", "Cloud Asset Inventory", "etiqueta env y prefijo <prefix>-<env>-"),
     ])
-    D.texto(78, 968, "Se conserva a propósito lo del entorno que vive en 1-base: llaves KMS, repositorios de "
-                     "imágenes y contenedores de secretos.", tam=15, color="#3C4043", id_="t-conserva")
+    D.texto(78, 968, "Se conserva lo del entorno que vive en 1-base: llaves KMS, repositorios, contenedores de "
+                     "secretos y cuentas de ejecución. GCP_DISABLED_ENVS evita que apply.yml lo vuelva a crear.",
+            tam=15, color="#3C4043", id_="t-conserva")
 
     # Google Cloud
     g = [
         ("g-read", 174, 104, "cat-security", "Cuenta de lectura", "tf-read, por WIF",
          "la usan plan, drift, humo y huérfanos"),
         ("g-write", 364, 104, "cat-security", "Cuentas que escriben", "tf-base · tf-net · tf-*-<env>",
-         "por WIF, solo con su environment"),
+         "por WIF, solo main con su environment"),
         ("g-state", 490, 96, "cloud-storage", "Estado de Terraform", "Cloud Storage",
          "el apply toma el candado; el plan no"),
         ("g-cai", 662, 104, "cat-management", "Inventario", "Cloud Asset Inventory", "alcance: el proyecto"),

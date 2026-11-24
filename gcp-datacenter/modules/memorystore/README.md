@@ -1,7 +1,8 @@
 # Módulo `memorystore`
 
 Crea una instancia de Memorystore para Redis (`google_redis_instance`) con IP privada por
-Private Service Access sobre la VPC del host de Shared VPC. La sección "Componentes del
+Private Service Access sobre la VPC del spoke de su entorno (proyecto único, sin Shared VPC;
+ADR 0029). La sección "Componentes del
 datacenter" de la especificación pide para la caché IP privada, CMEK y alta disponibilidad en
 prod; el módulo lo fija así:
 
@@ -19,8 +20,9 @@ prod; el módulo lo fija así:
 AUTH queda apagado y no es configurable. Con `auth_enabled = true`, GCP genera una cadena AUTH
 que el proveedor guarda en el estado de Terraform (`auth_string`); el ADR 0015 prohíbe dejar
 secretos generados en el estado, aunque el bucket esté cifrado. La caché se protege por otras
-capas: solo IP privada en el rango de PSA del spoke, perímetro de VPC-SC en prod, reglas de
-firewall de la VPC y TLS en tránsito. Si un caso de uso exigiera autenticación por cliente, la
+capas: solo IP privada en el rango de PSA del spoke, reglas de firewall de la VPC, TLS en
+tránsito y, solo con organización, el perímetro de VPC-SC opcional que rodea el proyecto. Si
+un caso de uso exigiera autenticación por cliente, la
 alternativa sin secretos en el estado es Memorystore for Redis Cluster con autenticación IAM
 (otro recurso, fuera de este módulo). La revisión CKV_GCP_95 se omite en el recurso con este
 motivo.

@@ -10,8 +10,10 @@ carrera entre el plan y el apply de la etapa 2 y los applies de la etapa 4 de pr
 
 Reemplazado por [0029](0029-un-solo-proyecto.md) el 2026-11-24: sin proyectos de prod
 separados, el perímetro no puede separar entornos. Ahora es opcional y supone organización
-(ADR 0029 §1): lo crea `1-base` (`stages/1-base/org.tf`) solo cuando llega `access_policy_id`,
-sobre una política de acceso que ya existe (el módulo no la crea), con
+(ADR 0029 §1): lo crea la persona que aplica `0-bootstrap` (`stages/0-bootstrap/org.tf`, con
+`roles/accesscontextmanager.policyAdmin`; enmienda del 2026-11-24, punto 126 de
+[`pendientes-apply.md`](../pendientes-apply.md)) solo cuando llegan `org_id` y
+`access_policy_id`, sobre una política de acceso que ya existe (el módulo no la crea), con
 `resources = ["projects/<número>"]` (todo el proyecto), `environment = "common"`, las nueve
 cuentas del pipeline en la regla de entrada y siempre en dry-run (`enforced = false`). Ninguna
 otra raíz da de alta recursos ni reglas, así que la carrera de la etapa 4 y el alta del proyecto

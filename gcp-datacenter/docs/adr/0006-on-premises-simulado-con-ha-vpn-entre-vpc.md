@@ -10,6 +10,11 @@ política jerárquica, la política de red de `onprem-sim` es la única que admi
 (ya no hay delegación con `goto_next`); el estado del hub, con el secreto, lo leen `tf-net`, las
 cuentas de los spokes y `tf-read`.
 
+Enmendado otra vez el 2026-11-24: la VM DNS de `onprem-sim` ya es código opcional
+(`onprem_dns_vm`, `stages/2-networks/onprem_dns.tf`), y con on-premises real el plan del hub
+falla en el pipeline porque lo corre `tf-read`, que tiene negado el valor del secreto (punto 151
+de [`pendientes-apply.md`](../pendientes-apply.md)).
+
 Tipo: Supuesto.
 
 ## Contexto
@@ -39,8 +44,19 @@ VPN; la de DR crea su propio gateway externo `…-vpn-onprem-dr-peer`), `onprem-
 Para poder probar el reenvío de DNS en modo simulado, `onprem-sim` tiene su propia política de
 firewall de red (`<prefix>-common-net-fw-onprem-sim`, `module.firewall_onprem_sim`) que permite
 `35.199.192.0/19` (TCP y UDP 53) y SSH por IAP; lo demás lo deniega la regla por defecto del
-módulo. Sin política jerárquica (ADR 0029 §6), esa política es la única que decide. Falta solo
-la VM DNS, que se crea a mano.
+módulo. Sin política jerárquica (ADR 0029 §6), esa política es la única que decide.
+
+VM DNS opcional: con `onprem_dns_vm = true` en `0-bootstrap` y en el hub (solo con
+`simulate_onprem`), el hub crea en `onprem-sim` una e2-micro debian-12 sin IP pública, con OS
+Login y Shielded VM, en la primera IP de `onprem_dns_servers`
+(`stages/2-networks/onprem_dns.tf`). Responde con autoridad por `onprem_dns_domain` con un
+servidor hecho con la biblioteca estándar de Python 3, porque `onprem-sim` no tiene ruta a
+internet para instalar paquetes; el registro de prueba es `dns.<onprem_dns_domain>`. Su cuenta,
+`<prefix>-common-net-dns`, la crea `1-base` con `logging.logWriter` y le da a `tf-net`
+`serviceAccountUser` solo sobre ella (`stages/1-base/onprem_dns.tf`). Para crear la VM,
+`0-bootstrap` da al hub `compute.instanceAdmin.v1` sin condición mientras la opción esté
+encendida (riesgo del ADR 0029 §9). Orden: `0-bootstrap` → `1-base` → hub. Que la VM arranque y
+responda es `VERIFICAR-EN-APPLY` (puntos 128 a 130).
 
 Secreto compartido de IKE: entra por `shared_secret` (variable `sensitive`, sin valor por
 defecto, mínimo 32 caracteres; ninguna salida lo expone). En modo simulado la raíz lo genera con
@@ -51,8 +67,17 @@ por túnel en `onprem_vpn_secret_version_overrides` (llaves `primary-if0`, `prim
 `dr-if0`, `dr-if1`); el valor lo carga el equipo de red fuera de Terraform. En los dos casos el
 valor queda en el estado de la raíz `2-networks/hub`, cifrado con la llave CMEK del bucket de
 estado (ADR 0008) y legible por `tf-net`, por las cuentas de los spokes (`tf-net-<env>`, que leen
-el prefijo del hub para el peering) y por `tf-read` (ADR 0010). Con on-premises real, `tf-net`
-todavía no tiene permiso para leer el secreto en Secret Manager (abierto, contrato §12).
+el prefijo del hub para el peering) y por `tf-read` (ADR 0010).
+
+Con on-premises real, `tf-net` necesita `roles/secretmanager.secretAccessor` sobre el secreto, que
+da una persona (ninguna raíz). La política de denegación deja a `tf-net` fuera de la regla de
+valores de secretos. Pero la fuente de datos se lee en cada plan, y los `plan` del pipeline
+corren con `tf-read`, que no tiene acceso y tiene negado `secretmanager.versions.access`: con
+`simulate_onprem = false` el plan del hub falla en el pipeline (falla cerrado, el secreto no
+sale). Hay tres salidas propuestas y ninguna construida: leer el secreto solo en el apply con la
+misma huella de plan, un atributo de solo escritura (Terraform 1.11 o más) o correr el plan del
+hub con `tf-net` (comentario de `stages/2-networks/vpn.tf`; punto 151 y
+[`pendientes-apply.md`](../pendientes-apply.md) §5).
 
 ## Alternativas consideradas
 
@@ -67,9 +92,10 @@ todavía no tiene permiso para leer el secreto en Secret Manager (abierto, contr
 
 - Positivas: el mismo código cubre la prueba y la producción; solo cambia `peer.type`.
 - Negativas: la simulación es GCP a GCP. No prueba la configuración de un equipo de otro
-  fabricante, la MTU ni la latencia reales. La VPC simulada no tiene servidor DNS: para probar
-  el reenvío condicional (`onprem_dns_servers`) hace falta crear a mano una VM de DNS en
-  `onprem-sim` con esa IP; el firewall ya lo admite.
+  fabricante, la MTU ni la latencia reales. Para probar el reenvío condicional
+  (`onprem_dns_servers`) hay que encender `onprem_dns_vm`, que mientras esté encendida da al hub
+  `compute.instanceAdmin.v1` sobre todo el proyecto. El modo real no se puede aplicar desde el
+  pipeline hasta construir una de las salidas del punto 151.
 - El secreto queda en el estado en ambos modos; esto es una excepción al principio del
   ADR 0015, aceptada porque `google_compute_vpn_tunnel` exige el valor y Terraform 1.9 no tiene
   atributos de solo escritura (ADR 0001). En el proveedor 6.50, `shared_secret` fuerza el

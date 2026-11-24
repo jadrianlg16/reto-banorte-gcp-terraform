@@ -25,10 +25,11 @@ y los roles básicos `roles/owner` y `roles/editor`.
 
 Se eligieron por lo que consumen las etapas del diseño de un solo proyecto (ADR 0029): roles
 de proyecto de las cuentas del pipeline, condicionados por prefijo donde el servicio lo admite
-(`0-bootstrap`), el rol de organización opcional para políticas de organización, Workload
-Identity sobre esas cuentas, permisos condicionados por prefijo sobre el bucket de estado, IAM
-de personas por grupos (`1-base`), llaves KMS y secretos para agentes de servicio y cuentas de
-ejecución, y subredes. Ya no hay carpetas ni cuentas de facturación administradas por el
+(`0-bootstrap`), Workload Identity sobre esas cuentas, permisos condicionados por prefijo sobre
+el bucket de estado, IAM de personas por grupos (`1-base`), llaves KMS y secretos para agentes
+de servicio y cuentas de ejecución, y subredes. El scope `organization` se conserva, pero
+ninguna raíz lo usa hoy: ninguna cuenta del pipeline recibe roles de organización. Ya no hay
+carpetas ni cuentas de facturación administradas por el
 pipeline: los scopes `folder` y `billing_account` se quitaron. Todos admiten `condition`
 (condiciones de IAM).
 

@@ -9,7 +9,7 @@ en la región secundaria, SSL obligatorio, CMEK y autenticación IAM; el módulo
 valores fijos o validaciones:
 
 - `ipv4_enabled = false` y `private_network` fijos; `allocated_ip_range` opcional para tomar la
-  IP del rango de PSA de la etapa 3.
+  IP del rango de PSA del spoke (`2-networks/envs/<env>`).
 - `availability_type`: REGIONAL por defecto en prod y una validación rechaza ZONAL en prod. La
   réplica usa la misma disponibilidad que la primaria.
 - Respaldos diarios y PITR siempre activos (`retained_backups`, `transaction_log_retention_days`).
@@ -22,7 +22,7 @@ valores fijos o validaciones:
 - `ssl_mode` validado: `TRUSTED_CLIENT_CERTIFICATE_REQUIRED` (por defecto, compatible con los
   conectores de Cloud SQL y la autenticación IAM) o `ENCRYPTED_ONLY`; nunca sin cifrado.
 - CMEK obligatorio: `kms_key` en la región primaria y `dr_kms_key` en `dr_region` (obligatoria
-  con `enable_dr`). Las llaves llegan de la etapa 2 por entorno, ubicación y uso `sql`.
+  con `enable_dr`). Las llaves llegan de `1-base` por entorno, ubicación y uso `sql`.
 - Sin contraseñas (ADR 0015): bandera `cloudsql.iam_authentication = on`, usuarios
   `CLOUD_IAM_USER`, `CLOUD_IAM_SERVICE_ACCOUNT` o `CLOUD_IAM_GROUP`, ningún `root_password` y
   ningún usuario integrado con contraseña generada. El usuario predeterminado `postgres` que crea

@@ -18,6 +18,7 @@ flowchart LR
 
   subgraph ONP["On-premises · 192.168.0.0/16 · ASN 65001"]
     onp["Sitio real (simulate_onprem = false)<br/>o VPC onprem-sim 192.168.0.0/24 con gateway HA VPN<br/>en us-central1 y us-east4 (ADR 0006)<br/>política de red propia: DNS desde 35.199.192.0/19 y SSH por IAP"]
+    onpdns["VM DNS de prueba en onprem-sim (onprem_dns_vm, opcional)<br/>e2-micro sin IP pública · responde dns.onprem_dns_domain"]
   end
 
   subgraph HUB["2-networks (hub) · VPC hub 10.0.0.0/16"]
@@ -31,6 +32,7 @@ flowchart LR
 
   onp <-- "BGP · GCP anuncia 10.0.0.0/16, 10.10.0.0/16,<br/>10.20.0.0/16, 10.30.0.0/16 y 35.199.192.0/19" --> hvpn
   onp <-- "BGP · mismos anuncios, menos preferidos" --> hvpndr
+  hdns -. "reenvío por la VPN" .-> onpdns
 
   subgraph DEV["2-networks/envs/dev · VPC 10.10.0.0/16"]
     dsub["app · proxy · run · pods · services (us-central1)<br/>*_dr reservadas (enable_dr = false)"]
@@ -87,7 +89,9 @@ flowchart LR
   región. La de DR anuncia lo mismo con prioridad 200, para que on-premises prefiera la primaria
   (ADR [0022](../adr/0022-estado-y-conmutacion-sin-depender-de-la-region-primaria.md)). El hub
   anuncia su /16, el /16 de cada spoke y el rango del reenvío de Cloud DNS. Las rutas aprendidas
-  llegan a los spokes por el peering (pendiente 6).
+  llegan a los spokes por el peering (pendiente 6). Con la VPN real (`simulate_onprem = false`)
+  el plan del hub falla en el pipeline, porque `tf-read` no puede leer el secreto de la VPN:
+  limitación conocida (`stages/2-networks/vpn.tf`, pendiente 151).
 - **Firewall.** Sin organización no hay política jerárquica. Cada VPC tiene su propia política de
   firewall de red global con denegación por defecto (prioridad 65000, con registro):
   - hub: solo la denegación; no tiene cargas. Que la VPN y el reenvío DNS entrante no dependan de
@@ -106,7 +110,11 @@ flowchart LR
   spoke (ADR [0026](../adr/0026-api-de-google-por-el-vip-restringido-en-todos-los-entornos.md)).
 - **DNS.** El hub reenvía el dominio on-premises por la VPN y acepta consultas entrantes. Cada
   spoke tiene su zona privada `<env>.empresa.internal.`, adjunta también a la VPC hub para que
-  on-premises la resuelva, y una zona de peering hacia el hub para el dominio on-premises.
+  on-premises la resuelva, y una zona de peering hacia el hub para el dominio on-premises. En
+  modo simulado, la VM DNS de prueba de `onprem-sim` (`stages/2-networks/onprem_dns.tf`, con
+  `onprem_dns_vm = true` en `0-bootstrap` y en el hub; su cuenta la crea `1-base`) es el
+  servidor al que llega el reenvío: responde `dns.<onprem_dns_domain>` con su IP, la primera de
+  `onprem_dns_servers` (pendientes 128 a 130).
 - **Private Service Access por spoke.** Cloud SQL, Memorystore y Filestore toman IP del rango
   `psa` de su spoke. Esas IP y el plano de control de GKE están detrás de otro peering y no se
   alcanzan desde on-premises.

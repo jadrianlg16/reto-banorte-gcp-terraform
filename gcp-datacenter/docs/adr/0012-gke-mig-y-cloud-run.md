@@ -6,10 +6,14 @@ Aceptado, 2026-11-20. Enmendado el 2026-11-21: enlace de Workload Identity de la
 `workload`, imágenes en Artifact Registry con Binary Authorization por proyecto (ADR
 [0024](0024-artifact-registry-y-binary-authorization-por-proyecto.md)) y usuarios IAM de Cloud
 SQL por cómputo encendido. Enmendado el 2026-11-24: con el proyecto único
-([ADR 0029](0029-un-solo-proyecto.md)) la raíz de cargas es `stages/3-workloads/envs/<env>`, que
-crea también las cuentas de ejecución; el namespace de Workload Identity por defecto pasa a
-`<app>-<env>` (el pool del proyecto es el mismo en los tres entornos); la política de Binary
-Authorization es una para el proyecto y su lista de permitidos es global (ADR 0024).
+([ADR 0029](0029-un-solo-proyecto.md)) la raíz de cargas es `stages/3-workloads/envs/<env>`; el
+namespace de Workload Identity pasa a `<app>-<env>` (el pool del proyecto es el mismo en los
+tres entornos); la política de Binary Authorization es una para el proyecto (ADR 0024).
+
+Enmendado otra vez el 2026-11-24, con los arreglos de la revisión de seguridad del código: las
+cuentas de ejecución y el enlace de Workload Identity los crea `1-base`
+(`stages/1-base/runtime_accounts.tf`), no la raíz de cargas; el namespace queda fijo en
+`<app>-<env>`; la política de Binary Authorization admite un atestador por entorno (ADR 0024).
 
 Tipo: Conforme.
 
@@ -39,20 +43,25 @@ Existen los tres módulos y `stages/3-workloads/envs/<env>` los activa con inter
 
 Los tres entregan un backend genérico al módulo `load-balancer` (grupo de instancias, NEG de
 GKE o NEG sin servidor) y usan cuentas de servicio dedicadas
-(`<prefix>-<env>-<app>-{gke-nodes,mig,run}`), que crea la misma raíz; la cuenta de Compute por
-defecto se rechaza (y `0-bootstrap` le quita el rol Editor con `DEPRIVILEGE`). El clúster de GKE
-se llama `<prefix>-<env>-<app>-gke[-dr]` (variable `cluster_name` del módulo, que valida el
-prefijo `<prefix>-<env>-`).
+(`<prefix>-<env>-<app>-{gke-nodes,mig,run}`), que crea `1-base` y la raíz lee de
+`runtime_service_accounts`; `tf-wl-<env>` solo tiene `iam.serviceAccountUser` sobre las que
+adjunta. La cuenta de Compute por defecto se rechaza (y `0-bootstrap` le quita el rol Editor con
+`DEPRIVILEGE`). El clúster de GKE se llama `<prefix>-<env>-<app>-gke[-dr]` (variable
+`cluster_name` del módulo, que valida el prefijo `<prefix>-<env>-`).
 
-Con GKE, la raíz enlaza la cuenta de Kubernetes `<gke_workload_namespace>/<gke_workload_ksa_name>`
-(por defecto `<app>-<env>/app`) a la cuenta `workload` con `roles/iam.workloadIdentityUser`
-(salida `gke_workload_identity_member`), y los pods usan esa cuenta. El pool de Workload
-Identity (`<proyecto>.svc.id.goog`) es el mismo en los tres entornos, así que una validación
-rechaza un namespace que no termine en `-<env>` (ADR 0029 §9). Cada cuenta de ejecución cuyo
+Con GKE, `1-base` enlaza la cuenta de Kubernetes `<app>-<env>/<gke_workload_ksa_name>` a la
+cuenta `workload` con `roles/iam.workloadIdentityUser`, y los pods usan esa cuenta. El pool de
+Workload Identity (`<proyecto>.svc.id.goog`) es el mismo en los tres entornos y lo crea GKE con
+el primer clúster: el enlace se enciende con `gke_workload_identity_bindings = true` después del
+primer apply de cargas con GKE (punto 135), y el namespace es fijo para que un entorno no tome la
+cuenta de otro (ADR 0029 §9). `1-base` publica el miembro en `gke_workload_identity_members`, y
+la raíz lo repite en su salida `gke_workload_identity_member`. Cada cuenta de ejecución cuyo
 cómputo está encendido (`workload` con GKE, `run` con Cloud Run, `mig` con el MIG) es usuario IAM
-de Cloud SQL (ADR 0015). Las imágenes de GKE y Cloud Run salen del repositorio de Artifact
-Registry del entorno y la aplicación (salida `artifact_registry_repositories` de `1-base`), y la
-política de Binary Authorization del proyecto admite los repositorios del proyecto (ADR 0024).
+de Cloud SQL (ADR 0015): el usuario lo crea la raíz de cargas y el permiso, condicionado a las
+instancias `<prefix>-<env>-data-`, lo da `1-base` (puntos 132 y 133). Las imágenes de GKE y Cloud
+Run salen del repositorio de Artifact Registry del entorno y la aplicación (salida
+`artifact_registry_repositories` de `1-base`), con la política de Binary Authorization del
+proyecto (ADR 0024).
 
 ## Alternativas consideradas
 

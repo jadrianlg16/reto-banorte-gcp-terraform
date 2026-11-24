@@ -18,9 +18,12 @@ saber cuándo escalar. Procedimiento diseñado; `drift.yml` todavía no ha corri
 ## Qué reporta `drift.yml`
 
 Corre a diario (12:17 UTC) y a mano, solo con `GCP_ENABLED = true`. Por cada raíz de `stages/`
-salvo `0-bootstrap`: `terraform plan -detailed-exitcode -lock=false` con la cuenta de lectura
-`<prefix>-tf-read` (`GCP_AUDIT_SERVICE_ACCOUNT`). Esa cuenta no puede escribir el candado, así
-que el plan no bloquea ni espera a un apply en curso (ADR 0029 §3).
+salvo `0-bootstrap` y las de los entornos de `GCP_DISABLED_ENVS` (dev o qa apagados, por
+ejemplo después de un destroy; [`pipeline.md`](../pipeline.md) §1.2):
+`terraform plan -detailed-exitcode -lock=false` con la cuenta de lectura `<prefix>-tf-read`
+(`GCP_AUDIT_SERVICE_ACCOUNT`). Esa cuenta no puede escribir el candado, así que el plan no
+bloquea ni espera a un apply en curso (ADR 0029 §3). Un entorno apagado no se revisa: si se
+vuelve a encender, su primer plan muestra lo que haya cambiado mientras tanto.
 
 - Código 0: sin cambios, nada.
 - Código 2: abre `Drift: <raíz>` o, si ya existe abierta, reemplaza su cuerpo y agrega un
@@ -36,7 +39,8 @@ La incidencia no se cierra sola. Con `-lock=false`, un apply en curso puede prod
 detección falsa: revisar si `apply.yml` corría a esa hora.
 
 `0-bootstrap` no está cubierta: la persona dueña del proyecto corre su `plan` a mano (por
-ejemplo, cada mes; propuesta).
+ejemplo, cada mes; propuesta). Con organización, eso incluye las políticas de organización y el
+perímetro de VPC-SC, que ahora viven en `0-bootstrap` (`org.tf`): `drift.yml` no los ve.
 
 **Recursos no administrados.** Un trabajo aparte lista con Cloud Asset Inventory todo el proyecto
 (`gcloud asset search-all-resources --scope=projects/<ID>`) y lo compara con los estados de todas
@@ -90,7 +94,7 @@ trabajo falla. Construido y probado con datos de ejemplo, nunca corrido contra u
    | GCP o el proveedor cambiaron un valor (por ejemplo, actualización automática de versión de GKE, valores por defecto nuevos de la API) | Codificar el valor, o `ignore_changes` en el módulo con el motivo escrito, por PR |
    | Recurso creado a mano que debe administrarse | Importar (paso 6) |
    | Recurso creado a mano que no debe existir | Borrarlo con una identidad con permisos (la persona dueña; el acceso de emergencia no está construido) tras confirmar con su dueño; Terraform no lo ve |
-   | Recurso que lista el trabajo de recursos no administrados y que crea Google o un servicio administrado de forma legítima | Agregar una regla a `scripts/unmanaged-allowlist.txt` con su motivo, por PR (nunca un tipo completo sin razón) |
+   | Recurso que lista el trabajo de recursos no administrados y que crea Google o un servicio administrado de forma legítima | Agregar una regla a `scripts/unmanaged-allowlist.txt` con su motivo, por PR (nunca un tipo completo sin razón). Las imágenes publicadas en los repositorios (`artifactregistry.googleapis.com/DockerImage`) ya tienen regla; un repositorio creado a mano no (pendiente 142) |
    | Diferencia que reaparece en cada plan sin cambio externo (diferencia perpetua) | Error del módulo: PR al módulo con prueba en `tests/` (pendiente 11) |
 
 4. **Revertir.** Volver a aplicar el código tal como está en `main`:
@@ -99,8 +103,9 @@ trabajo falla. Construido y probado con datos de ejemplo, nunca corrido contra u
    gh workflow run apply.yml --ref main
    ```
 
-   Recorre todas las raíces en orden; cada una tiene un trabajo `plan <raíz>` (sin entorno) y,
-   solo si hay cambios, un trabajo `apply <raíz>` en su entorno de GitHub. En `common` (`1-base` y
+   Recorre todas las raíces en orden, salvo las de los entornos de `GCP_DISABLED_ENVS`; cada una
+   tiene un trabajo `plan <raíz>` (sin entorno) y, solo si hay cambios, un trabajo
+   `apply <raíz>` en su entorno de GitHub. En `common` (`1-base` y
    el hub) y en `prod` el apply espera la aprobación del entorno, si el plan de GitHub permite
    revisores (pendiente 12): quien aprueba revisa en el resumen del trabajo `plan <raíz>` la
    línea `Plan:`, la huella y la lista de recursos, y confirma que coincide con la incidencia y
@@ -132,7 +137,8 @@ trabajo falla. Construido y probado con datos de ejemplo, nunca corrido contra u
    organización, el perímetro de VPC-SC, llaves KMS o secretos, o si fue hecho por una identidad
    que no es una cuenta del pipeline. Escalar al equipo de plataforma si el drift reaparece
    después de revertirlo o si viene de un cambio de la API que obliga a cambiar un módulo.
-   Escalar a la persona dueña del proyecto si el drift está en `0-bootstrap`.
+   Escalar a la persona dueña del proyecto si el drift está en `0-bootstrap` (incluidas las
+   políticas de organización y el perímetro).
 
 ## Verificación
 

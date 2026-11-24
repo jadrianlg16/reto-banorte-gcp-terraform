@@ -43,7 +43,9 @@ flowchart LR
     binauthz{{"Binary Authorization del proyecto<br/>lista de permitidos: los repositorios del proyecto"}}
     sm["6 · Secret Manager<br/>contenedores sin valores (ADR 0015)"]
     kms["8 · Cloud KMS · CMEK<br/>llave por entorno, ubicación y uso<br/>rotación de 90 días · prevent_destroy"]
+    rsa["Cuentas de ejecución bnt-prod-app-{uso}<br/>gke-nodes · workload · mig · run<br/>con sus permisos y Workload Identity"]
   end
+  rsa -. "tf-wl-prod solo las adjunta" .-> COMP
 
   pub(["Publicadores de imágenes<br/>artifact_registry_publishers"]) -- "push" --> ar
   ar -- "imágenes" --> run
@@ -70,9 +72,16 @@ flowchart LR
 - **Cómputo (4).** Sin IP pública. Cloud Run acepta tráfico interno y del balanceador; con
   `public_via_load_balancer = true` desactiva la verificación de invocador en lugar de dar
   `allUsers`. On-premises llega por el hub al balanceador interno, no a las VM.
+- **Cuentas de ejecución.** Las crea `1-base` (`stages/1-base/runtime_accounts.tf`) con sus
+  roles de proyecto, la lectura de los secretos del entorno (`workload` y `run`) y del
+  repositorio de la aplicación, y Cloud SQL por IAM limitado a las instancias del entorno.
+  `3-workloads` solo las lee de `runtime_service_accounts`; `tf-wl-<env>` solo tiene
+  `serviceAccountUser` sobre las que adjunta (pendientes 131 a 133).
 - **Workload Identity.** El pool `<proyecto>.svc.id.goog` es el mismo para los tres entornos. Por
-  eso el namespace por defecto es `<app>-<env>` y la raíz rechaza uno que no termine en `-<env>`
-  (ADR 0029 §9). La cuenta de Kubernetes por defecto es `app`.
+  eso el namespace es fijo, `<app>-<env>` (ADR 0029 §9). La cuenta de Kubernetes es
+  `gke_workload_ksa_name` de `1-base` (por defecto `app`), y el enlace con la cuenta `workload`
+  lo crea `1-base` con `gke_workload_identity_bindings = true` después del primer clúster, porque
+  GKE crea el pool con él (pendiente 135).
 - **Imágenes.** Un repositorio por entorno y aplicación (`<prefix>-<env>-<app>`, multirregión
   `us`) y una sola política de Binary Authorization, las dos en `1-base`. Solo escriben los
   `artifact_registry_publishers` (`serviceAccount:`, `group:` o `principal…`, nunca `user:`).
@@ -82,21 +91,24 @@ flowchart LR
   (ADR [0015](../adr/0015-sin-contrasenas-ni-valores-de-secretos-en-terraform.md)). Cloud SQL,
   Memorystore y Filestore usan el Private Service Access del spoke; Cloud Storage, Private Google
   Access con el VIP restringido.
-- **Llaves (8).** Llaveros `<prefix>-<env>-sec-keyring-{usc1,use4,us}` en `1-base`. Las cuentas de
-  cargas solo dan IAM sobre los llaveros y secretos de su entorno (condición por nombre). Los
-  agentes de servicio son uno por proyecto y tienen permiso sobre las llaves de los tres entornos
-  (riesgo aceptado, ADR 0029 §4).
+- **Llaves (8).** Llaveros `<prefix>-<env>-sec-keyring-{usc1,use4,us}` en `1-base`, solo con las
+  llaves que se usan (las de DR, solo en `dr_environments`). El IAM sobre llaves y secretos lo
+  da `1-base`; la cuenta de cargas del entorno no tiene IAM de KMS ni de secretos. Los agentes de
+  servicio son uno por proyecto y tienen permiso sobre las llaves de los tres entornos (riesgo
+  aceptado, ADR 0029 §4).
 - **VPC-SC (9).** Solo con `org_id` y `access_policy_id`. Rodea todo el proyecto y queda en
   dry-run: no separa entornos (ADR 0029 §1).
 
-## Diferencias entre el código y el ADR 0029
+## Lo que cambió del primer texto del ADR 0029 al código
 
-- **Binary Authorization.** El ADR pide que cada clúster de prod solo admita el repositorio de
-  prod. En el código la lista de permitidos es global, y una imagen que coincide con ella se
-  admite sin importar las reglas por clúster (comentario de `stages/1-base/artifacts.tf`). Las
-  reglas de los clústeres de prod existen, pero sin atestadores (`binary_authorization_attestors`)
-  admiten las imágenes de cualquier repositorio del proyecto. HYPOTHESIS hasta el primer apply
-  (pendiente 42).
+- **Binary Authorization.** El primer texto del ADR pedía que cada clúster de prod solo
+  admitiera el repositorio de prod. En el código la lista de permitidos es global, y una imagen
+  que coincide con ella se admite sin importar las reglas por clúster (comentario de
+  `stages/1-base/artifacts.tf`). Sin atestadores, los clústeres de prod admiten las imágenes de
+  cualquier repositorio del proyecto (riesgo aceptado). Con `binary_authorization_env_attestors`,
+  cada clúster exige el atestador de su entorno; los atestadores no los crea ninguna raíz.
+  HYPOTHESIS hasta el primer apply (pendientes 42 y 139).
+- **Cuentas de ejecución.** Las crea `1-base`, no la raíz de cargas del entorno.
 
 El diseño anterior, con proyectos de servicio y Shared VPC, está en la rama
 `archivo/multiproyecto`.

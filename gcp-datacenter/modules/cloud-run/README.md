@@ -1,7 +1,7 @@
 # Módulo `cloud-run`
 
-Crea, en el proyecto de servicio, un servicio de Cloud Run v2 con salida directa a la VPC
-compartida del proyecto host (red y subred llegan como self links y se convierten en rutas de
+Crea, en el proyecto único (ADR 0029), un servicio de Cloud Run v2 con salida directa a la VPC
+del spoke de su entorno (red y subred llegan como self links y se convierten en rutas de
 recurso), los permisos de invocador explícitos y el NEG sin servidor que el balanceador usa
 como backend. Cumple lo que la sección "Componentes del datacenter" de la especificación exige
 a los servicios sin estado, como valores fijos: solo tráfico interno y del balanceador
@@ -20,9 +20,9 @@ deben mandar un token de identidad. Cuando el servicio es backend del balanceado
 y sirve tráfico público, `public_via_load_balancer = true` desactiva la verificación de IAM del
 invocador (`invoker_iam_disabled = true`) sin tocar la entrada, que sigue fija en interno y
 balanceador, y sin conceder `allUsers` (lo impide `iam.allowedPolicyMemberDomains`); el control
-de acceso queda en el balanceador y Cloud Armor (ADR 0020). Para la salida directa a la VPC, el agente de servicio de Cloud Run del
-proyecto de servicio necesita el usuario de subred en el host, y para CMEK,
-`roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave (los da la etapa 4).
+de acceso queda en el balanceador y Cloud Armor (ADR 0020). Sin Shared VPC, la subred es del
+mismo proyecto. Para CMEK, el agente de servicio de Cloud Run necesita
+`roles/cloudkms.cryptoKeyEncrypterDecrypter` sobre la llave, que da `1-base` (`kms.tf`).
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements

@@ -4,11 +4,16 @@
 
 Aceptado, 2026-11-23. Enmendado el 2026-11-24: con el proyecto único
 ([ADR 0029](0029-un-solo-proyecto.md)) el rol `<prefix>OffHoursScheduler` lo crea
-`0-bootstrap` una sola vez y `1-base` lo publica como `off_hours_role_id`; la cuenta
-`<prefix>-<env>-<app>-sched` y su permiso los crea `stages/3-workloads/envs/<env>` cuando
-`off_hours_shutdown.enabled`; la API de Cloud Scheduler la habilita `0-bootstrap`, y
-`cloudscheduler.admin` para `tf-wl-dev` y `tf-wl-qa` (nunca prod) también lo da `0-bootstrap`.
-Ya no existe `enable_off_hours_shutdown`.
+`0-bootstrap` una sola vez y `1-base` lo publica como `off_hours_role_id`; la API de Cloud
+Scheduler la habilita `0-bootstrap`, y `cloudscheduler.admin` para `tf-wl-dev` y `tf-wl-qa`
+(nunca prod) también lo da `0-bootstrap`. Ya no existe `enable_off_hours_shutdown`.
+
+Enmendado otra vez el 2026-11-24, con los arreglos de la revisión de seguridad del código: la
+cuenta `<prefix>-<env>-<app>-sched` y su rol ya no los crea `stages/3-workloads/envs/<env>`, sino
+`1-base` (`stages/1-base/runtime_accounts.tf`), para los entornos de `off_hours_environments`
+(dev y qa por defecto; una validación rechaza prod). `tf-wl-<env>` solo recibe
+`serviceAccountUser` sobre esa cuenta para adjuntarla a los trabajos (punto 134 de
+[`pendientes-apply.md`](../pendientes-apply.md)).
 
 Tipo: Aclaración. Construye la mitigación de costo opcional que el contrato (§8) dejaba sin
 construir; no cambia la especificación.
@@ -45,17 +50,20 @@ Quién crea cada pieza en el proyecto único:
 - `0-bootstrap` habilita `cloudscheduler.googleapis.com` (con las demás APIs), crea el rol
   personalizado `<prefix>OffHoursScheduler`, con solo los permisos de las llamadas
   (`cloudsql.instances.get`, `cloudsql.instances.update` y `container.clusters.update`), y da a
-  `tf-wl-dev` y `tf-wl-qa` `roles/cloudscheduler.admin` en el proyecto. `tf-wl-<env>` ya tiene
-  `iam.serviceAccountUser` en el proyecto (para sus cuentas de ejecución) y puede dar el rol del
-  apagado por su concesión delegada.
-- `1-base` publica el ID del rol en la salida `off_hours_role_id`.
-- `stages/3-workloads/envs/<env>`, con `off_hours_shutdown.enabled`, crea la cuenta
-  `<prefix>-<env>-<app>-sched`, que firma los tokens de los trabajos, y le da el rol en el
-  proyecto, **sin condición**: el rol junta permisos de Cloud SQL y de GKE, y una condición por
-  nombre sobre un tipo que no la admite niega todo (ADR 0029 §3).
+  `tf-wl-dev` y `tf-wl-qa` `roles/cloudscheduler.admin` en el proyecto.
+- `1-base`, para cada entorno de `off_hours_environments` y aplicación, crea la cuenta
+  `<prefix>-<env>-<app>-sched`, que firma los tokens de los trabajos. Le da el rol en el proyecto
+  por la concesión delegada de `tf-base`, **sin condición**: el rol junta permisos de Cloud SQL y
+  de GKE, y una condición por nombre sobre un tipo que no la admite niega todo (ADR 0029 §3).
+  Da a `tf-wl-<env>` `iam.serviceAccountUser` solo sobre esa cuenta, y publica el correo en
+  `runtime_service_accounts[<env>][<app>]["scheduler"]` y el ID del rol en `off_hours_role_id`.
+- `stages/3-workloads/envs/<env>`, con `off_hours_shutdown.enabled`, crea los trabajos con esa
+  cuenta. Una postcondición falla si `1-base` no publicó la cuenta del entorno.
 
-El rol vive en `0-bootstrap` porque crear roles personalizados desde una raíz de entorno le
-exigiría `iam.roleAdmin`, y con ese rol una cuenta podría darse a sí misma cualquier permiso.
+El rol vive en `0-bootstrap` porque crearlo exige `iam.roleAdmin`, y con ese rol una cuenta del
+pipeline podría darse a sí misma cualquier permiso. La cuenta vive en `1-base` porque crear
+cuentas y asignar roles de proyecto desde una raíz de entorno le daba a la cuenta de cargas
+alcance sobre las cuentas de otros entornos (ADR 0023).
 
 ### Mecanismo por recurso
 
@@ -116,7 +124,7 @@ Cloud Scheduler:
 - **Prueba de humo:** la de dev (`TestDevSmoke`, trabajo "dev / prueba de humo" de `apply.yml`)
   detecta la instancia detenida (`settings.activationPolicy = NEVER`; `state` sigue en
   `RUNNABLE`). Falla con un mensaje que lo dice y explica cómo seguir. No la enciende: la cuenta
-  de auditoría es de solo lectura y, si la encendiera, la instancia quedaría prendida hasta el
+  `tf-read` es de solo lectura y, si la encendiera, la instancia quedaría prendida hasta el
   siguiente apagado. Para seguir hay tres opciones:
   - volver a correr el trabajo después del encendido ("Re-run failed jobs");
   - lanzar antes el trabajo de encendido;
@@ -133,8 +141,9 @@ Cloud Scheduler:
 - **`ignore_changes` condicional.** Terraform no lo permite. En GKE se resolvió con dos recursos.
   En Cloud SQL, duplicar la instancia obligaría a mover el estado de una base de datos con datos
   al activar el apagado, así que se eligió `ignore_changes` más la `postcondition`.
-- **Que la raíz de cargas cree el rol.** Rechazada por la escalada de privilegios descrita en
-  Decisión. La cuenta sí la crea la raíz de cargas: es un principal del entorno (ADR 0029 §4).
+- **Que la raíz de cargas cree el rol o la cuenta.** Rechazada por la escalada de privilegios
+  descrita en Decisión. La cuenta la creaba la raíz de cargas hasta la revisión de seguridad del
+  24 nov 2026; ahora la crea `1-base` con las demás cuentas de ejecución (ADR 0029 §4).
 - **Roles predefinidos para la cuenta `-sched`.** Rechazada: los roles predefinidos que incluyen
   esos permisos traen muchos más.
 - **Apagar con `terraform apply` o `destroy` nocturnos.** Rechazada: un apply cada noche necesita
@@ -168,4 +177,4 @@ Cloud Scheduler:
     por hora × mig_min_replicas + nodo y disco de GKE por hora × zonas × min_node_count)`, menos
     los trabajos de Cloud Scheduler (2 por instancia y 4 por pool, con 3 gratis por cuenta de
     facturación).
-- **Primer apply:** puntos 70 a 81 de [`pendientes-apply.md`](../pendientes-apply.md) (§3.8).
+- **Primer apply:** puntos 70 a 81 (§3.8) y 134 de [`pendientes-apply.md`](../pendientes-apply.md).

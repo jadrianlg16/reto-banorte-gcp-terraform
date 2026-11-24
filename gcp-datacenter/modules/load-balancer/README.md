@@ -1,11 +1,12 @@
 # Módulo `load-balancer`
 
 Crea un balanceador de aplicaciones de uno de dos tipos (`type`). Con `"external"`: balanceador
-HTTPS global externo (`EXTERNAL_MANAGED`) en el proyecto de servicio (ADR 0005), con IP global,
+HTTPS global externo (`EXTERNAL_MANAGED`) en la raíz de cargas del entorno (ADR 0005, ajustado
+por el ADR 0029), con IP global,
 certificado administrado por Google para `domain_names`, política SSL con TLS 1.2 como mínimo,
 mapa de URL con reglas de ruta, redirección de HTTP a HTTPS en la misma IP y servicios de backend
 con registro de solicitudes. Con `"internal"`: balanceador de aplicaciones interno regional
-(`INTERNAL_MANAGED`) en la Shared VPC (`network`/`subnet`), con IP interna compartida entre 443 y
+(`INTERNAL_MANAGED`) en la VPC del spoke (`network`/`subnet`), con IP interna compartida entre 443 y
 80, certificado regional de Certificate Manager (administrado con autorización DNS, o propio por
 `certificate_manager_certificates`), política SSL regional y la misma redirección. La
 especificación, en su sección "Componentes del datacenter", pide HTTPS con certificado
@@ -20,7 +21,7 @@ crea el módulo (`health_check`). El modo de balanceo por defecto es `UTILIZATIO
 instancias); para NEG zonales de GKE hay que pasar `balancing_mode = "RATE"` y
 `max_rate_per_endpoint`. La conmutación a DR del externo (§7.6) se hace con `dr_active`:
 cada servicio pasa de `groups` a `dr_groups`. El interno es regional y sus backends deben estar
-en su región: se crea uno por región (la etapa 5 agrega el de DR al conmutar) y sus reglas de
+en su región: se crea uno por región (`3-workloads` agrega el de DR al conmutar) y sus reglas de
 reenvío tienen `allow_global_access = true`, para que clientes de otras regiones y on-premises
 por túneles o adjuntos de VLAN de otra región lleguen a él. La salida `backend_groups` publica
 los grupos configurados en cada servicio de backend.

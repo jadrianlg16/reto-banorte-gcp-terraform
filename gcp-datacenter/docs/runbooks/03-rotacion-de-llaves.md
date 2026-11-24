@@ -22,19 +22,25 @@ se marca "pendiente de verificar".
   |---|---|---|
   | `0-bootstrap` | `<prefix>-bootstrap-sec-keyring-us` (ubicación de `state_bucket_location`, `us` por defecto) | `<prefix>-bootstrap-sec-state` (bucket de estado) |
   | `1-base`, común | `<prefix>-common-sec-keyring-usc1` (`primary_region`) | `<prefix>-common-sec-logs` (bucket de logs), `<prefix>-common-sec-pubsub` (tema de SCC) |
-  | `1-base`, por entorno | `<prefix>-<env>-sec-keyring-usc1` y `-use4` | `<prefix>-<env>-sec-<uso>` con los usos `gke`, `compute`, `sql`, `storage`, `filestore`, `redis`, `secrets`, `backup`, `run` y `artifacts` |
-  | `1-base`, por entorno | `<prefix>-<env>-sec-keyring-us` | `storage`, `backup` y `artifacts` (buckets de doble región y repositorios multirregionales) |
+  | `1-base`, por entorno | `<prefix>-<env>-sec-keyring-usc1` (`primary_region`) | `<prefix>-<env>-sec-<uso>` con los usos `gke`, `compute`, `run`, `sql`, `storage`, `redis`, `filestore` y `secrets` |
+  | `1-base`, solo entornos de `dr_environments` (prod por defecto) | `<prefix>-<env>-sec-keyring-use4` (`dr_region`) | `gke`, `compute`, `run`, `sql` (réplica), `backup` (Backup for GKE) y `secrets` (segunda réplica de los secretos) |
+  | `1-base`, por entorno | `<prefix>-<env>-sec-keyring-us` | `storage` (bucket de doble región, solo en `dr_environments`) y `artifacts` (repositorios, si `artifact_registry_location` es `us`, el valor por defecto) |
 
-  Los llaveros de entorno existen para cada entorno de `environments` de `1-base` (`dev`, `qa` y
-  `prod` por defecto), aunque el entorno no tenga cargas. `3-workloads` lee los IDs de la salida
-  `kms_key_ids` de `1-base`: entorno → `<uso>` (región primaria), `<uso>_dr` o `<uso>_us` → ID.
+  Solo existen las llaves que alguien usa (`stages/1-base/kms.tf`): no hay `redis`, `filestore`
+  ni `storage` en la región de DR, ni `backup` en `us`, y un llavero sin llaves no se crea. Con
+  los valores por defecto, dev y qa no tienen llavero en `us-east4`, y su llavero `us` solo trae
+  `artifacts`. Los llaveros de entorno existen para cada entorno de `environments` de `1-base`
+  (`dev`, `qa` y `prod` por defecto), aunque el entorno no tenga cargas. Un entorno de
+  `3-workloads` con `enable_dr` que no esté en `dr_environments` falla en su plan por falta de
+  llaves. `3-workloads` lee los IDs de la salida `kms_key_ids` de `1-base`: entorno → `<uso>`
+  (región primaria), `<uso>_dr` o `<uso>_us` → ID.
 
 - **Quién puede rotar.** Hace falta `roles/cloudkms.admin` sobre la llave:
 
   | Identidad | Alcance |
   |---|---|
   | `<prefix>-tf-base` | Todo KMS del proyecto salvo el llavero del estado (condición en `0-bootstrap`). El pipeline no tiene un trabajo de rotación manual |
-  | `<prefix>-tf-wl-<env>` | Solo el IAM de las llaves de su entorno (`TfKmsSecretIamGranter`), no las rota |
+  | `<prefix>-tf-wl-<env>` | Nada de KMS: no rota llaves ni cambia su IAM. Los permisos de los agentes sobre las llaves los da `1-base` |
   | Grupo `security_admins` | Solo `roles/cloudkms.viewer` |
   | Persona dueña del proyecto (`owner`) | Todo, incluida la llave del estado |
 
@@ -107,9 +113,9 @@ El material de una llave no se puede exportar de Cloud KMS; "comprometida" signi
 identidad no autorizada pudo usarla.
 
 4. Cortar el acceso primero: quitar el rol de la identidad (PR a la raíz que lo otorgó:
-   `0-bootstrap` para las cuentas del pipeline, `1-base` para agentes y grupos, `3-workloads`
-   para las cuentas de ejecución) y revisar los registros de acceso a datos de Cloud KMS en el
-   bucket de logs (ADR 0029 §7 los activa).
+   `0-bootstrap` para las cuentas del pipeline; `1-base` para agentes, grupos y cuentas de
+   ejecución) y revisar los registros de acceso a datos de Cloud KMS en el bucket de logs
+   (ADR 0029 §7 los activa).
 5. Identificar las versiones y crear una primaria nueva (paso 2):
 
    ```bash
