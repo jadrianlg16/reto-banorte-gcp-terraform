@@ -60,6 +60,19 @@ locals {
     "iam.googleapis.com/serviceAccounts.disable",
   ]
 
+  # Valores de los secretos (ADR 0015): ninguna cuenta del pipeline los lee, salvo tf-net, que lee
+  # la llave compartida de la VPN real en el hub (stages/2-networks/vpn.tf). 1-base administra el
+  # IAM de los secretos (custom_roles.tf) y podría darse secretAccessor: esta regla se lo niega.
+  # Todo en la lista de permisos admitidos en políticas de denegación
+  # (https://cloud.google.com/iam/docs/deny-permissions-support).
+  secret_value_denied_principals = concat(
+    [for k in sort(keys(local.stage_roots)) : "principal://iam.googleapis.com/projects/-/serviceAccounts/${google_service_account.stage[k].email}" if k != "2-networks"],
+    ["principal://iam.googleapis.com/projects/-/serviceAccounts/${google_service_account.read.email}"],
+  )
+  secret_value_denied_permissions = [
+    "secretmanager.googleapis.com/versions.access",
+  ]
+
   # En todo el proyecto: WIF, roles personalizados, llaves de cuentas y borrar el proyecto.
   # Ninguna cuenta del pipeline los necesita.
   untagged_denied_permissions = [
@@ -167,6 +180,14 @@ resource "google_iam_deny_policy" "pipeline" {
     deny_rule {
       denied_principals  = local.denied_principals
       denied_permissions = local.untagged_denied_permissions
+    }
+  }
+
+  rules {
+    description = "Las cuentas del pipeline, salvo la del hub de red, no leen valores de secretos."
+    deny_rule {
+      denied_principals  = local.secret_value_denied_principals
+      denied_permissions = local.secret_value_denied_permissions
     }
   }
 

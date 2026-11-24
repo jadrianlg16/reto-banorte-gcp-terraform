@@ -41,21 +41,12 @@ module "gke" {
 
   labels = local.labels
 
-  depends_on = [terraform_data.upstream_checks, google_project_iam_member.runtime]
+  depends_on = [terraform_data.upstream_checks]
 }
 
-# Workload Identity: la cuenta de Kubernetes <namespace>/<nombre> actúa como la cuenta workload
-# de la aplicación (Cloud SQL por IAM, secretos, telemetría). El pool <proyecto>.svc.id.goog es
-# uno solo para todo el proyecto, los tres entornos incluidos: lo que separa a los entornos es el
-# namespace <app>-<env> (ADR 0029 §9). Se toma de module.gke para que el enlace espere al primer
-# clúster; sirve a los clústeres primario y de DR.
-resource "google_service_account_iam_member" "workload_identity" {
-  for_each = var.enable_gke ? toset(["workload"]) : toset([])
-
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.service_accounts["workload"]}"
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${module.gke["primary"].workload_pool}[${local.gke_workload_namespace}/${var.gke_workload_ksa_name}]"
-}
+# Workload Identity: el enlace de la cuenta de Kubernetes <application>-<environment>/<cuenta> a
+# la cuenta workload lo crea 1-base (gke_workload_identity_bindings) después del primer clúster
+# del proyecto; esta raíz no administra IAM de cuentas de servicio (service_accounts.tf).
 
 module "mig" {
   source   = "../../../../modules/compute-mig"
@@ -90,7 +81,7 @@ module "mig" {
 
   labels = local.labels
 
-  depends_on = [terraform_data.upstream_checks, google_project_iam_member.runtime]
+  depends_on = [terraform_data.upstream_checks]
 }
 
 module "cloud_run" {
@@ -120,5 +111,5 @@ module "cloud_run" {
 
   labels = local.labels
 
-  depends_on = [terraform_data.upstream_checks, google_project_iam_member.runtime, google_secret_manager_secret_iam_member.runtime]
+  depends_on = [terraform_data.upstream_checks]
 }

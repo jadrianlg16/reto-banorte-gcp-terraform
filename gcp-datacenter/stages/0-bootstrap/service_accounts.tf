@@ -17,9 +17,6 @@ locals {
   # Entornos con apagado fuera de horario (ADR 0028: nunca prod).
   off_hours_environments = ["dev", "qa"]
 
-  # Ubicación de los llaveros y repositorios de la multirregión (1-base).
-  multi_region = "us"
-
   # Raíz → cuenta, entorno de GitHub que puede tomarla y prefijos de estado.
   # - writes: prefijos que la cuenta escribe (objectAdmin condicionado).
   # - reads: prefijos que además lee (objectViewer condicionado).
@@ -31,7 +28,7 @@ locals {
         github_environment = "common"
         writes             = ["1-base"]
         reads              = ["0-bootstrap"]
-        description        = "Aplica 1-base: auditoría, avisos, llaves, secretos, imágenes y controles únicos del proyecto (ADR 0029 §4)."
+        description        = "Aplica 1-base: auditoría, avisos, llaves, secretos, imágenes, cuentas de ejecución de los entornos y controles únicos del proyecto (ADR 0029 §4)."
       }
       "2-networks" = {
         account_id         = "${var.prefix}-tf-net"
@@ -56,7 +53,7 @@ locals {
         github_environment = e
         writes             = ["3-workloads/${e}"]
         reads              = ["1-base", "2-networks/${e}"]
-        description        = "Aplica 3-workloads de ${e}: cuentas de ejecución y cargas del entorno (ADR 0029 §2)."
+        description        = "Aplica 3-workloads de ${e}: cargas del entorno; las cuentas de ejecución las crea 1-base (ADR 0029 §2)."
       }
     },
   )
@@ -83,31 +80,23 @@ locals {
     }
   }
 
-  # Llaves y secretos del entorno: llaveros <prefix>-<env>- en las regiones primaria y de DR y en
-  # la multirregión, y secretos <prefix>-<env>- (ADR 0029 §3). Secret Manager lleva el NÚMERO del
-  # proyecto en el nombre. El formato exacto es HYPOTHESIS del ADR.
-  # VERIFICAR-EN-APPLY: que 3-workloads de dev pueda dar secretAccessor sobre un secreto de dev y
-  # que la misma llamada sobre un secreto de prod se niegue.
-  kms_secret_env = {
-    for e in local.environments : e => {
-      title       = "llaves-y-secretos-${e}"
-      description = "Solo llaveros y secretos <prefix>-${e}-."
-      expression = join(" || ", concat(
-        [for l in distinct([var.primary_region, var.dr_region, local.multi_region]) : "resource.name.startsWith(\"projects/${var.project_id}/locations/${l}/keyRings/${var.prefix}-${e}-\")"],
-        ["resource.name.startsWith(\"projects/${local.project_number}/secrets/${var.prefix}-${e}-\")"],
-      ))
-    }
-  }
-
   # Concesión delegada (mismo patrón que la antigua 4-projects/iam.tf): projectIamAdmin que solo
   # puede agregar o quitar estos roles. Una llamada sin cambios de bindings (por ejemplo, la
-  # configuración de auditoría) tiene modifiedGrantsByRole = [] y pasa.
+  # configuración de auditoría) tiene modifiedGrantsByRole = [] y pasa. Solo la tiene 1-base: las
+  # cuentas de los entornos ya no asignan roles de proyecto (las cuentas de ejecución y sus
+  # roles están en 1-base).
   # VERIFICAR-EN-APPLY: que la condición con iam.googleapis.com/modifiedGrantsByRole se acepte en
   # el proyecto, que permita la configuración de auditoría de 1-base y que niegue otro rol.
   #
-  # 1-base: IAM de personas de solo lectura (sus grupos; ADR 0029 §4) y tagUser para el agente de
-  # GKE y <número>@cloudservices (etiquetas seguras de nodos y VM). La lista debe coincidir con
-  # la de stages/1-base/iam.tf.
+  # La documentación limita hasPermission/hasOnly a 10 roles por lista ("Set limits on granting
+  # roles", https://cloud.google.com/iam/docs/setting-limits-on-granting-roles): por eso hay dos
+  # asignaciones condicionadas de projectIamAdmin, una por lista, y no una con ||. Cada
+  # google_project_iam_member cambia un solo rol por llamada, así que cada llamada cae en una de
+  # las dos.
+  #
+  # Personas: IAM de solo lectura de los grupos (ADR 0029 §4) y tagUser para el agente de GKE y
+  # <número>@cloudservices (etiquetas seguras de nodos y VM). La lista debe coincidir con la de
+  # stages/1-base/iam.tf.
   base_grantable_roles = [
     "roles/cloudkms.viewer",
     "roles/iam.securityReviewer",
@@ -118,8 +107,9 @@ locals {
     "roles/viewer",
   ]
 
-  # 3-workloads: roles de sus cuentas de ejecución, Cloud SQL por IAM y el rol del apagado.
-  workloads_grantable_roles = [
+  # Cuentas de ejecución (stages/1-base/runtime_accounts.tf): telemetría, Cloud SQL por IAM y el
+  # rol del apagado. La lista debe coincidir con la de ese archivo.
+  runtime_grantable_roles = [
     "roles/autoscaling.metricsWriter",
     "roles/cloudsql.client",
     "roles/cloudsql.instanceUser",
@@ -132,35 +122,51 @@ locals {
   ]
 
   delegated_iam = {
-    base = {
+    people = {
       title       = "solo-iam-de-lectura"
-      description = "Solo asignar roles de lectura de personas y tagUser (1-base, concesión delegada)."
+      description = "Solo asignar los roles de lectura de los grupos de personas y tagUser (1-base, concesión delegada)."
       expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in local.base_grantable_roles : "'${r}'"])}])"
     }
-    workloads = {
+    runtime = {
       title       = "solo-roles-de-ejecucion"
-      description = "Solo asignar los roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado (3-workloads, concesión delegada)."
-      expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in local.workloads_grantable_roles : "'${r}'"])}])"
+      description = "Solo asignar los roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado (1-base, concesión delegada)."
+      expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in local.runtime_grantable_roles : "'${r}'"])}])"
     }
   }
 
   # --- Roles de proyecto por raíz -------------------------------------------------------------
   # { role, condition } con condition null cuando el servicio no admite condiciones por nombre
-  # (ADR 0029 §3: una condición sobre un tipo que no la admite niega todo).
+  # (ADR 0029 §3: una condición sobre un tipo que no la admite niega todo). key solo cuando una
+  # cuenta tiene el mismo rol dos veces (con condiciones distintas).
 
   base_roles = [
-    { role = "roles/cloudkms.admin", condition = local.kms_not_bootstrap },                   # llaveros y llaves de 1-base y sus permisos a agentes
-    { role = local.custom_role_ids["secret_container_admin"], condition = null },             # contenedores de secretos sin valores
-    { role = "roles/artifactregistry.admin", condition = null },                              # repositorios y su IAM por repositorio
-    { role = "roles/binaryauthorization.policyEditor", condition = null },                    # la política única
-    { role = "roles/logging.configWriter", condition = null },                                # sink, exclusiones y métricas de audit-alerts
-    { role = "roles/monitoring.alertPolicyEditor", condition = null },                        # alertas de audit-alerts
-    { role = "roles/monitoring.notificationChannelEditor", condition = null },                # canal de avisos
-    { role = "roles/essentialcontacts.admin", condition = null },                             # contactos esenciales (CIS 1.17)
-    { role = "roles/pubsub.admin", condition = null },                                        # tema de hallazgos de SCC
-    { role = "roles/securitycenter.notificationConfigEditor", condition = null },             # notificación de SCC
-    { role = "roles/storage.admin", condition = local.storage_prefix["common"] },             # bucket de logs
-    { role = "roles/resourcemanager.projectIamAdmin", condition = local.delegated_iam.base }, # auditoría e IAM de personas
+    { role = "roles/cloudkms.admin", condition = local.kms_not_bootstrap },       # llaveros y llaves de 1-base y sus permisos a agentes
+    { role = local.custom_role_ids["secret_container_admin"], condition = null }, # contenedores de secretos sin valores y su IAM
+    { role = "roles/artifactregistry.admin", condition = null },                  # repositorios y su IAM por repositorio
+    { role = "roles/binaryauthorization.policyEditor", condition = null },        # la política única
+    { role = "roles/logging.configWriter", condition = null },                    # sink, exclusiones y métricas de audit-alerts
+    { role = "roles/monitoring.alertPolicyEditor", condition = null },            # alertas de audit-alerts
+    { role = "roles/monitoring.notificationChannelEditor", condition = null },    # canales de avisos
+    { role = "roles/essentialcontacts.admin", condition = null },                 # contactos esenciales (CIS 1.17)
+    { role = "roles/pubsub.admin", condition = null },                            # tema de hallazgos de SCC
+    { role = "roles/securitycenter.notificationConfigEditor", condition = null }, # notificación de SCC
+    { role = "roles/storage.admin", condition = local.storage_prefix["common"] }, # bucket de logs
+    # Cuentas de ejecución de los entornos: crearlas y administrar su IAM, sin etiquetas
+    # (custom_roles.tf). Las cuentas de servicio no admiten condiciones por nombre
+    # (HYPOTHESIS): va sin condición, y la etiqueta de protección y la denegación cubren a las
+    # cuentas del pipeline.
+    { role = local.custom_role_ids["service_account_manager"], condition = null },
+    # Concesión delegada: auditoría e IAM de personas, y roles de las cuentas de ejecución.
+    {
+      key       = "project|1-base|roles/resourcemanager.projectIamAdmin|personas"
+      role      = "roles/resourcemanager.projectIamAdmin"
+      condition = local.delegated_iam.people
+    },
+    {
+      key       = "project|1-base|roles/resourcemanager.projectIamAdmin|ejecucion"
+      role      = "roles/resourcemanager.projectIamAdmin"
+      condition = local.delegated_iam.runtime
+    },
   ]
 
   # Hub y spokes de red. HYPOTHESIS de mínimo privilegio (pedido del bloque de redes).
@@ -176,9 +182,11 @@ locals {
     { role = "roles/servicenetworking.networksAdmin", condition = null }, # conexión de PSA
   ])
 
-  # Cargas (las que tenía la cuenta de la etapa 5, más lo que hacía la etapa 4 en el proyecto).
-  # Compute, GKE, Cloud Run, Cloud SQL, Memorystore y Filestore van sin condición (riesgo
-  # aceptado del ADR 0029 §3 y §9).
+  # Cargas (las que tenía la cuenta de la etapa 5). Compute, GKE, Cloud Run, Cloud SQL,
+  # Memorystore, Filestore, Backup and DR y Monitoring van sin condición (riesgo aceptado del
+  # ADR 0029 §3 y §9). Sin roles de cuentas de servicio ni de IAM de proyecto: las cuentas de
+  # ejecución las crea 1-base, que le da a esta cuenta serviceAccountUser solo sobre las de su
+  # entorno (stages/1-base/runtime_accounts.tf).
   workloads_roles = {
     for e in local.environments : e => concat([
       { role = "roles/backupdr.admin", condition = null },            # bóveda, planes y asociaciones
@@ -195,15 +203,8 @@ locals {
       { role = "roles/redis.admin", condition = null },               # Memorystore
       { role = "roles/run.admin", condition = null },                 # Cloud Run y su IAM de invocador
       { role = "roles/storage.admin", condition = local.storage_prefix[e] },
-      # Cuentas de ejecución y del apagado: crearlas y su IAM (sin etiquetas, custom_roles.tf) y
-      # actAs para adjuntarlas. Las cuentas de servicio no admiten condiciones por nombre
-      # (HYPOTHESIS): van sin condición y la etiqueta de protección cubre a las del pipeline.
-      { role = local.custom_role_ids["service_account_manager"], condition = null },
-      { role = "roles/iam.serviceAccountUser", condition = null },
       # Etiquetas seguras de la red (lb_backend, iap_ssh) en plantillas y pools.
       { role = "roles/resourcemanager.tagUser", condition = null },
-      { role = local.custom_role_ids["kms_secret_iam_granter"], condition = local.kms_secret_env[e] },
-      { role = "roles/resourcemanager.projectIamAdmin", condition = local.delegated_iam.workloads },
       ],
       contains(local.off_hours_environments, e) ? [{ role = "roles/cloudscheduler.admin", condition = null }] : [],
     )
@@ -273,7 +274,7 @@ locals {
     flatten([
       for k, roles in local.stage_roles : [
         for r in roles : {
-          key       = "project|${k}|${r.role}"
+          key       = try(r.key, "project|${k}|${r.role}")
           scope     = "project"
           resource  = var.project_id
           role      = r.role

@@ -72,7 +72,7 @@ resource "google_artifact_registry_repository" "this" {
 
 # Cloud Run descarga la imagen con su agente de servicio, que es uno por proyecto: lectura de los
 # repositorios de los tres entornos (riesgo aceptado, ADR 0029 §9). Los nodos de GKE y las VM
-# reciben la lectura de su repositorio desde 3-workloads.
+# reciben la lectura de su repositorio en runtime_accounts.tf.
 resource "google_artifact_registry_repository_iam_member" "run_agent_reader" {
   for_each = local.repositories
 
@@ -81,19 +81,6 @@ resource "google_artifact_registry_repository_iam_member" "run_agent_reader" {
   repository = google_artifact_registry_repository.this[each.key].repository_id
   role       = "roles/artifactregistry.reader"
   member     = local.service_agents["run"]
-}
-
-# 3-workloads da artifactregistry.reader a sus cuentas de ejecución sobre el repositorio de su
-# entorno: su cuenta recibe aquí el rol personalizado de IAM de repositorios, solo sobre esos
-# repositorios (sin condiciones sobre Artifact Registry, que el ADR no puede comprobar).
-resource "google_artifact_registry_repository_iam_member" "workloads_iam_granter" {
-  for_each = local.repositories
-
-  project    = google_artifact_registry_repository.this[each.key].project
-  location   = google_artifact_registry_repository.this[each.key].location
-  repository = google_artifact_registry_repository.this[each.key].repository_id
-  role       = local.custom_role_ids["repository_iam_granter"]
-  member     = "serviceAccount:${local.stage_service_accounts["3-workloads/${each.value.environment}"]}"
 }
 
 # Publicación: writer solo sobre el repositorio de su entorno y aplicación. Es la única vía para

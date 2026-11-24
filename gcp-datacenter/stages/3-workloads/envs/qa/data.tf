@@ -28,8 +28,10 @@ module "cloud_sql" {
   allocated_ip_range = local.psa_range_name
 
   # Sin contraseñas (ADR 0015): cada cuenta de ejecución cuyo cómputo está encendido entra por
-  # IAM (usuario de base de datos + cloudsql.client e instanceUser limitados a la instancia y su
-  # réplica): workload con GKE (pods por Workload Identity), run con Cloud Run y mig con el MIG.
+  # IAM: workload con GKE (pods por Workload Identity), run con Cloud Run y mig con el MIG. Esta
+  # raíz crea el usuario de base de datos; cloudsql.client e instanceUser (limitados a las
+  # instancias del entorno) los da 1-base, porque tf-wl-<env> no asigna roles de proyecto.
+  grant_iam_login_roles = false
   iam_users = [
     for use, enabled in {
       workload = var.enable_gke

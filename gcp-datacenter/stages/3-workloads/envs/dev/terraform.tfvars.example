@@ -32,9 +32,6 @@ deletion_protection = false
 # etiquetas inmutables, así que latest no se puede mover a una imagen nueva.
 cloud_run_image = "us-docker.pkg.dev/example-lz-000000/bnt-dev-app/api:1.0.0"
 
-# Secretos de secret_ids["dev"] de 1-base que leen las cuentas workload y run (vacío: ninguno).
-application_secrets = []
-
 sql_tier             = "db-custom-1-3840"
 sql_database_version = "POSTGRES_16"
 sql_databases        = ["app"]

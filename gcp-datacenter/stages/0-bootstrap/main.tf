@@ -231,8 +231,8 @@ resource "google_storage_bucket" "state" {
     prevent_destroy = true
 
     precondition {
-      condition     = !local.state_bucket_dual_region || contains(var.state_bucket_dual_regions, var.primary_region)
-      error_message = "state_bucket_dual_regions debe incluir primary_region (y la región de DR)."
+      condition     = !local.state_bucket_dual_region || toset(var.state_bucket_dual_regions) == toset([var.primary_region, var.dr_region])
+      error_message = "state_bucket_dual_regions debe ser primary_region y dr_region: el estado debe seguir disponible en la región de DR."
     }
   }
 

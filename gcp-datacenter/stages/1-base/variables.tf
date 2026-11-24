@@ -103,15 +103,48 @@ variable "environments" {
 }
 
 variable "applications" {
-  description = "Aplicaciones con repositorio de imágenes en cada entorno (<prefix>-<env>-<app>) y regla de Binary Authorization en sus clústeres de prod (<prefix>-prod-<app>-gke[-dr]). Como en 3-workloads: hasta 8 caracteres."
+  description = "Aplicaciones de cada entorno: repositorio de imágenes (<prefix>-<env>-<app>), cuentas de ejecución (<prefix>-<env>-<app>-<uso>) y regla de Binary Authorization en sus clústeres de prod (<prefix>-prod-<app>-gke[-dr]). Misma validación que application de 3-workloads: de 2 a 8 caracteres."
   type        = set(string)
   default     = ["app"]
   nullable    = false
 
+  # Con 8 caracteres como máximo, la cuenta más larga (<prefix de 6>-prod-<app de 8>-gke-nodes)
+  # tiene 30, el límite del ID de cuenta de servicio (ADR 0017).
   validation {
-    condition     = length(var.applications) > 0 && alltrue([for a in var.applications : can(regex("^[a-z][a-z0-9]{0,7}$", a))])
-    error_message = "Cada aplicación: de 1 a 8 minúsculas o dígitos, empezando con letra."
+    condition     = length(var.applications) > 0 && alltrue([for a in var.applications : can(regex("^[a-z][a-z0-9]{1,7}$", a))])
+    error_message = "Cada aplicación debe tener de 2 a 8 caracteres: minúsculas y dígitos, empezando con letra."
   }
+}
+
+variable "off_hours_environments" {
+  description = "Entornos con cuenta de los trabajos del apagado fuera de horario (<prefix>-<env>-<app>-sched, ADR 0028) y su rol. 3-workloads la usa con off_hours_shutdown.enabled. Nunca prod."
+  type        = list(string)
+  default     = ["dev", "qa"]
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for e in var.off_hours_environments : contains(["dev", "qa"], e)])
+    error_message = "off_hours_environments solo admite dev y qa: el apagado fuera de horario nunca es de prod (ADR 0028)."
+  }
+}
+
+variable "gke_workload_ksa_name" {
+  description = "Nombre de la cuenta de servicio de Kubernetes que actúa como la cuenta workload de cada aplicación (Workload Identity), en el namespace <app>-<env>."
+  type        = string
+  default     = "app"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", var.gke_workload_ksa_name)) && var.gke_workload_ksa_name != "default"
+    error_message = "gke_workload_ksa_name debe ser un nombre DNS-1123 de hasta 63 caracteres y no la cuenta default del namespace."
+  }
+}
+
+variable "gke_workload_identity_bindings" {
+  description = "true: crea el enlace de Workload Identity (roles/iam.workloadIdentityUser) de <app>-<env>/<gke_workload_ksa_name> en la cuenta workload de cada entorno y aplicación. Exige que ya exista el pool <proyecto>.svc.id.goog, que GKE crea con el primer clúster con Workload Identity del proyecto: false (por defecto) hasta el primer apply de 3-workloads con enable_gke, y después true."
+  type        = bool
+  default     = false
+  nullable    = false
 }
 
 variable "artifact_registry_location" {

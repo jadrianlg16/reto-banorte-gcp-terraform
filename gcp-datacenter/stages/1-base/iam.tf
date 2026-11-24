@@ -1,9 +1,10 @@
 # Permisos de proyecto para principales compartidos (ADR 0029 §4): grupos de personas de solo
-# lectura y agentes de servicio. Ninguna raíz de entorno los declara.
+# lectura y agentes de servicio, más los de las cuentas de ejecución de los entornos
+# (runtime_accounts.tf). Ninguna raíz de entorno asigna roles de proyecto.
 #
 # La cuenta de 1-base solo puede asignar estos roles: su projectIamAdmin está condicionado en
-# 0-bootstrap (local.base_grantable_roles de stages/0-bootstrap/service_accounts.tf). Un rol
-# nuevo aquí exige agregarlo también allí.
+# 0-bootstrap (local.base_grantable_roles y local.runtime_grantable_roles de
+# stages/0-bootstrap/service_accounts.tf). Un rol nuevo aquí exige agregarlo también allí.
 
 locals {
   # Grupo → roles de solo lectura en el proyecto.
@@ -46,6 +47,7 @@ locals {
       role     = "roles/storage.objectViewer"
       member   = "group:${var.groups["auditors"]}"
     }] : [],
+    local.runtime_project_bindings,
   )
 }
 

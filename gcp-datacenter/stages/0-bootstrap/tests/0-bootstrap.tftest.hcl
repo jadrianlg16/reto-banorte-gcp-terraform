@@ -190,37 +190,55 @@ run "plan_con_valores_de_ejemplo" {
     error_message = "storage.admin se condiciona al prefijo de buckets del entorno (common para 1-base)."
   }
   assert {
-    condition = module.stage_iam.conditions["project|3-workloads/dev|projects/example-project-id/roles/bntTfKmsSecretIamGranter"].expression == join(" || ", [
-      "resource.name.startsWith(\"projects/example-project-id/locations/us-central1/keyRings/bnt-dev-\")",
-      "resource.name.startsWith(\"projects/example-project-id/locations/us-east4/keyRings/bnt-dev-\")",
-      "resource.name.startsWith(\"projects/example-project-id/locations/us/keyRings/bnt-dev-\")",
-      "resource.name.startsWith(\"projects/222222222222/secrets/bnt-dev-\")",
-    ])
-    error_message = "El IAM de llaves y secretos de 3-workloads se limita a los llaveros y secretos de su entorno."
-  }
-  assert {
     condition     = module.stage_iam.conditions["project|1-base|roles/cloudkms.admin"].expression == "!resource.name.startsWith(\"projects/example-project-id/locations/us/keyRings/bnt-bootstrap-\")"
     error_message = "cloudkms.admin de 1-base excluye el llavero del estado."
   }
+  # Concesión delegada de 1-base: dos asignaciones, una por lista, cada una con 10 roles como
+  # máximo (límite de hasOnly en la documentación de IAM).
   assert {
     condition = alltrue([
-      strcontains(module.stage_iam.conditions["project|3-workloads/qa|roles/resourcemanager.projectIamAdmin"].expression, "'roles/cloudsql.instanceUser'"),
-      strcontains(module.stage_iam.conditions["project|3-workloads/qa|roles/resourcemanager.projectIamAdmin"].expression, "'projects/example-project-id/roles/bntOffHoursScheduler'"),
-      !strcontains(module.stage_iam.conditions["project|3-workloads/qa|roles/resourcemanager.projectIamAdmin"].expression, "'roles/viewer'"),
-      startswith(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin"].expression, "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(["),
-      strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin"].expression, "'roles/resourcemanager.tagUser'"),
+      for k in ["personas", "ejecucion"] : startswith(
+        module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin|${k}"].expression,
+        "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly(["
+      )
     ])
-    error_message = "projectIamAdmin es una concesión delegada: solo los roles de la lista de cada raíz."
+    error_message = "projectIamAdmin de 1-base es una concesión delegada en dos asignaciones (personas y ejecución)."
+  }
+  assert {
+    condition = alltrue([
+      length(local.base_grantable_roles) <= 10,
+      length(local.runtime_grantable_roles) <= 10,
+      strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin|ejecucion"].expression, "'roles/cloudsql.instanceUser'"),
+      strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin|ejecucion"].expression, "'projects/example-project-id/roles/bntOffHoursScheduler'"),
+      !strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin|ejecucion"].expression, "'roles/viewer'"),
+      strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin|personas"].expression, "'roles/viewer'"),
+      !strcontains(module.stage_iam.conditions["project|1-base|roles/resourcemanager.projectIamAdmin|personas"].expression, "'roles/cloudsql.client'"),
+    ])
+    error_message = "Cada lista de la concesión delegada tiene sus roles y no más de 10."
+  }
+  # Hallazgos 2 y 4: las cuentas de los entornos no administran cuentas de servicio ni IAM de
+  # proyecto; las cuentas de ejecución y sus roles son de 1-base.
+  assert {
+    condition = alltrue(flatten([
+      for e in ["dev", "qa", "prod"] : [
+        for r in ["roles/resourcemanager.projectIamAdmin", "roles/iam.serviceAccountUser", "projects/example-project-id/roles/bntTfServiceAccountManager"] :
+        !contains(keys(module.stage_iam.bindings), "project|3-workloads/${e}|${r}")
+      ]
+    ]))
+    error_message = "tf-wl-<env> no tiene projectIamAdmin, serviceAccountUser de proyecto ni el rol de cuentas de servicio."
+  }
+  assert {
+    condition     = length([for k, b in module.stage_iam.bindings : k if b.role == "roles/resourcemanager.projectIamAdmin" && !startswith(k, "project|1-base|")]) == 0
+    error_message = "Solo 1-base tiene la concesión delegada de projectIamAdmin."
   }
   assert {
     condition = alltrue([
       contains(keys(module.stage_iam.bindings), "project|3-workloads/dev|roles/cloudscheduler.admin"),
       contains(keys(module.stage_iam.bindings), "project|3-workloads/qa|roles/cloudscheduler.admin"),
       !contains(keys(module.stage_iam.bindings), "project|3-workloads/prod|roles/cloudscheduler.admin"),
-      contains(keys(module.stage_iam.bindings), "project|3-workloads/prod|roles/resourcemanager.tagUser"),
-      contains(keys(module.stage_iam.bindings), "project|3-workloads/prod|projects/example-project-id/roles/bntTfServiceAccountManager"),
+      contains(keys(module.stage_iam.bindings), "project|1-base|projects/example-project-id/roles/bntTfServiceAccountManager"),
     ])
-    error_message = "cloudscheduler.admin solo en dev y qa (ADR 0028); tagUser y el rol de cuentas en los tres entornos."
+    error_message = "cloudscheduler.admin solo en dev y qa (ADR 0028); el rol de cuentas de servicio, solo en 1-base."
   }
   assert {
     condition = alltrue([
@@ -298,21 +316,19 @@ run "plan_con_valores_de_ejemplo" {
   assert {
     condition = output.custom_role_ids == {
       secret_container_admin  = "projects/example-project-id/roles/bntTfSecretContainerAdmin"
-      kms_secret_iam_granter  = "projects/example-project-id/roles/bntTfKmsSecretIamGranter"
       service_account_manager = "projects/example-project-id/roles/bntTfServiceAccountManager"
-      repository_iam_granter  = "projects/example-project-id/roles/bntTfRepositoryIamGranter"
       off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
     }
-    error_message = "custom_role_ids debe dar el ID completo de los cinco roles personalizados."
+    error_message = "custom_role_ids debe dar el ID completo de los roles personalizados."
   }
   assert {
     condition = alltrue([
       length([for p in google_project_iam_custom_role.this["secret_container_admin"].permissions : p if startswith(p, "secretmanager.versions.")]) == 0,
-      !contains(google_project_iam_custom_role.this["secret_container_admin"].permissions, "secretmanager.secrets.setIamPolicy"),
+      contains(google_project_iam_custom_role.this["secret_container_admin"].permissions, "secretmanager.secrets.setIamPolicy"),
       length([for p in google_project_iam_custom_role.this["service_account_manager"].permissions : p if strcontains(p, "TagBinding")]) == 0,
       contains(google_project_iam_custom_role.this["service_account_manager"].permissions, "iam.serviceAccounts.setIamPolicy"),
     ])
-    error_message = "Contenedores de secretos sin valores ni IAM; cuentas de servicio sin permisos de etiquetas."
+    error_message = "Contenedores de secretos con su IAM y sin versiones; cuentas de servicio sin permisos de etiquetas."
   }
 
   # --- Protección (ADR 0029 §5) ---
@@ -333,12 +349,22 @@ run "plan_con_valores_de_ejemplo" {
     condition = alltrue([
       google_iam_deny_policy.pipeline["this"].parent == "cloudresourcemanager.googleapis.com%2Fprojects%2Fexample-project-id",
       google_iam_deny_policy.pipeline["this"].name == "bnt-bootstrap-sec-deny-pipeline",
-      length(google_iam_deny_policy.pipeline["this"].rules) == 2,
+      length(google_iam_deny_policy.pipeline["this"].rules) == 3,
       length(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denied_principals) == 9,
       google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denial_condition[0].expression == "resource.matchTag('example-project-id/bnt-proteccion', 'etapa-0')",
       length(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denial_condition) == 0,
     ])
     error_message = "La denegación va en el proyecto, contra las nueve cuentas, con una regla por etiqueta y otra sin condición."
+  }
+  # Valores de secretos: negados a las cuentas del pipeline salvo tf-net (VPN real del hub).
+  # El simulado da el mismo correo a todas las cuentas, así que se cuentan los principales.
+  assert {
+    condition = alltrue([
+      google_iam_deny_policy.pipeline["this"].rules[2].deny_rule[0].denied_permissions == tolist(["secretmanager.googleapis.com/versions.access"]),
+      length(google_iam_deny_policy.pipeline["this"].rules[2].deny_rule[0].denied_principals) == 8,
+      length(google_iam_deny_policy.pipeline["this"].rules[2].deny_rule[0].denial_condition) == 0,
+    ])
+    error_message = "secretmanager.versions.access se niega a ocho de las nueve cuentas (todas menos tf-net)."
   }
   assert {
     condition = alltrue(concat(
@@ -371,10 +397,11 @@ run "sin_etiquetas" {
     condition = alltrue([
       length(google_tags_tag_key.protection) == 0,
       length(google_tags_tag_binding.pipeline_accounts) == 0,
-      length(google_iam_deny_policy.pipeline["this"].rules) == 1,
+      length(google_iam_deny_policy.pipeline["this"].rules) == 2,
       length(google_iam_deny_policy.pipeline["this"].rules[0].deny_rule[0].denial_condition) == 0,
+      length(google_iam_deny_policy.pipeline["this"].rules[1].deny_rule[0].denial_condition) == 0,
     ])
-    error_message = "Sin etiquetas, la denegación solo lleva la regla sin condición."
+    error_message = "Sin etiquetas, la denegación solo lleva las reglas sin condición."
   }
 }
 
@@ -483,6 +510,16 @@ run "doble_region_sin_la_primaria" {
 
   variables {
     state_bucket_dual_regions = ["us-east4", "us-west1"]
+  }
+
+  expect_failures = [google_storage_bucket.state]
+}
+
+run "doble_region_sin_la_de_dr" {
+  command = plan
+
+  variables {
+    state_bucket_dual_regions = ["us-central1", "us-west1"]
   }
 
   expect_failures = [google_storage_bucket.state]

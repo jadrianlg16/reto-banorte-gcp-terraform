@@ -32,9 +32,7 @@ override_data {
       workload_identity_pool     = "projects/222222222222/locations/global/workloadIdentityPools/bnt-bootstrap-sec-wif-pool"
       custom_role_ids = {
         secret_container_admin  = "projects/example-project-id/roles/bntTfSecretContainerAdmin"
-        kms_secret_iam_granter  = "projects/example-project-id/roles/bntTfKmsSecretIamGranter"
         service_account_manager = "projects/example-project-id/roles/bntTfServiceAccountManager"
-        repository_iam_granter  = "projects/example-project-id/roles/bntTfRepositoryIamGranter"
         off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
       }
       state_iam_conditions = {}
@@ -164,11 +162,87 @@ run "plan_con_valores_de_ejemplo" {
   assert {
     condition = alltrue([
       google_artifact_registry_repository_iam_member.run_agent_reader["dev/app"].member == "serviceAccount:service-222222222222@serverless-robot-prod.iam.gserviceaccount.com",
-      google_artifact_registry_repository_iam_member.workloads_iam_granter["qa/app"].member == "serviceAccount:bnt-tf-wl-qa@example-project-id.iam.gserviceaccount.com",
-      google_artifact_registry_repository_iam_member.workloads_iam_granter["qa/app"].role == "projects/example-project-id/roles/bntTfRepositoryIamGranter",
       google_artifact_registry_repository_iam_member.writer["dev/app/serviceAccount:ci-app@example-project-id.iam.gserviceaccount.com"].role == "roles/artifactregistry.writer",
     ])
-    error_message = "El agente de Cloud Run lee los repositorios; cada cuenta de cargas puede dar IAM solo sobre los de su entorno."
+    error_message = "El agente de Cloud Run lee los repositorios y el publicador escribe solo en el suyo."
+  }
+
+  # --- Cuentas de ejecución de los entornos (hallazgos 2 y 4) ---
+  assert {
+    condition = alltrue([
+      # 3 entornos × 1 aplicación × 4 usos, más la cuenta del apagado en dev y qa.
+      length(google_service_account.runtime) == 14,
+      google_service_account.runtime["prod/app/gke_nodes"].account_id == "bnt-prod-app-gke-nodes",
+      google_service_account.runtime["prod/app/gke_nodes"].project == "example-project-id",
+      google_service_account.runtime["dev/app/scheduler"].account_id == "bnt-dev-app-sched",
+      !contains(keys(google_service_account.runtime), "prod/app/scheduler"),
+      output.runtime_service_accounts["qa"]["app"] == {
+        gke_nodes = "bnt-qa-app-gke-nodes@example-project-id.iam.gserviceaccount.com"
+        mig       = "bnt-qa-app-mig@example-project-id.iam.gserviceaccount.com"
+        run       = "bnt-qa-app-run@example-project-id.iam.gserviceaccount.com"
+        scheduler = "bnt-qa-app-sched@example-project-id.iam.gserviceaccount.com"
+        workload  = "bnt-qa-app-workload@example-project-id.iam.gserviceaccount.com"
+      },
+      !contains(keys(output.runtime_service_accounts["prod"]["app"]), "scheduler"),
+    ])
+    error_message = "1-base crea <prefix>-<env>-<app>-<uso> por entorno y aplicación (sched solo en dev y qa) y publica sus correos."
+  }
+  assert {
+    condition = alltrue([
+      module.iam.bindings["runtime|prod/app/gke_nodes|roles/logging.logWriter"].member == "serviceAccount:bnt-prod-app-gke-nodes@example-project-id.iam.gserviceaccount.com",
+      module.iam.bindings["runtime|dev/app/scheduler|projects/example-project-id/roles/bntOffHoursScheduler"].member == "serviceAccount:bnt-dev-app-sched@example-project-id.iam.gserviceaccount.com",
+      # Por entorno: 13 roles de telemetría, 6 de Cloud SQL (workload, run y mig) y el del apagado
+      # en dev y qa.
+      length([for k, b in module.iam.bindings : k if startswith(k, "runtime|")]) == 59,
+      !anytrue([for k, b in module.iam.bindings : strcontains(b.role, "admin") || strcontains(b.role, "Admin") if startswith(k, "runtime|")]),
+    ])
+    error_message = "Cada cuenta de ejecución recibe solo sus roles mínimos de proyecto."
+  }
+  assert {
+    condition = alltrue([
+      module.iam.conditions["runtime|dev/app/run|roles/cloudsql.client"].expression == "resource.type == \"sqladmin.googleapis.com/Instance\" && resource.name.startsWith(\"projects/example-project-id/instances/bnt-dev-data-\")",
+      module.iam.conditions["runtime|prod/app/mig|roles/cloudsql.instanceUser"].expression == "resource.type == \"sqladmin.googleapis.com/Instance\" && resource.name.startsWith(\"projects/example-project-id/instances/bnt-prod-data-\")",
+      !contains(keys(module.iam.bindings), "runtime|prod/app/gke_nodes|roles/cloudsql.client"),
+    ])
+    error_message = "Cloud SQL por IAM solo para workload, run y mig, limitado a las instancias de su entorno."
+  }
+  assert {
+    condition = alltrue([
+      toset(keys(google_secret_manager_secret_iam_member.runtime)) == toset([
+        "dev/app/workload/db-password", "dev/app/run/db-password",
+        "prod/app/workload/db-password", "prod/app/run/db-password",
+        "prod/app/workload/api-key", "prod/app/run/api-key",
+      ]),
+      google_secret_manager_secret_iam_member.runtime["prod/app/run/api-key"].member == "serviceAccount:bnt-prod-app-run@example-project-id.iam.gserviceaccount.com",
+      google_secret_manager_secret_iam_member.runtime["prod/app/run/api-key"].role == "roles/secretmanager.secretAccessor",
+    ])
+    error_message = "workload y run leen solo los secretos de su entorno."
+  }
+  assert {
+    condition = alltrue([
+      toset(keys(google_artifact_registry_repository_iam_member.runtime_reader)) == toset(["dev/app/gke_nodes", "dev/app/mig", "qa/app/gke_nodes", "qa/app/mig", "prod/app/gke_nodes", "prod/app/mig"]),
+      google_artifact_registry_repository_iam_member.runtime_reader["prod/app/mig"].repository == "bnt-prod-app",
+      google_artifact_registry_repository_iam_member.runtime_reader["prod/app/mig"].member == "serviceAccount:bnt-prod-app-mig@example-project-id.iam.gserviceaccount.com",
+      google_artifact_registry_repository_iam_member.runtime_reader["prod/app/mig"].role == "roles/artifactregistry.reader",
+    ])
+    error_message = "Los nodos de GKE y las VM del MIG leen solo el repositorio de su entorno y aplicación."
+  }
+  # tf-wl-<env> solo usa (actAs) las cuentas de su entorno que adjunta, nunca workload.
+  assert {
+    condition = alltrue([
+      toset(keys(google_service_account_iam_member.workloads_user)) == toset([
+        "dev/app/gke_nodes", "dev/app/mig", "dev/app/run", "dev/app/scheduler",
+        "qa/app/gke_nodes", "qa/app/mig", "qa/app/run", "qa/app/scheduler",
+        "prod/app/gke_nodes", "prod/app/mig", "prod/app/run",
+      ]),
+      alltrue([for k, m in google_service_account_iam_member.workloads_user : m.role == "roles/iam.serviceAccountUser" && m.member == "serviceAccount:bnt-tf-wl-${split("/", k)[0]}@example-project-id.iam.gserviceaccount.com"]),
+    ])
+    error_message = "tf-wl-<env> recibe serviceAccountUser solo sobre gke_nodes, mig, run y sched de su entorno."
+  }
+  # Sin gke_workload_identity_bindings no hay enlace (el pool lo crea GKE con el primer clúster).
+  assert {
+    condition     = length(google_service_account_iam_member.workload_identity) == 0 && output.gke_workload_identity_members["prod"]["app"] == null
+    error_message = "Sin gke_workload_identity_bindings no hay enlace de Workload Identity y la salida es null."
   }
   assert {
     condition = alltrue([
@@ -191,13 +265,17 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "Grupos de solo lectura y tagUser para el agente de GKE y la cuenta de las APIs de Google."
   }
-  # La cuenta de 1-base solo puede asignar los roles de su condición en 0-bootstrap.
+  # La cuenta de 1-base solo puede asignar los roles de sus dos condiciones en 0-bootstrap
+  # (base_grantable_roles y runtime_grantable_roles).
   assert {
     condition = alltrue([for b in values(module.iam.bindings) : contains([
       "roles/cloudkms.viewer", "roles/iam.securityReviewer", "roles/logging.privateLogViewer", "roles/logging.viewer",
       "roles/monitoring.viewer", "roles/resourcemanager.tagUser", "roles/viewer",
+      "roles/autoscaling.metricsWriter", "roles/cloudsql.client", "roles/cloudsql.instanceUser", "roles/cloudtrace.agent",
+      "roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/stackdriver.resourceMetadata.writer",
+      "projects/example-project-id/roles/bntOffHoursScheduler",
     ], b.role) if b.scope == "project"])
-    error_message = "Un rol de proyecto fuera de base_grantable_roles de 0-bootstrap fallaría en el apply."
+    error_message = "Un rol de proyecto fuera de las listas de la concesión delegada de 0-bootstrap fallaría en el apply."
   }
 
   # --- Sin organización ---
@@ -294,6 +372,77 @@ run "sin_prod_no_hay_reglas_de_cluster" {
     condition     = length(google_binary_authorization_policy.this.cluster_admission_rules) == 0 && length(module.kms) == 3
     error_message = "Sin prod no hay reglas de clúster de prod."
   }
+}
+
+# Después del primer clúster de GKE: la cuenta de Kubernetes <app>-<env>/<cuenta> actúa como
+# workload, y cada entorno con su namespace.
+run "con_enlace_de_workload_identity" {
+  command = plan
+
+  variables {
+    gke_workload_identity_bindings = true
+    gke_workload_ksa_name          = "api"
+    applications                   = ["app", "pagos"]
+    off_hours_environments         = ["dev"]
+  }
+
+  assert {
+    condition = alltrue([
+      length(google_service_account_iam_member.workload_identity) == 6,
+      google_service_account_iam_member.workload_identity["prod/pagos"].member == "serviceAccount:example-project-id.svc.id.goog[pagos-prod/api]",
+      google_service_account_iam_member.workload_identity["prod/pagos"].role == "roles/iam.workloadIdentityUser",
+      output.gke_workload_identity_members["dev"]["app"] == "serviceAccount:example-project-id.svc.id.goog[app-dev/api]",
+    ])
+    error_message = "Con gke_workload_identity_bindings, un enlace por entorno y aplicación con el namespace <app>-<env>."
+  }
+  assert {
+    condition = alltrue([
+      length(google_service_account.runtime) == 26,
+      google_service_account.runtime["dev/pagos/scheduler"].account_id == "bnt-dev-pagos-sched",
+      !contains(keys(google_service_account.runtime), "qa/app/scheduler"),
+      output.runtime_service_accounts["prod"]["pagos"]["workload"] == "bnt-prod-pagos-workload@example-project-id.iam.gserviceaccount.com",
+      # Los secretos son del entorno: las dos aplicaciones de prod leen los mismos.
+      contains(keys(google_secret_manager_secret_iam_member.runtime), "prod/pagos/run/api-key"),
+    ])
+    error_message = "Cuentas por aplicación y apagado solo en off_hours_environments."
+  }
+}
+
+# Con 9 caracteres, <prefix>-prod-<app>-gke-nodes pasaría de 30 con un prefijo de 6.
+run "rechaza_aplicacion_de_mas_de_8_caracteres" {
+  command = plan
+
+  variables {
+    applications = ["pagosweb1"]
+  }
+
+  expect_failures = [var.applications]
+}
+
+# Con el prefijo y la aplicación más largos, la cuenta más larga cabe justo en 30.
+run "admite_prefijo_y_aplicacion_maximos" {
+  command = plan
+
+  variables {
+    prefix                       = "bntlzx"
+    applications                 = ["pagosweb"]
+    artifact_registry_publishers = {}
+  }
+
+  assert {
+    condition     = google_service_account.runtime["prod/pagosweb/gke_nodes"].account_id == "bntlzx-prod-pagosweb-gke-nodes"
+    error_message = "La cuenta más larga debe caber en 30 caracteres."
+  }
+}
+
+run "rechaza_apagado_en_prod" {
+  command = plan
+
+  variables {
+    off_hours_environments = ["dev", "prod"]
+  }
+
+  expect_failures = [var.off_hours_environments]
 }
 
 run "rechaza_proyecto_distinto_del_de_0_bootstrap" {

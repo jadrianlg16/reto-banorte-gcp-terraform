@@ -74,7 +74,7 @@ variable "name_suffix" {
 }
 
 variable "primary_region" {
-  description = "Región primaria (ADR 0002). Con dr_region y us forma las ubicaciones de los llaveros de entorno que la condición de IAM de las cuentas de cargas reconoce."
+  description = "Región primaria (ADR 0002). Con dr_region, las dos regiones de un bucket de estado de doble región (state_bucket_dual_regions)."
   type        = string
   nullable    = false
 

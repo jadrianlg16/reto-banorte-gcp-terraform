@@ -47,6 +47,19 @@ override_data {
       artifact_registry_repositories = {
         for env in ["dev", "qa", "prod"] : env => { app = "us-docker.pkg.dev/example-lz/bnt-${env}-app" }
       }
+      # Cuentas de ejecución que crea 1-base (la del apagado solo en dev y qa) y enlace de
+      # Workload Identity ya creado (gke_workload_identity_bindings = true).
+      runtime_service_accounts = {
+        for env in ["dev", "qa", "prod"] : env => {
+          app = merge(
+            { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-${env}-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" },
+            env == "prod" ? {} : { scheduler = "bnt-${env}-app-sched@example-lz.iam.gserviceaccount.com" },
+          )
+        }
+      }
+      gke_workload_identity_members = {
+        for env in ["dev", "qa", "prod"] : env => { app = "serviceAccount:example-lz.svc.id.goog[app-${env}/app]" }
+      }
       off_hours_role_id        = "projects/example-lz/roles/bntOffHoursScheduler"
       security_alert_email     = "gcp-security-admins@example.com"
       notification_channel_ids = { security = "projects/example-lz/notificationChannels/000000000001" }
@@ -137,8 +150,6 @@ variables {
   enable_memorystore = true
   enable_internal_lb = true
   enable_backup      = true
-
-  application_secrets = ["db-app"]
 
   gke_authenticator_security_group = "gke-security-groups@example.com"
   gke_release_channel              = "STABLE"
@@ -254,7 +265,8 @@ run "prod_operacion_normal" {
     error_message = "Memorystore y Filestore deben existir en la región primaria."
   }
 
-  # Cuentas de ejecución en el proyecto único, con <prefix>-<env>-<app>-<uso> (ADR 0017).
+  # Cuentas de ejecución que crea 1-base (runtime_service_accounts), con
+  # <prefix>-<env>-<app>-<uso> (ADR 0017); esta raíz no crea cuentas ni asigna roles.
   assert {
     condition = local.service_accounts == {
       gke_nodes = "bnt-prod-app-gke-nodes@example-lz.iam.gserviceaccount.com"
@@ -262,50 +274,16 @@ run "prod_operacion_normal" {
       mig       = "bnt-prod-app-mig@example-lz.iam.gserviceaccount.com"
       run       = "bnt-prod-app-run@example-lz.iam.gserviceaccount.com"
     }
-    error_message = "Las cuentas de ejecución deben llamarse <prefix>-<env>-<app>-<uso> y vivir en project_id."
+    error_message = "Las cuentas de ejecución deben ser las de runtime_service_accounts[environment][application] de 1-base."
   }
   assert {
     condition     = module.gke["primary"].node_pools["general"].cluster == "bnt-prod-app-gke" && output.service_accounts["mig"] == "bnt-prod-app-mig@example-lz.iam.gserviceaccount.com"
     error_message = "Los pools cuelgan del clúster por convención y la salida service_accounts publica los correos."
   }
 
-  # Permisos de proyecto solo para principales que crea esta raíz (ADR 0029 §4).
-  assert {
-    condition = alltrue([
-      for b in google_project_iam_member.runtime : b.project == "example-lz" && contains([for e in values(local.service_accounts) : "serviceAccount:${e}"], b.member)
-    ])
-    error_message = "Los permisos de proyecto de la raíz son solo para sus cuentas de ejecución."
-  }
-  assert {
-    condition = (
-      google_project_iam_member.runtime["gke_nodes/roles/logging.logWriter"].member == "serviceAccount:bnt-prod-app-gke-nodes@example-lz.iam.gserviceaccount.com" &&
-      length(google_project_iam_member.runtime) == 13 &&
-      !anytrue([for b in google_project_iam_member.runtime : strcontains(b.role, "admin") || b.role == "roles/editor" || b.role == "roles/owner"])
-    )
-    error_message = "Cada cuenta de ejecución recibe solo sus roles mínimos de telemetría."
-  }
-  # Secretos del entorno (1-base): workload y run leen los de application_secrets.
-  assert {
-    condition = (
-      toset(keys(google_secret_manager_secret_iam_member.runtime)) == toset(["db-app/workload", "db-app/run"]) &&
-      google_secret_manager_secret_iam_member.runtime["db-app/run"].secret_id == "projects/example-lz/secrets/bnt-prod-sec-db-app" &&
-      google_secret_manager_secret_iam_member.runtime["db-app/run"].role == "roles/secretmanager.secretAccessor"
-    )
-    error_message = "Solo workload y run leen los secretos del entorno de la aplicación."
-  }
-  # Repositorio de imágenes del entorno (1-base): lo leen los nodos de GKE y las VM del MIG.
-  assert {
-    condition = (
-      toset(keys(google_artifact_registry_repository_iam_member.reader)) == toset(["gke_nodes", "mig"]) &&
-      alltrue([
-        for r in google_artifact_registry_repository_iam_member.reader :
-        r.project == "example-lz" && r.location == "us" && r.repository == "bnt-prod-app" && r.role == "roles/artifactregistry.reader"
-      ])
-    )
-    error_message = "Los nodos de GKE y el MIG leen el repositorio de prod de la aplicación, y nada más."
-  }
-
-  # Cloud SQL por IAM: las tres cuentas de ejecución con cómputo encendido son usuarios de la base.
+  # Cloud SQL por IAM: las tres cuentas de ejecución con cómputo encendido son usuarios de la
+  # base; los roles cloudsql.client e instanceUser los da 1-base (data.tf pasa
+  # grant_iam_login_roles = false; la prueba del módulo cubre que así no asigna roles).
   assert {
     condition = module.cloud_sql.iam_user_names == {
       "bnt-prod-app-workload@example-lz.iam.gserviceaccount.com" = "bnt-prod-app-workload@example-lz.iam"
@@ -315,14 +293,10 @@ run "prod_operacion_normal" {
     error_message = "GKE (workload), Cloud Run (run) y el MIG (mig) deben entrar a Cloud SQL por IAM."
   }
 
-  # Workload Identity: namespace <app>-<env> por defecto (ADR 0029 §9).
+  # Workload Identity: el enlace lo crea 1-base con el namespace <app>-<env> (ADR 0029 §9).
   assert {
-    condition = (
-      google_service_account_iam_member.workload_identity["workload"].service_account_id == "projects/example-lz/serviceAccounts/bnt-prod-app-workload@example-lz.iam.gserviceaccount.com" &&
-      google_service_account_iam_member.workload_identity["workload"].role == "roles/iam.workloadIdentityUser" &&
-      google_service_account_iam_member.workload_identity["workload"].member == "serviceAccount:example-lz.svc.id.goog[app-prod/app]"
-    )
-    error_message = "Debe existir el enlace de Workload Identity de app-prod/app a la cuenta workload."
+    condition     = output.gke_workload_identity_member == "serviceAccount:example-lz.svc.id.goog[app-prod/app]"
+    error_message = "La salida gke_workload_identity_member debe ser la de gke_workload_identity_members de 1-base."
   }
 
   # Balanceador externo con Cloud Armor y backends de los cómputos habilitados (GKE sin NEG aún).
@@ -368,7 +342,6 @@ run "prod_operacion_normal" {
   assert {
     condition = (
       length(module.off_hours_shutdown) == 0 && output.off_hours_shutdown == null &&
-      length(google_service_account.scheduler) == 0 && length(google_project_iam_member.scheduler) == 0 &&
       output.scheduler_service_account == null
     )
     error_message = "prod no tiene cuenta ni trabajos de apagado."
@@ -523,10 +496,11 @@ run "prod_conmutacion_a_dr" {
     condition     = module.cloud_sql.instance_name == "bnt-prod-data-sql-usc1"
     error_message = "La conmutación no debe cambiar la instancia primaria de Cloud SQL."
   }
-  # Un solo enlace de Workload Identity: el pool es del proyecto y sirve a los dos clústeres.
+  # Un solo enlace de Workload Identity (de 1-base): el pool es del proyecto y sirve a los dos
+  # clústeres.
   assert {
-    condition     = length(google_service_account_iam_member.workload_identity) == 1
-    error_message = "El enlace de Workload Identity es uno por proyecto, no por clúster."
+    condition     = output.gke_workload_identity_member == "serviceAccount:example-lz.svc.id.goog[app-prod/app]"
+    error_message = "El enlace de Workload Identity es uno por entorno y aplicación, no por clúster."
   }
 }
 
@@ -749,7 +723,6 @@ run "dev_solo_cloud_run_y_sql" {
     gke_node_pools      = {}
     mig_image           = null
     cloud_run_image     = "us-docker.pkg.dev/example-lz/bnt-dev-app/api:1.0.0"
-    application_secrets = []
     sql_tier            = "db-custom-1-3840"
     lb_backend_paths    = {}
     domain_names        = ["app.dev.example.com"]
@@ -763,34 +736,18 @@ run "dev_solo_cloud_run_y_sql" {
   }
 
   assert {
-    condition     = output.gke_cluster_names == {} && length(google_service_account_iam_member.workload_identity) == 0
-    error_message = "Sin GKE no hay clúster ni enlace de Workload Identity."
+    condition     = output.gke_cluster_names == {} && output.gke_workload_identity_member == null
+    error_message = "Sin GKE no hay clúster y la salida de Workload Identity es null."
   }
 
-  # Cuentas de dev con el prefijo del entorno; la cuenta del apagado y su rol de 1-base.
+  # Cuentas de dev de 1-base con el prefijo del entorno, y la del apagado.
   assert {
-    condition     = alltrue([for sa in google_service_account.runtime : startswith(sa.account_id, "bnt-dev-app-") && sa.project == "example-lz"])
-    error_message = "Las cuentas de ejecución de dev deben llamarse bnt-dev-app-<uso>."
+    condition     = alltrue([for sa in values(local.service_accounts) : startswith(sa, "bnt-dev-app-") && endswith(sa, "@example-lz.iam.gserviceaccount.com")])
+    error_message = "Las cuentas de ejecución de dev deben ser bnt-dev-app-<uso> de 1-base."
   }
   assert {
-    condition = (
-      google_service_account.scheduler["this"].account_id == "bnt-dev-app-sched" &&
-      google_service_account.scheduler["this"].project == "example-lz" &&
-      output.scheduler_service_account == "bnt-dev-app-sched@example-lz.iam.gserviceaccount.com"
-    )
-    error_message = "La cuenta del apagado se llama <prefix>-<env>-<app>-sched y vive en project_id."
-  }
-  assert {
-    condition = (
-      google_project_iam_member.scheduler["this"].role == "projects/example-lz/roles/bntOffHoursScheduler" &&
-      google_project_iam_member.scheduler["this"].member == "serviceAccount:bnt-dev-app-sched@example-lz.iam.gserviceaccount.com" &&
-      google_project_iam_member.scheduler["this"].project == "example-lz"
-    )
-    error_message = "La cuenta del apagado recibe solo el rol personalizado de 1-base (off_hours_role_id)."
-  }
-  assert {
-    condition     = length(google_secret_manager_secret_iam_member.runtime) == 0
-    error_message = "Sin application_secrets no hay permisos sobre secretos."
+    condition     = output.scheduler_service_account == "bnt-dev-app-sched@example-lz.iam.gserviceaccount.com"
+    error_message = "La cuenta del apagado es la scheduler de runtime_service_accounts de 1-base (<prefix>-<env>-<app>-sched)."
   }
 
   # Apagado fuera de horario (ADR 0028): en dev solo hay Cloud SQL que detener (Cloud Run ya
@@ -854,8 +811,8 @@ run "dev_solo_cloud_run_y_sql" {
   }
   # Repositorio de dev, no el de prod.
   assert {
-    condition     = alltrue([for r in google_artifact_registry_repository_iam_member.reader : r.repository == "bnt-dev-app"])
-    error_message = "Las cuentas de dev leen solo el repositorio de dev."
+    condition     = local.artifact_repository.repository == "bnt-dev-app"
+    error_message = "dev usa el repositorio de dev de 1-base."
   }
 }
 
@@ -903,8 +860,8 @@ run "primera_ejecucion_sin_computo" {
     error_message = "Sin cómputo debe quedar solo el plan de respaldo de Cloud SQL."
   }
   assert {
-    condition     = length(google_service_account.runtime) == 4 && length(module.cloud_sql.iam_user_names) == 0
-    error_message = "Las cuatro cuentas de ejecución existen desde el primer apply; sin cómputo ninguna entra a Cloud SQL."
+    condition     = length(local.service_accounts) == 4 && length(module.cloud_sql.iam_user_names) == 0
+    error_message = "Las cuatro cuentas de ejecución de 1-base se leen desde el primer apply; sin cómputo ninguna entra a Cloud SQL."
   }
 }
 
@@ -1012,8 +969,8 @@ run "qa_mig_cloud_run_y_redis" {
     error_message = "En qa las cuentas run y mig deben entrar a Cloud SQL por IAM."
   }
   assert {
-    condition     = google_secret_manager_secret_iam_member.runtime["db-app/workload"].secret_id == "projects/example-lz/secrets/bnt-qa-sec-db-app"
-    error_message = "En qa las cuentas leen el secreto de qa de 1-base."
+    condition     = output.scheduler_service_account == "bnt-qa-app-sched@example-lz.iam.gserviceaccount.com" && local.service_accounts["mig"] == "bnt-qa-app-mig@example-lz.iam.gserviceaccount.com"
+    error_message = "En qa se usan las cuentas de qa de 1-base."
   }
 }
 
@@ -1036,10 +993,12 @@ run "llaves_con_la_forma_anterior_por_ubicacion" {
             { us = { storage = "projects/example-lz/locations/us/keyRings/bnt-${env}-sec-kr-us/cryptoKeys/storage" } },
           )
         }
-        secret_ids                     = { prod = { db-app = "projects/example-lz/secrets/bnt-prod-sec-db-app" } }
         artifact_registry_repositories = { prod = { app = "us-docker.pkg.dev/example-lz/bnt-prod-app" } }
-        off_hours_role_id              = "bntOffHoursScheduler"
-        notification_channel_ids       = {}
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
+        notification_channel_ids      = {}
       }
     }
   }
@@ -1053,8 +1012,8 @@ run "llaves_con_la_forma_anterior_por_ubicacion" {
     error_message = "Con la forma [ubicación][uso] se usan las mismas llaves."
   }
   assert {
-    condition     = local.off_hours_role_id == "projects/example-lz/roles/bntOffHoursScheduler" && length(local.base_notification_channel_ids) == 0
-    error_message = "Un off_hours_role_id sin projects/ se completa con project_id; sin canales de 1-base no se agrega ninguno."
+    condition     = length(local.base_notification_channel_ids) == 0
+    error_message = "Sin canales de 1-base no se agrega ninguno."
   }
 }
 
@@ -1079,7 +1038,6 @@ run "repositorio_serializado_como_json" {
             { storage_us = "projects/example-lz/locations/us/keyRings/bnt-prod-sec-kr-us/cryptoKeys/storage" },
           )
         }
-        secret_ids = { prod = { db-app = "projects/example-lz/secrets/bnt-prod-sec-db-app" } }
         artifact_registry_repositories = {
           prod = {
             app = jsonencode({
@@ -1088,7 +1046,11 @@ run "repositorio_serializado_como_json" {
             })
           }
         }
-        notification_channel_ids = {}
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
+        notification_channel_ids      = {}
       }
     }
   }
@@ -1097,24 +1059,45 @@ run "repositorio_serializado_como_json" {
     condition     = local.artifact_repository == { location = "us", project = "example-lz", repository = "bnt-prod-app" }
     error_message = "La URL del repositorio debe leerse también de un {id, url} serializado en JSON."
   }
-  assert {
-    condition     = alltrue([for r in google_artifact_registry_repository_iam_member.reader : r.repository == "bnt-prod-app" && r.location == "us"])
-    error_message = "Los permisos de lectura deben ir al repositorio del JSON."
-  }
 }
 
-# Namespace explícito de Workload Identity (termina en -<env>).
-run "namespace_explicito_de_workload_identity" {
+# 1-base todavía sin el enlace de Workload Identity (gke_workload_identity_bindings = false
+# antes del primer clúster): el plan sigue y el aviso de check.workload_identity_enlazada lo dice.
+run "gke_antes_del_enlace_de_workload_identity" {
   command = plan
 
-  variables {
-    gke_workload_namespace = "pagos-prod"
-    gke_workload_ksa_name  = "api"
+  override_data {
+    target = data.terraform_remote_state.base
+    values = {
+      outputs = {
+        kms_key_ids = {
+          prod = merge(
+            {
+              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "backup", "run"] :
+              use => "projects/example-lz/locations/us-central1/keyRings/bnt-prod-sec-kr-usc1/cryptoKeys/${use}"
+            },
+            {
+              for use in ["gke", "compute", "sql", "backup", "run"] :
+              "${use}_dr" => "projects/example-lz/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/${use}"
+            },
+            { storage_us = "projects/example-lz/locations/us/keyRings/bnt-prod-sec-kr-us/cryptoKeys/storage" },
+          )
+        }
+        artifact_registry_repositories = { prod = { app = "us-docker.pkg.dev/example-lz/bnt-prod-app" } }
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { prod = { app = null } }
+        notification_channel_ids      = {}
+      }
+    }
   }
 
+  expect_failures = [check.workload_identity_enlazada]
+
   assert {
-    condition     = output.gke_workload_identity_member == "serviceAccount:example-lz.svc.id.goog[pagos-prod/api]"
-    error_message = "El enlace de Workload Identity debe usar el namespace y la cuenta indicados."
+    condition     = output.gke_cluster_names == { "us-central1" = "bnt-prod-app-gke" } && output.gke_workload_identity_member == null
+    error_message = "Sin el enlace de 1-base el clúster se planea igual y la salida es null."
   }
 }
 
@@ -1323,10 +1306,12 @@ run "rechaza_estado_sin_llave_de_dr" {
             use => "projects/example-lz/locations/us-central1/keyRings/bnt-prod-sec-kr-usc1/cryptoKeys/${use}"
           }
         }
-        secret_ids                     = { prod = { db-app = "projects/example-lz/secrets/bnt-prod-sec-db-app" } }
         artifact_registry_repositories = { prod = { app = "us-docker.pkg.dev/example-lz/bnt-prod-app" } }
-        off_hours_role_id              = "projects/example-lz/roles/bntOffHoursScheduler"
-        notification_channel_ids       = {}
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
+        notification_channel_ids      = {}
       }
     }
   }
@@ -1334,11 +1319,34 @@ run "rechaza_estado_sin_llave_de_dr" {
   expect_failures = [terraform_data.upstream_checks]
 }
 
-run "rechaza_secreto_inexistente" {
+# Las cuentas de ejecución las crea 1-base: sin ellas en su estado, esta raíz no planea.
+run "rechaza_estado_sin_cuentas_de_ejecucion" {
   command = plan
 
-  variables {
-    application_secrets = ["no-existe"]
+  override_data {
+    target = data.terraform_remote_state.base
+    values = {
+      outputs = {
+        kms_key_ids = {
+          prod = merge(
+            {
+              for use in ["gke", "compute", "sql", "storage", "filestore", "redis", "backup", "run"] :
+              use => "projects/example-lz/locations/us-central1/keyRings/bnt-prod-sec-kr-usc1/cryptoKeys/${use}"
+            },
+            {
+              for use in ["gke", "compute", "sql", "backup", "run"] :
+              "${use}_dr" => "projects/example-lz/locations/us-east4/keyRings/bnt-prod-sec-kr-use4/cryptoKeys/${use}"
+            },
+            { storage_us = "projects/example-lz/locations/us/keyRings/bnt-prod-sec-kr-us/cryptoKeys/storage" },
+          )
+        }
+        artifact_registry_repositories = { prod = { app = "us-docker.pkg.dev/example-lz/bnt-prod-app" } }
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        notification_channel_ids = {}
+      }
+    }
   }
 
   expect_failures = [data.terraform_remote_state.base]
@@ -1380,10 +1388,12 @@ run "rechaza_repositorio_de_otro_proyecto" {
             { storage_us = "projects/example-lz/locations/us/keyRings/bnt-prod-sec-kr-us/cryptoKeys/storage" },
           )
         }
-        secret_ids                     = { prod = { db-app = "projects/example-lz/secrets/bnt-prod-sec-db-app" } }
         artifact_registry_repositories = { prod = { app = "us-docker.pkg.dev/otro-proyecto/bnt-prod-app" } }
-        off_hours_role_id              = "projects/example-lz/roles/bntOffHoursScheduler"
-        notification_channel_ids       = {}
+        runtime_service_accounts = {
+          prod = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-prod-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { prod = { app = "serviceAccount:example-lz.svc.id.goog[app-prod/app]" } }
+        notification_channel_ids      = {}
       }
     }
   }
@@ -1459,38 +1469,6 @@ run "rechaza_aplicacion_larga" {
   }
 
   expect_failures = [var.application]
-}
-
-run "rechaza_namespace_del_sistema_para_workload_identity" {
-  command = plan
-
-  variables {
-    gke_workload_namespace = "kube-system"
-  }
-
-  expect_failures = [var.gke_workload_namespace]
-}
-
-# Workload Identity comparte el pool del proyecto: el namespace de prod no puede ser el de otro
-# entorno ni uno sin entorno (ADR 0029 §9).
-run "rechaza_namespace_de_otro_entorno" {
-  command = plan
-
-  variables {
-    gke_workload_namespace = "app-dev"
-  }
-
-  expect_failures = [var.gke_workload_namespace]
-}
-
-run "rechaza_namespace_sin_entorno" {
-  command = plan
-
-  variables {
-    gke_workload_namespace = "app"
-  }
-
-  expect_failures = [var.gke_workload_namespace]
 }
 
 run "rechaza_nombre_de_instancia_sql_invalido" {
@@ -1650,9 +1628,9 @@ run "rechaza_horario_sin_lugar_para_el_respaldo" {
   expect_failures = [var.off_hours_shutdown]
 }
 
-# Estado de 1-base sin el rol del apagado: el plan falla con un mensaje claro en lugar de crear
-# trabajos con una cuenta sin permisos.
-run "rechaza_apagado_sin_el_rol_de_1_base" {
+# Estado de 1-base sin la cuenta del apagado (off_hours_environments sin el entorno): el plan
+# falla con un mensaje claro en lugar de crear trabajos sin cuenta.
+run "rechaza_apagado_sin_la_cuenta_de_1_base" {
   command = plan
 
   variables {
@@ -1672,9 +1650,13 @@ run "rechaza_apagado_sin_el_rol_de_1_base" {
             use => "projects/example-lz/locations/us-central1/keyRings/bnt-dev-sec-kr-usc1/cryptoKeys/${use}"
           }
         }
-        secret_ids                     = { dev = { db-app = "projects/example-lz/secrets/bnt-dev-sec-db-app" } }
         artifact_registry_repositories = { dev = { app = "us-docker.pkg.dev/example-lz/bnt-dev-app" } }
-        notification_channel_ids       = {}
+        runtime_service_accounts = {
+          dev = { app = { for use in ["gke_nodes", "workload", "mig", "run"] : use => "bnt-dev-app-${replace(use, "_", "-")}@example-lz.iam.gserviceaccount.com" } }
+        }
+        gke_workload_identity_members = { dev = { app = "serviceAccount:example-lz.svc.id.goog[app-dev/app]" } }
+        off_hours_role_id             = "projects/example-lz/roles/bntOffHoursScheduler"
+        notification_channel_ids      = {}
       }
     }
   }

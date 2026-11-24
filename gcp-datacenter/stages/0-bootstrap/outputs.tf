@@ -42,7 +42,7 @@ output "workload_identity_pool" {
 }
 
 output "custom_role_ids" {
-  description = "Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret_container_admin, kms_secret_iam_granter, service_account_manager, repository_iam_granter y off_hours_scheduler."
+  description = "Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret_container_admin, service_account_manager y off_hours_scheduler."
   value       = { for k in keys(google_project_iam_custom_role.this) : k => local.custom_role_ids[k] }
 }
 
