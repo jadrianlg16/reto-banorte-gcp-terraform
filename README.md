@@ -17,7 +17,7 @@ desplegable desde cero con Terraform y un pipeline de CI/CD.
 | `labs/ejercicio-2` | Ejercicio 2: tres archivos con `for_each` y dependencias con `random_pet` |
 | `entregas/fase-1-2` | Actividad Fases 1 y 2: reporte, bitácora del equipo y evidencias de los laboratorios |
 
-Para desplegar el proyecto final en una organización de GCP: [guía del
+Para desplegar el proyecto final en un proyecto de GCP (con o sin organización): [guía del
 colaborador](gcp-datacenter/docs/guia-colaborador-gcp.md). Lo que falta para terminarlo:
 [backlog](gcp-datacenter/docs/backlog.md).
 
