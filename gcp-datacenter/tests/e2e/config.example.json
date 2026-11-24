@@ -14,13 +14,20 @@
       "billing_account": "000000-000000-000000",
       "budget_amount": 1000,
       "github_repository": "example-org/example-repo",
+      "github_repository_id": "000000000",
+      "github_repository_owner_id": "000000000",
       "labels": { "app": "landing-zone" }
     },
     "1-base": {
       "environments": ["dev", "qa", "prod"],
-      "applications": { "app": { "apis": [], "secrets": [] } },
+      "applications": ["app"],
       "secret_names": { "dev": ["app-api-token"], "qa": ["app-api-token"], "prod": ["app-api-token"] },
       "binary_authorization_allowlist_patterns": ["us-docker.pkg.dev/cloudrun/container/hello*"],
+      "security_alert_email": "seguridad@example.com",
+      "essential_contacts": {
+        "admin@example.com": ["LEGAL", "SUSPENSION", "TECHNICAL"],
+        "seguridad@example.com": ["SECURITY", "TECHNICAL"]
+      },
       "log_retention_days": 365,
       "log_retention_locked": false,
       "labels": { "app": "landing-zone" }

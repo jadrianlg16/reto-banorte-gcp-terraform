@@ -1,11 +1,23 @@
 package e2e
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"gcp-datacenter/tests/helpers"
 )
@@ -133,13 +145,118 @@ func TestConfigExampleVPNDR(t *testing.T) {
 	}
 }
 
-// TestConfigExampleRoots comprueba que config.example.json solo trae variables para raíces del
-// ADR 0029 §2 (las que recorre la prueba, con dev) y que el proyecto único llega en common.
+// rootVariable es una variable que declara una raíz de stages/.
+type rootVariable struct {
+	Type     cty.Type // cty.DynamicPseudoType si no declara type
+	Required bool     // sin default: Terraform la exige
+}
+
+// rootVariables lee los bloques variable de los *.tf de una raíz (sin subcarpetas) con el
+// analizador de HCL y el de restricciones de tipo de Terraform (con optional()).
+func rootVariables(t *testing.T, dir string) map[string]rootVariable {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.tf"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("%s: sin archivos .tf (%v)", dir, err)
+	}
+	parser := hclparse.NewParser()
+	vars := map[string]rootVariable{}
+	for _, f := range files {
+		file, diags := parser.ParseHCLFile(f)
+		if diags.HasErrors() {
+			t.Fatalf("%s: %s", f, diags.Error())
+		}
+		body, ok := file.Body.(*hclsyntax.Body)
+		if !ok {
+			t.Fatalf("%s: no es sintaxis nativa de HCL", f)
+		}
+		for _, b := range body.Blocks {
+			if b.Type != "variable" || len(b.Labels) != 1 {
+				continue
+			}
+			v := rootVariable{Type: cty.DynamicPseudoType, Required: true}
+			if a, ok := b.Body.Attributes["type"]; ok {
+				ty, _, diags := typeexpr.TypeConstraintWithDefaults(a.Expr)
+				if diags.HasErrors() {
+					t.Fatalf("%s: variable %s: %s", f, b.Labels[0], diags.Error())
+				}
+				v.Type = ty
+			}
+			if _, ok := b.Body.Attributes["default"]; ok {
+				v.Required = false
+			}
+			vars[b.Labels[0]] = v
+		}
+	}
+	return vars
+}
+
+// jsonFitsType dice si un valor de JSON (como lo deja encoding/json) se puede asignar a una
+// variable del tipo ty, con la misma conversión que hace Terraform con un -var-file JSON: el
+// JSON da objetos y tuplas, que se convierten al tipo de la variable (un objeto no pasa a set o
+// list, un arreglo no pasa a map u object, "abc" no pasa a number, falta un atributo que no es
+// optional...). Devuelve el error de la conversión, con la ruta dentro del valor.
+func jsonFitsType(value any, ty cty.Type) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	implied, err := ctyjson.ImpliedType(b)
+	if err != nil {
+		return err
+	}
+	v, err := ctyjson.Unmarshal(b, implied)
+	if err != nil {
+		return err
+	}
+	if _, err := convert.Convert(v, ty); err != nil {
+		var pe cty.PathError
+		if errors.As(err, &pe) && len(pe.Path) > 0 {
+			return fmt.Errorf("%s: %w", pathString(pe.Path), err)
+		}
+		return err
+	}
+	return nil
+}
+
+func pathString(p cty.Path) string {
+	var sb strings.Builder
+	for _, step := range p {
+		switch s := step.(type) {
+		case cty.GetAttrStep:
+			sb.WriteString("." + s.Name)
+		case cty.IndexStep:
+			if s.Key.Type() == cty.String {
+				fmt.Fprintf(&sb, "[%q]", s.Key.AsString())
+			} else if s.Key.Type() == cty.Number {
+				fmt.Fprintf(&sb, "[%s]", s.Key.AsBigFloat().String())
+			} else {
+				sb.WriteString("[?]")
+			}
+		}
+	}
+	return strings.TrimPrefix(sb.String(), ".")
+}
+
+// TestConfigExampleRoots comprueba que config.example.json sirve para aplicar las raíces que
+// recorre la prueba (ADR 0029 §2, con dev), contra los variables.tf del árbol:
+//   - solo trae raíces del ADR 0029 §2, todas ellas, y el proyecto único en common;
+//   - por raíz, con las mismas variables que arma la prueba (common, la raíz y lo que inyecta:
+//     state_bucket, deletion_protection de las cargas de dev, labels), están todas las variables
+//     sin default;
+//   - cada valor cabe en el tipo de la variable (set/list con arreglos, map/object con objetos,
+//     string, number, bool, y lo de adentro);
+//   - la llave de la raíz no trae variables que la raíz no declara (las de common sí pueden
+//     sobrar: se comparten).
+//
+// Si otra rama agrega una variable obligatoria a una raíz, esta prueba falla hasta agregarla al
+// ejemplo.
 func TestConfigExampleRoots(t *testing.T) {
 	root := helpers.RepoRoot(t)
 	cfg := loadConfig(t, filepath.Join(root, "tests", "e2e", "config.example.json"))
-	known := map[string]bool{keyBootstrap: true}
-	for _, s := range stagesInOrder([]string{"dev"}) {
+	stages := append([]stage{{Key: keyBootstrap}}, stagesInOrder([]string{"dev"})...)
+	known := map[string]bool{}
+	for _, s := range stages {
 		known[s.Key] = true
 	}
 	for key := range cfg.Stages {
@@ -154,6 +271,85 @@ func TestConfigExampleRoots(t *testing.T) {
 	}
 	if id, _ := cfg.Common["project_id"].(string); id == "" {
 		t.Error("config.example.json: common debe traer project_id (el proyecto único)")
+	}
+
+	run := &e2eRun{t: t, root: root, cfg: cfg, bucket: "bucket-de-la-prueba"}
+	for _, s := range stages {
+		declared := rootVariables(t, run.dir(s.Key))
+		// Lo mismo que pasa la prueba a cada raíz (bootstrap y apply en stages_test.go).
+		var injected map[string]any
+		if s.Key != keyBootstrap {
+			injected = run.injected(s)
+		}
+		vars := cfg.varsFor(s.Key, "e2e-ejemplo", injected)
+
+		names := make([]string, 0, len(declared))
+		for name := range declared {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			v := declared[name]
+			value, ok := vars[name]
+			if !ok || value == nil {
+				if v.Required {
+					t.Errorf("config.example.json: %s declara %s sin default y el ejemplo no la trae (ni en common ni en %q)", s.Key, name, s.Key)
+				}
+				continue
+			}
+			if err := jsonFitsType(value, v.Type); err != nil {
+				t.Errorf("config.example.json: %s.%s no cabe en %s: %v", s.Key, name, typeexpr.TypeString(v.Type), err)
+			}
+		}
+		for name := range cfg.Stages[s.Key] {
+			if _, ok := declared[name]; !ok {
+				t.Errorf("config.example.json: %q trae %s, que la raíz no declara", s.Key, name)
+			}
+		}
+	}
+}
+
+// TestJSONFitsType prueba sin GCP la comparación de tipos de TestConfigExampleRoots, con el caso
+// de la revisión (applications como objeto en una variable set(string)).
+func TestJSONFitsType(t *testing.T) {
+	cases := []struct {
+		typ   string
+		value string
+		ok    bool
+	}{
+		{`set(string)`, `{"app": {"apis": [], "secrets": []}}`, false},
+		{`set(string)`, `["app"]`, true},
+		{`list(string)`, `"app"`, false},
+		{`map(list(string))`, `{"admin@example.com": ["LEGAL", "SECURITY"]}`, true},
+		{`map(list(string))`, `[["LEGAL"]]`, false},
+		{`map(string)`, `{"a": {"b": "c"}}`, false},
+		{`string`, `1000`, true}, // Terraform convierte number a string
+		{`number`, `"1000"`, true},
+		{`number`, `"mil"`, false},
+		{`bool`, `true`, true},
+		{`bool`, `"quizá"`, false},
+		{`object({ a = string, b = optional(number, 1) })`, `{"a": "x"}`, true},
+		{`object({ a = string, b = optional(number, 1) })`, `{"b": 2}`, false},
+		{`list(object({ cidr_block = string }))`, `[{"cidr_block": "10.0.0.0/8"}]`, true},
+		{`list(object({ cidr_block = string }))`, `{"cidr_block": "10.0.0.0/8"}`, false},
+		{`any`, `{"x": [1, "y"]}`, true},
+	}
+	for _, c := range cases {
+		expr, diags := hclsyntax.ParseExpression([]byte(c.typ), "tipo.tf", hcl.InitialPos)
+		if diags.HasErrors() {
+			t.Fatalf("%s: %s", c.typ, diags.Error())
+		}
+		ty, _, diags := typeexpr.TypeConstraintWithDefaults(expr)
+		if diags.HasErrors() {
+			t.Fatalf("%s: %s", c.typ, diags.Error())
+		}
+		var value any
+		if err := json.Unmarshal([]byte(c.value), &value); err != nil {
+			t.Fatalf("%s: %v", c.value, err)
+		}
+		if err := jsonFitsType(value, ty); (err == nil) != c.ok {
+			t.Errorf("%s ← %s: error %v, se esperaba ok=%v", c.typ, c.value, err, c.ok)
+		}
 	}
 }
 

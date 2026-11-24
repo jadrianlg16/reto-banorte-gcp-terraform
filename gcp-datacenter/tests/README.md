@@ -230,9 +230,17 @@ Ya no hace falta `TERRATEST_ORG_ID`: el proyecto y su número salen de las salid
 
 - **Proyecto único.** `common.project_id` es el proyecto que creó una persona (ADR 0029 §1); las
   llaves de `stages` son las raíces del ADR 0029 §2 (`0-bootstrap`, `1-base`, `2-networks`,
-  `2-networks/envs/dev`, `3-workloads/envs/dev`). `TestConfigExampleRoots` (sin GCP) rechaza
-  una llave de otra raíz. Los nombres de las variables siguen los `variables.tf` de cada raíz; una
-  variable que la raíz no declara solo produce una advertencia de Terraform (`-var-file`).
+  `2-networks/envs/dev`, `3-workloads/envs/dev`). `TestConfigExampleRoots` (sin GCP) lee con el
+  analizador de HCL los bloques `variable` de los `*.tf` de cada raíz y, con las mismas
+  variables que arma la prueba (common, la raíz y lo que inyecta: `state_bucket`,
+  `deletion_protection` de las cargas de dev y `labels`), exige: solo raíces del ADR 0029 §2 y
+  todas ellas; todas las variables sin `default`; que cada valor quepa en el tipo de su variable
+  con la conversión de Terraform (un objeto no entra en `set` o `list`, un arreglo no entra en
+  `map` u `object`, ni un texto en `number`; también lo de adentro), y que la llave de una raíz
+  no traiga variables que la raíz no declara. Una variable de `common` que una raíz no declara
+  solo produce una advertencia de Terraform (`-var-file`). Si una raíz agrega una variable
+  obligatoria, la prueba falla hasta agregarla al ejemplo. `TestJSONFitsType` prueba la
+  comparación de tipos con casos buenos y malos.
 - **Imagen de Cloud Run y Binary Authorization.** `1-base` crea la única política de Binary
   Authorization del proyecto, que solo admite los repositorios de Artifact Registry del proyecto
   y `binary_authorization_allowlist_patterns` (ADR 0029 §4). La imagen de muestra
