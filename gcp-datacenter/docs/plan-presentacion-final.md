@@ -49,7 +49,9 @@ el video muestran el diseño nuevo.
 | 16 | El código | Árbol del repositorio, un fragmento de módulo y el enlace | Captura y fragmento |
 | 17 | Preguntas | — | Fondo oscuro |
 
-**Diagramas.** Se rehacen los cuatro con íconos oficiales y el estilo de la referencia.
+**Diagramas.** Hechos el 24 nov 2026: cinco diagramas con íconos oficiales y el estilo de la
+referencia, en [`diagramas/img/`](diagramas/img/). Los genera
+[`diagramas/fuente/generar.py`](diagramas/fuente/LEEME.md).
 
 - Contenedores de color: el recuadro de Google Cloud, el proyecto, las regiones `us-central1` y
   `us-east4`, las zonas, las VPC y las subredes.
@@ -63,7 +65,7 @@ cortes y cámara rápida. Escenas:
 
 | # | Escena | Qué se ve | Duración final |
 |---|---|---|---|
-| 0 | La terminal arranca todo | `terraform apply` de `0-bootstrap` en la terminal: el plan recortado y el resultado (bucket de estado, cuentas del pipeline, WIF) | 40 s |
+| 0 | La terminal arranca todo | `terraform apply` de `0-bootstrap` en la terminal: el plan recortado y el resultado (bucket de estado, cuentas del pipeline, WIF). `0-bootstrap` se aplica una sola vez, así que esta escena **se graba en la primera ejecución** (R4), no en el ensayo | 40 s |
 | 1 | El repositorio | Árbol de `gcp-datacenter/`, un módulo y `bash scripts/check.sh` en verde | 30 s |
 | 2 | Un cambio por PR | PR con el plan en un comentario; un PR que viola una política y queda bloqueado | 45 s |
 | 3 | Despliegue | `apply.yml` en GitHub Actions, etapa por etapa (cámara rápida) | 60 s |
@@ -91,7 +93,9 @@ cortes y cámara rápida. Escenas:
   falta.
 - **Se graba una ejecución ensayada, no la primera.** La primera ejecución del repositorio es la
   rebanada vertical del [plan de rediseño](plan-rediseno-un-proyecto.md) (R4). Se graba cuando
-  ya pasó al menos una vez.
+  ya pasó al menos una vez. La excepción es la escena 0: `0-bootstrap` solo se aplica una vez,
+  así que se graba la terminal desde la primera ejecución. Si sale mal, se usa el plan y las
+  salidas sin el apply.
 - **Plan B si el apply falla el día de la grabación:** usar lo grabado en el ensayo y mostrar el
   plan y las pruebas en la terminal. La lámina de resultados dice qué se midió y qué no.
 - Los costos reales tardan en aparecer en Facturación (HYPOTHESIS: hasta un día). La lámina de
