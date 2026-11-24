@@ -40,7 +40,10 @@ evaluación de Security Command Center (SCC) después del primer apply (§6). Ru
 Método: cada fila sale de leer el código (búsqueda del recurso y el atributo). El mapa se armó
 el 23 nov 2026 con el diseño de varios proyectos y se rehízo el 24 nov 2026 con el código del
 proyecto único (commit `61b01b9`): cambian las rutas, lo que dependía de la organización y los
-controles de auditoría. Para el mapa no se corrieron checkov, Conftest ni `terraform`. Lo que
+controles de auditoría. El mismo día se actualizó con el código de `6d27623` (arreglos de R2):
+las cuentas de ejecución pasan a `1-base`, y las políticas de organización y el perímetro de
+VPC-SC a `0-bootstrap`, que aplica la persona. Para el mapa no se corrieron checkov, Conftest ni
+`terraform`. Lo que
 solo se comprueba en GCP está en los pendientes de §5.6. Los conteos de §4 salen de un script
 sobre las tablas de §3, no a mano.
 
@@ -51,7 +54,7 @@ sobre las tablas de §3, no a mano.
 | **Código** | Un recurso o una validación de variable lo fija, y funciona sin organización. |
 | **Revisión en PR** | Solo lo detecta checkov o Conftest en el PR. |
 | **Manual** | Fuera de Terraform y pedido por un runbook o un ADR. |
-| **Solo con organización** | El control está escrito (código de `modules/org` o `modules/vpc-sc` que `stages/1-base/org.tf` crea con `org_id` o `access_policy_id`, o un paso de Cloud Identity del runbook 01), pero solo existe si el proyecto está dentro de una organización de GCP. Sin organización no se cumple. |
+| **Solo con organización** | El control está escrito (código de `modules/org` o `modules/vpc-sc` que `stages/0-bootstrap/org.tf` crea con `org_id` o `access_policy_id` cuando la persona aplica la etapa 0, o un paso de Cloud Identity del runbook 01), pero solo existe si el proyecto está dentro de una organización de GCP. Sin organización no se cumple. |
 | **No aplica** | El repositorio no usa el servicio. |
 | **Desviación** | No se cumple por una decisión documentada, con su riesgo y lo que la cerraría: [ADR 0027](adr/0027-desviaciones-aceptadas-del-cis.md) o, para lo que trae el proyecto único, el [ADR 0029](adr/0029-un-solo-proyecto.md). |
 | **Hueco** | No se aborda, o es un paso manual que ningún documento pide, o no se cumple sin una decisión registrada. |
@@ -77,15 +80,15 @@ organización, no se cumplen.
 | 1.1.1 | — | Correo del superadministrador no ligado a una persona | Fuera de Terraform (Cloud Identity). Runbook 01, "Controles manuales del CIS", punto A: dos superadministradores con dirección de rol, llaves de seguridad guardadas, evidencia con captura. Sin organización no hay Cloud Identity ni superadministrador. | **Solo con organización** |
 | 1.1.2 | — | Superadministrador no usado para administrar Google Cloud | Runbook 01, punto A: la persona de la etapa 0 no es superadministradora y el superadministrador no tiene roles de IAM en la organización. | **Solo con organización** |
 | 1.1.3 | — | Carpetas por entorno y sensibilidad | Sin carpetas: todo vive en un proyecto (ADR 0029). Los entornos se separan por VPC, nombre `<prefix>-<env>-`, etiqueta `env`, cuenta del pipeline y condiciones de IAM (ADR 0029 §9). | **Desviación** |
-| 1.1.4 | — | Políticas de organización centralizadas | Con `org_id`, `stages/1-base/org.tf` crea siete restricciones fijas, más `iam.allowedPolicyMemberDomains` con `directory_customer_id` (`modules/org/main.tf`, `local.policies`), con padre el proyecto, no la organización. | **Solo con organización** (parcial) |
+| 1.1.4 | — | Políticas de organización centralizadas | Con `org_id`, `stages/0-bootstrap/org.tf` crea siete restricciones fijas, más `iam.allowedPolicyMemberDomains` con `directory_customer_id` (`modules/org/main.tf`, `local.policies`), con padre el proyecto, no la organización. Las aplica la persona de la etapa 0 con `roles/orgpolicy.policyAdmin`; ninguna cuenta del pipeline tiene ese rol (pendiente 125). | **Solo con organización** (parcial) |
 | 1.2 | 1.1 · `NON_ORG_IAM_MEMBER` | Credenciales corporativas | Con organización, `iam.allowedPolicyMemberDomains` = `directory_customer_id`. Sin ella no hay dominio corporativo que exigir. Refuerzos que valen siempre: `modules/iam/variables.tf` rechaza `user:`, `domain:`, `allUsers` y `allAuthenticatedUsers`; Conftest `policies/iam_user_principal.rego`. | **Solo con organización** |
 | 1.3 | 1.2 · `MFA_NOT_ENFORCED` | MFA en cuentas que no son de servicio | Fuera de Terraform (Cloud Identity). Runbook 01, punto B: 2SV obligatoria en la unidad organizativa raíz. | **Solo con organización** |
 | 1.4 | 1.3 · — | Llaves de seguridad para administradores | Runbook 01, punto B: método "Only security key" para las cuentas administradoras. | **Solo con organización** |
 | 1.5 | 1.4 · `USER_MANAGED_SERVICE_ACCOUNT_KEY` | Solo llaves administradas por GCP | El pipeline entra por WIF (`stages/0-bootstrap/wif.tf`); ningún `google_service_account_key` en el repositorio; la política de denegación del proyecto niega `serviceAccountKeys.create` a las nueve cuentas del pipeline (`stages/0-bootstrap/deny_policy.tf`, `untagged_denied_permissions`). Con organización, además `iam.disableServiceAccountKeyCreation`. Sin ella, la persona dueña del proyecto sí puede crear llaves. | **Código** (parcial) |
-| 1.6 | 1.5 · `ADMIN_SERVICE_ACCOUNT` | Cuentas de servicio sin privilegios de administrador | Las cuentas `<prefix>-tf-*` reciben roles cuyo ID contiene "admin" (`stages/0-bootstrap/service_accounts.tf`, `base_roles`, `net_roles`, `net_env_roles` y `workloads_roles`), algunos con condición. Ya no quedan como owner de ningún proyecto: no crean proyectos. `modules/iam/variables.tf` prohíbe asignar `roles/owner` y `roles/editor`. Desviación aceptada en el ADR 0027. | **Desviación** |
-| 1.7 | 1.6 · `OVER_PRIVILEGED_SERVICE_ACCOUNT_USER` | Sin Service Account User ni Token Creator en el proyecto | `tf-wl-<env>` recibe `roles/iam.serviceAccountUser` en el proyecto, sin condición, para adjuntar sus cuentas de ejecución (`stages/0-bootstrap/service_accounts.tf:202`; riesgo aceptado en el código y en el ADR 0029 §9, no en el ADR 0027). Los checks CKV_GCP_41 y CKV_GCP_49 revisan `google_project_iam_member`, pero aquí el rol llega como valor de una variable del módulo `iam`. | **Hueco** |
+| 1.6 | 1.5 · `ADMIN_SERVICE_ACCOUNT` | Cuentas de servicio sin privilegios de administrador | Las cuentas `<prefix>-tf-*` reciben roles cuyo ID contiene "admin" (`stages/0-bootstrap/service_accounts.tf`, `base_roles`, `hub_roles`, `net_env_roles` y `workloads_roles`), algunos con condición. Las cuentas de ejecución que crea `1-base` solo tienen roles de telemetría, Cloud SQL condicionado y el rol del apagado (`stages/1-base/runtime_accounts.tf`). Ya no quedan como owner de ningún proyecto: no crean proyectos. `modules/iam/variables.tf` prohíbe asignar `roles/owner` y `roles/editor`. Desviación aceptada en el ADR 0027. | **Desviación** |
+| 1.7 | 1.6 · `OVER_PRIVILEGED_SERVICE_ACCOUNT_USER` | Sin Service Account User ni Token Creator en el proyecto | Ninguna raíz asigna `roles/iam.serviceAccountUser` ni `roles/iam.serviceAccountTokenCreator` en el proyecto (búsqueda en `stages/` y `modules/`, 24 nov 2026). Desde el 24 nov 2026 (r2/identidad) `1-base` crea las cuentas de ejecución y le da a `tf-wl-<env>` `serviceAccountUser` solo sobre las de su entorno que adjunta (`google_service_account_iam_member`, `stages/1-base/runtime_accounts.tf:217`); `tf-net` lo recibe solo sobre la cuenta de la VM DNS opcional (`stages/1-base/onprem_dns.tf`). La concesión delegada de `tf-base` no admite esos roles (`runtime_grantable_roles`, `stages/0-bootstrap/service_accounts.tf:111`) y `tf-wl-<env>` ya no tiene `projectIamAdmin`. Pendientes 131 a 135. | **Código** |
 | 1.8 | 1.7 · `SERVICE_ACCOUNT_KEY_NOT_ROTATED` | Rotación de llaves de usuario ≤ 90 días | Igual que 1.5: las cuentas del pipeline no pueden crear llaves; con organización, ninguna cuenta. | **Código** (parcial) |
-| 1.9 | 1.8 · `SERVICE_ACCOUNT_ROLE_SEPARATION` | Separación de funciones en roles de cuentas de servicio | Ninguna persona recibe `serviceAccountAdmin` ni `serviceAccountUser` (los grupos solo tienen lectura, `stages/1-base/iam.tf`). `tf-wl-<env>` junta en el proyecto `<prefix>TfServiceAccountManager` (crear y administrar el IAM de cuentas) y `serviceAccountUser` (1.7). | **Código** (parcial) |
+| 1.9 | 1.8 · `SERVICE_ACCOUNT_ROLE_SEPARATION` | Separación de funciones en roles de cuentas de servicio | Ninguna persona recibe `serviceAccountAdmin` ni `serviceAccountUser` (los grupos solo tienen lectura, `stages/1-base/iam.tf`). Desde el 24 nov 2026 ninguna cuenta junta los dos en el proyecto: `tf-base` administra las cuentas (`<prefix>TfServiceAccountManager`, sin condición) y `tf-wl-<env>` solo las usa (`serviceAccountUser` sobre las de su entorno, 1.7). Con `iam.serviceAccounts.setIamPolicy`, `tf-base` podría darse `serviceAccountUser` sobre una cuenta de ejecución. | **Código** (parcial) |
 | 1.10 | 1.9 · `KMS_PUBLIC_KEY` | Llaves KMS no públicas | Las validaciones de `modules/kms/variables.tf` (`encrypter_decrypters`) y `modules/iam/variables.tf` rechazan `allUsers` y `allAuthenticatedUsers`; checkov CKV_GCP_112. Con organización, además `iam.allowedPolicyMemberDomains`. | **Código** |
 | 1.11 | 1.10 · `KMS_KEY_NOT_ROTATED` | Rotación de llaves KMS ≤ 90 días | Todas las llaves salen de `modules/kms` (`google_kms_crypto_key.this`, `rotation_period` validado entre 1 y 90 días en `modules/kms/variables.tf`; `key_rotation_period = "7776000s"` por defecto en `stages/1-base/variables.tf`); Conftest `policies/kms_rotation.rego`; checkov CKV_GCP_43. | **Código** |
 | 1.12 | 1.11 · `KMS_ROLE_SEPARATION` | Separación de funciones en roles KMS | `roles/cloudkms.admin` solo para `tf-base`, condicionado a todo salvo el llavero del estado (`stages/0-bootstrap/service_accounts.tf`, `base_roles`); `cryptoKeyEncrypterDecrypter` solo para agentes de servicio (`stages/1-base/kms.tf`). | **Código** |
@@ -129,7 +132,7 @@ organización, no se cumplen.
 | 3.5 | 3.5 · `RSASHA1_FOR_SIGNING` | Sin RSASHA1 en la llave de firma de zona | Igual que 3.3. | **No aplica** |
 | 3.6 | 3.6 · `OPEN_SSH_PORT` | SSH restringido desde internet | Sin reglas de VPC (`google_compute_firewall`): una política de firewall de red por VPC con denegación de entrada por defecto (`modules/firewall/main.tf`); `modules/firewall/variables.tf` rechaza un `allow` de entrada con origen más amplio que /8; SSH solo desde IAP (`35.235.240.0/20`) hacia `iap_ssh` (`stages/2-networks/envs/*/firewall.tf`) y hacia `onprem-sim` (`stages/2-networks/firewall.tf`). | **Código** |
 | 3.7 | 3.7 · `OPEN_RDP_PORT` | RDP restringido desde internet | Ninguna política permite 3389 (`stages/2-networks/firewall.tf` y `stages/2-networks/envs/*/firewall.tf`): lo corta la denegación por defecto; misma validación que 3.6. | **Código** |
-| 3.8 | — | VPC Service Controls en los servicios admitidos | Con `access_policy_id` (solo existe con organización), `stages/1-base/org.tf` crea un perímetro alrededor del proyecto entero (`modules/vpc-sc`), siempre en dry-run: registra, no bloquea. Sin organización no hay perímetro (ADR 0029 §1). | **Solo con organización** (parcial) |
+| 3.8 | — | VPC Service Controls en los servicios admitidos | Con `access_policy_id` (solo existe con organización), `stages/0-bootstrap/org.tf` crea un perímetro alrededor del proyecto entero (`modules/vpc-sc`), siempre en dry-run: registra, no bloquea. Lo crea la persona de la etapa 0 (pendiente 126); ninguna cuenta del pipeline tiene roles de la política de acceso. Sin organización no hay perímetro (ADR 0029 §1). | **Solo con organización** (parcial) |
 | 3.9 | — | Private Service Connect para las APIs de Google | Private Google Access con el VIP restringido (`private_ip_google_access = true`, ruta `restricted_vip`, zonas DNS hacia el VIP; ADR 0026). PSC no se construye (`docs/pendientes-apply.md` §5). Desviación aceptada en el ADR 0027. | **Desviación** |
 | 3.10 | 3.8 · `VPC_FLOW_LOGS_SETTINGS_NOT_RECOMMENDED` | Flow logs en cada subred | `log_config` en todas las subredes normales (`modules/network-hub/main.tf`, `modules/network-spoke/main.tf`) con intervalo de 5 s, todos los metadatos y `flow_sampling = var.flow_log_sampling`, que vale 1.0 por defecto en los dos módulos: el hub, `onprem-sim` y prod (`stages/2-networks/envs/prod/terraform.tfvars.example`) quedan al 100 %. Los ejemplos de dev y qa lo bajan a 0.5 por costo (desviación del ADR 0027). Las subredes proxy-only no admiten flow logs (omisión de CKV_GCP_26; el detector las excluye). Pendiente 62. | **Código** (parcial) |
 | 3.11 | 3.9 · `WEAK_SSL_POLICY` | Sin cifrados débiles en políticas SSL | `google_compute_ssl_policy.this` y `google_compute_region_ssl_policy.this` con `profile` MODERN o RESTRICTED (validación) y `min_tls_version = "TLS_1_2"` (`modules/load-balancer/main.tf`); checkov CKV_GCP_4. | **Código** |
@@ -139,18 +142,18 @@ organización, no se cumplen.
 
 | 5.0 | 3.0 · categoría SCC | Recomendación | Cómo lo aborda el repositorio | Estado |
 |---|---|---|---|---|
-| 4.1 | 4.1 · `DEFAULT_SERVICE_ACCOUNT_USED` | Sin cuenta de servicio por defecto | `service_account` del MIG y `node_service_account` de GKE se validan como `<id>@<proyecto>.iam.gserviceaccount.com`, lo que excluye `<n>-compute@developer.gserviceaccount.com` (`modules/compute-mig/variables.tf`, `modules/gke/variables.tf`). Además, `0-bootstrap` quita `roles/editor` a la cuenta de Compute por defecto (`DEPRIVILEGE`, pendiente 95). | **Código** |
+| 4.1 | 4.1 · `DEFAULT_SERVICE_ACCOUNT_USED` | Sin cuenta de servicio por defecto | `service_account` del MIG y `node_service_account` de GKE se validan como `<id>@<proyecto>.iam.gserviceaccount.com`, lo que excluye `<n>-compute@developer.gserviceaccount.com` (`modules/compute-mig/variables.tf`, `modules/gke/variables.tf`). La VM DNS opcional de `onprem-sim` usa su propia cuenta `<prefix>-common-net-dns`, que crea `1-base` (`stages/2-networks/onprem_dns.tf`). Además, `0-bootstrap` quita `roles/editor` a la cuenta de Compute por defecto (`DEPRIVILEGE`, pendiente 95). | **Código** |
 | 4.2 | 4.2 · `FULL_API_ACCESS` | Sin cuenta por defecto con acceso a todas las APIs | Igual que 4.1: el alcance `cloud-platform` va con cuentas dedicadas. | **Código** |
-| 4.3 | 4.3 · `COMPUTE_PROJECT_WIDE_SSH_KEYS_ALLOWED` | Bloquear llaves SSH del proyecto | `block-project-ssh-keys = "TRUE"` fijo en `local.metadata` de `modules/compute-mig/main.tf`; la validación de `metadata` impide cambiarlo. Los nodos de GKE no lo llevan; SHA los excluye. | **Código** |
-| 4.4 | 4.4 · `OS_LOGIN_DISABLED` | OS Login en el proyecto | `google_compute_project_metadata_item.os_login` (`enable-oslogin = "TRUE"`) en `stages/0-bootstrap/main.tf`, en todo el proyecto, que es lo que lee el detector; además por instancia en `modules/compute-mig/main.tf`. Los nodos de GKE Standard heredan el metadato del proyecto (SHA los excluye). Pendiente 59. | **Código** |
-| 4.5 | 4.5 · `COMPUTE_SERIAL_PORTS_ENABLED` | Puerto serie apagado | `serial-port-enable = "FALSE"` fijo en `modules/compute-mig/main.tf`. | **Código** |
-| 4.6 | 4.6 · `IP_FORWARDING_ENABLED` | Sin reenvío de IP | `can_ip_forward = false` en `google_compute_region_instance_template.this` (`modules/compute-mig/main.tf`). Los nodos de GKE lo necesitan; SHA los excluye. | **Código** |
-| 4.7 | 4.7 · `DISK_CSEK_DISABLED` | CSEK en discos de VM críticas | Discos con CMEK, no CSEK (`disk_encryption_key.kms_key_self_link` en `modules/compute-mig/main.tf`; `boot_disk_kms_key` en `modules/gke/main.tf`). Desviación aceptada en el ADR 0027. | **Desviación** |
-| 4.8 | 4.8 · `SHIELDED_VM_DISABLED` | Shielded VM | `shielded_instance_config` con arranque seguro, vTPM e integridad en el MIG; `enable_shielded_nodes = true` y arranque seguro en GKE; Conftest `policies/shielded_vm.rego`. Con organización, además `compute.requireShieldedVm`. | **Código** |
-| 4.9 | 4.9 · `PUBLIC_IP_ADDRESS` | Sin IP pública | MIG sin `access_config` y con `stack_type = "IPV4_ONLY"`; GKE con `enable_private_nodes = true`; Conftest `policies/compute_public_ip.rego`. Con organización, además `compute.vmExternalIpAccess` (`deny_all`). | **Código** |
+| 4.3 | 4.3 · `COMPUTE_PROJECT_WIDE_SSH_KEYS_ALLOWED` | Bloquear llaves SSH del proyecto | `block-project-ssh-keys = "TRUE"` fijo en `local.metadata` de `modules/compute-mig/main.tf`; la validación de `metadata` impide cambiarlo. La VM DNS opcional de `onprem-sim` lo fija en sus metadatos (`stages/2-networks/onprem_dns.tf`). Los nodos de GKE no lo llevan; SHA los excluye. | **Código** |
+| 4.4 | 4.4 · `OS_LOGIN_DISABLED` | OS Login en el proyecto | `google_compute_project_metadata_item.os_login` (`enable-oslogin = "TRUE"`) en `stages/0-bootstrap/main.tf`, en todo el proyecto, que es lo que lee el detector; además por instancia en `modules/compute-mig/main.tf` y en la VM DNS opcional (`stages/2-networks/onprem_dns.tf`). Los nodos de GKE Standard heredan el metadato del proyecto (SHA los excluye). Pendiente 59. | **Código** |
+| 4.5 | 4.5 · `COMPUTE_SERIAL_PORTS_ENABLED` | Puerto serie apagado | `serial-port-enable = "FALSE"` fijo en `modules/compute-mig/main.tf` y en la VM DNS opcional (`stages/2-networks/onprem_dns.tf`). | **Código** |
+| 4.6 | 4.6 · `IP_FORWARDING_ENABLED` | Sin reenvío de IP | `can_ip_forward = false` en `google_compute_region_instance_template.this` (`modules/compute-mig/main.tf`) y en la VM DNS opcional (`stages/2-networks/onprem_dns.tf`). Los nodos de GKE lo necesitan; SHA los excluye. | **Código** |
+| 4.7 | 4.7 · `DISK_CSEK_DISABLED` | CSEK en discos de VM críticas | Discos con CMEK, no CSEK (`disk_encryption_key.kms_key_self_link` en `modules/compute-mig/main.tf`; `boot_disk_kms_key` en `modules/gke/main.tf`). La VM DNS opcional de `onprem-sim` usa el cifrado de Google (omisión de CKV_GCP_38 en `stages/2-networks/onprem_dns.tf`: VM de prueba sin datos). Desviación aceptada en el ADR 0027. | **Desviación** |
+| 4.8 | 4.8 · `SHIELDED_VM_DISABLED` | Shielded VM | `shielded_instance_config` con arranque seguro, vTPM e integridad en el MIG y en la VM DNS opcional; `enable_shielded_nodes = true` y arranque seguro en GKE; Conftest `policies/shielded_vm.rego`. Con organización, además `compute.requireShieldedVm`. | **Código** |
+| 4.9 | 4.9 · `PUBLIC_IP_ADDRESS` | Sin IP pública | MIG sin `access_config` y con `stack_type = "IPV4_ONLY"`; la VM DNS opcional igual (`stages/2-networks/onprem_dns.tf`); GKE con `enable_private_nodes = true`; Conftest `policies/compute_public_ip.rego`. Con organización, además `compute.vmExternalIpAccess` (`deny_all`). | **Código** |
 | 4.10 | 4.10 · — | App Engine solo con HTTPS | No hay App Engine. | **No aplica** |
 | 4.11 | 4.11 · `CONFIDENTIAL_COMPUTING_DISABLED` | Confidential Computing | Ningún `confidential_instance_config` (MIG) ni `confidential_nodes` (GKE); los ejemplos usan `e2-*`. Desviación aceptada en el ADR 0027. | **Desviación** |
-| 4.12 | 4.12 · — | Actualizaciones de SO al día | GKE: `auto_upgrade = true` e imagen COS (`modules/gke/main.tf`). MIG: sin VM Manager ni `google_os_config_patch_deployment`; depende de la imagen `mig_image`. Desviación aceptada en el ADR 0027. | **Desviación** (parcial) |
+| 4.12 | 4.12 · — | Actualizaciones de SO al día | GKE: `auto_upgrade = true` e imagen COS (`modules/gke/main.tf`). MIG: sin VM Manager ni `google_os_config_patch_deployment`; depende de la imagen `mig_image`. La VM DNS opcional de `onprem-sim` (`debian-12`, sin ruta a internet) tampoco se actualiza. Desviación aceptada en el ADR 0027. | **Desviación** (parcial) |
 
 ### 5. Storage
 
@@ -207,7 +210,7 @@ Las banderas están en bloques `database_flags` fijos de la primaria y la répli
 
 | Sección | Código | Revisión en PR | Manual | Solo con organización | No aplica | Desviación | Hueco | Total |
 |---|---|---|---|---|---|---|---|---|
-| 1 IAM | 7 | 0 | 0 | 6 | 5 | 2 | 1 | 21 |
+| 1 IAM | 8 | 0 | 0 | 6 | 5 | 2 | 0 | 21 |
 | 2 Logging and Monitoring | 11 | 0 | 0 | 3 | 0 | 3 | 0 | 17 |
 | 3 Networking | 6 | 0 | 1 | 1 | 3 | 1 | 0 | 12 |
 | 4 Virtual Machines | 8 | 0 | 0 | 0 | 1 | 3 | 0 | 12 |
@@ -215,16 +218,16 @@ Las banderas están en bloques `database_flags` fijos de la primaria y la répli
 | 6 Cloud SQL | 14 | 0 | 0 | 0 | 10 | 0 | 0 | 24 |
 | 7 BigQuery | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 4 |
 | 8 Dataproc | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
-| **Total** | **48** | **0** | **1** | **10** | **24** | **9** | **1** | **93** |
+| **Total** | **49** | **0** | **1** | **10** | **24** | **9** | **0** | **93** |
 
-Conteo del 24 nov 2026 con un script de Python (fuera del repositorio) que toma la última columna
-de cada fila de §3 cuyo primer campo es un ID, le quita `**` y "(parcial)" y suma por sección; no
-se contó a mano.
+Conteo del 24 nov 2026 (código de `6d27623`) con un script de Python (fuera del repositorio) que
+toma la última columna de cada fila de §3 cuyo primer campo es un ID, le quita `**` y
+"(parcial)" y suma por sección; no se contó a mano.
 
-- De las 69 recomendaciones que aplican, sin organización 49 tienen un control escrito (48
+- De las 69 recomendaciones que aplican, sin organización 50 tienen un control escrito (49
   Código y 1 Manual); 10 solo se cumplen si el proyecto entra a una organización; 9 son
-  desviaciones (ocho del ADR 0027 y 1.1.3, que trae el ADR 0029); y queda **un hueco**: 1.7,
-  `serviceAccountUser` de `tf-wl-<env>` en el proyecto (§5.4).
+  desviaciones (ocho del ADR 0027 y 1.1.3, que trae el ADR 0029); y no queda ningún hueco: 1.7
+  pasó a Código con las cuentas de ejecución de `1-base` (§5.4).
 - Once filas son parciales (lista del mismo script): siete con estado Código (1.5, 1.8, 1.9,
   1.17, 3.10, 3.12 y 6.9), dos Solo con organización (1.1.4 y 3.8) y dos Desviación (2.1 y
   4.12). §5 dice qué falta en cada una.
@@ -274,12 +277,13 @@ una organización (decisión abierta, [`backlog.md`](backlog.md) §1):
   (2.15, 2.16): los pasos A a E de "Controles manuales del CIS" del
   [runbook 01](runbooks/01-arranque-etapa-0.md), que hace un superadministrador; pasarían a
   "Manual".
-- **Políticas de organización** (1.1.4, 1.2): `org_id` y `directory_customer_id` en `1-base` y
-  `org_id` en `0-bootstrap` (que le da a `tf-base` `orgpolicy.policyAdmin` en toda la
-  organización; pendiente 107). 1.1.4 seguiría parcial: las políticas tienen padre el proyecto,
-  no la organización.
-- **VPC Service Controls** (3.8): `access_policy_id` en `0-bootstrap` y `1-base`; el perímetro
-  queda en dry-run y forzarlo no está construido (pendiente 5).
+- **Políticas de organización** (1.1.4, 1.2): `org_id` y `directory_customer_id` en
+  `0-bootstrap`, que aplica la persona con `roles/orgpolicy.policyAdmin` en la organización;
+  ninguna cuenta del pipeline tiene ese rol (pendiente 125). 1.1.4 seguiría parcial: las
+  políticas tienen padre el proyecto, no la organización.
+- **VPC Service Controls** (3.8): `access_policy_id` en `0-bootstrap`; la persona crea el
+  perímetro con `roles/accesscontextmanager.policyAdmin` (pendiente 126). Queda en dry-run y
+  forzarlo no está construido (pendiente 5).
 
 Las mismas políticas refuerzan filas que ya tienen control en el código (1.5, 1.8, 1.10, 4.8,
 4.9, 5.1, 5.2, 6.5 y 6.7): con organización cubren también lo que se cree fuera de Terraform.
@@ -289,8 +293,9 @@ Las mismas políticas refuerzan filas que ya tienen control en el código (1.5, 
 - **1.5 y 1.8** (Código, parcial): la denegación de `serviceAccountKeys.create` solo alcanza a
   las nueve cuentas del pipeline; la persona dueña del proyecto puede crear llaves. Con
   organización lo cierra `iam.disableServiceAccountKeyCreation`.
-- **1.9** (Código, parcial): `tf-wl-<env>` junta administración y uso de cuentas de servicio en el
-  proyecto (ver 1.7).
+- **1.9** (Código, parcial): ninguna cuenta junta administración y uso de cuentas de servicio en
+  el proyecto, pero `tf-base` administra el IAM de las cuentas de ejecución sin condición y
+  podría darse `serviceAccountUser` sobre una de ellas. Lo frena la revisión del plan (ADR 0025).
 - **1.17** (Código, parcial): los contactos están en el proyecto; el CIS los pide en la
   organización.
 - **3.12** (Código, parcial): IAP en el servicio de backend volvería privada la aplicación, que es
@@ -301,14 +306,12 @@ Las mismas políticas refuerzan filas que ya tienen control en el código (1.5, 
 
 ### 5.4 Hueco
 
-- **1.7**: `roles/iam.serviceAccountUser` de `tf-wl-<env>` en el proyecto, sin condición
-  (`stages/0-bootstrap/service_accounts.tf:202`). Con él, la cuenta de cargas de un entorno puede
-  adjuntar cualquier cuenta de servicio del proyecto a una VM, un pod o un servicio, salvo las del
-  pipeline, que protege la denegación por etiqueta (pendientes 90 y 93). El ADR 0029 §9 lo cuenta
-  como riesgo aceptado del proyecto único, pero el ADR 0027 no lo registra como desviación del
-  CIS. Dos salidas: registrarlo en el ADR 0027 (pasa a Desviación) o que `1-base` cree las
-  cuentas de ejecución y `tf-wl-<env>` reciba `serviceAccountUser` solo sobre las de su entorno
-  (mejora propuesta en [`backlog.md`](backlog.md)).
+Ninguno desde el 24 nov 2026. El único era **1.7**: `roles/iam.serviceAccountUser` de
+`tf-wl-<env>` en el proyecto, sin condición. Lo cerró r2/identidad con la segunda salida que
+proponía este mapa: `1-base` crea las cuentas de ejecución y `tf-wl-<env>` recibe
+`serviceAccountUser` solo sobre las de su entorno que adjunta
+(`stages/1-base/runtime_accounts.tf:217`). Que SCC no lo marque y que esas cuentas funcionen es
+el pendiente 56 y los pendientes 131 a 135.
 
 ### 5.5 Pasos manuales por hacer
 
@@ -337,15 +340,18 @@ En [`pendientes-apply.md`](pendientes-apply.md):
 - 90 a 93: etiqueta de protección y política de denegación del proyecto (1.5 y 1.8).
 - 95: cuenta de Compute por defecto sin `roles/editor` (4.1).
 - 108: exclusión del sink y escritura con CMEK (2.3).
-- 3, 5, 106, 107 y 109: con organización, políticas y perímetro (§5.2).
+- 131 a 135: cuentas de ejecución que crea `1-base` y sus permisos (1.7 y 1.9).
+- 3, 5, 106, 109, 125 y 126: con organización, políticas y perímetro que aplica la persona de la
+  etapa 0 (§5.2). El 107 quedó resuelto en el código.
 
 Hallazgos probables de SHA fuera del marco CIS v3.0 (HYPOTHESIS):
 
 - `KMS_PROJECT_HAS_OWNER`: la persona que creó el proyecto es owner del único proyecto, que
   tiene todas las llaves, incluida la del estado. Google lo mapea a CIS 1.11 solo hasta la
   versión 2.0.
-- `SERVICE_ACCOUNT_ROLE_SEPARATION`: `tf-wl-<env>` tiene `<prefix>TfServiceAccountManager` y
-  `serviceAccountUser` en el proyecto (1.9). Depende de si SHA cuenta un rol personalizado como
+- `SERVICE_ACCOUNT_ROLE_SEPARATION`: desde el 24 nov 2026 ninguna cuenta tiene a la vez
+  `<prefix>TfServiceAccountManager` (`tf-base`) y `serviceAccountUser` en el proyecto (1.9), así
+  que no se espera; si aparece, depende de si SHA cuenta un rol personalizado como
   `serviceAccountAdmin`.
 
 ## 6. Verificación después del primer apply
@@ -369,8 +375,8 @@ Hallazgos probables de SHA fuera del marco CIS v3.0 (HYPOTHESIS):
 4. **Lo que SCC no prueba**: de las filas de §5.1, solo 2.4, 3.10 y 4.11 tienen control en el
    marco CIS v3.0 de Compliance Manager; de los controles agregados el 23 nov 2026, solo 1.17 y
    2.14. "Sin hallazgos críticos ni altos" puede cumplirse con desviaciones abiertas, y SCC puede
-   reportar desviaciones ya aceptadas (1.6, 2.1, 2.4, 3.10 en dev y qa) y el hueco 1.7: la
-   revisión los separa de los hallazgos inesperados con el ADR 0027. Evidencia aparte:
+   reportar desviaciones ya aceptadas (1.6, 2.1, 2.4, 3.10 en dev y qa): la revisión las separa
+   de los hallazgos inesperados con el ADR 0027. Evidencia aparte:
    - IAM (1.6, 1.7, 1.9, 1.12): `gcloud projects get-iam-policy <proyecto>`.
    - 1.17: `gcloud essential-contacts list --project=<proyecto>` (sintaxis HYPOTHESIS): los
      contactos con sus categorías.
@@ -387,8 +393,8 @@ Hallazgos probables de SHA fuera del marco CIS v3.0 (HYPOTHESIS):
 5. **Pendientes**: este procedimiento es el punto 56 de `docs/pendientes-apply.md`, que completa
    la fila "Sin hallazgos críticos ni altos en Security Command Center" de los criterios de
    aceptación del README (activación de SCC: punto 2). Relacionados: 15 (bloqueo del bucket de
-   logs), 57 a 62 (controles agregados el 23 nov 2026), 90 a 93 (protección de la etapa 0) y, con
-   organización, 3, 5 y 106 a 109.
+   logs), 57 a 62 (controles agregados el 23 nov 2026), 90 a 93 (protección de la etapa 0), 131 a
+   135 (cuentas de ejecución) y, con organización, 3, 5, 106, 109, 125 y 126.
 
 ## 7. Límites de este mapa
 
