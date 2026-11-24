@@ -117,8 +117,8 @@ resource "google_project_service_identity" "this" {
   depends_on = [google_project_service.this]
 }
 
-# OS Login en todo el proyecto (CIS 4.4; detector OS_LOGIN_DISABLED). Antes lo ponía
-# project-factory en cada proyecto con Compute.
+# OS Login en todo el proyecto (CIS 4.4; detector OS_LOGIN_DISABLED). En el diseño de varios
+# proyectos lo ponía el módulo project-factory, ya retirado, en cada proyecto con Compute.
 # VERIFICAR-EN-APPLY: que el detector OS_LOGIN_DISABLED no marque el proyecto y que IAP + OS
 # Login sigan dando SSH a quien tenga roles/compute.osLogin (pendiente 59).
 resource "google_compute_project_metadata_item" "os_login" {

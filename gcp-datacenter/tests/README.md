@@ -26,14 +26,15 @@ tests/
   fixtures/<módulo>/      una raíz por módulo que lo llama con entradas de forma real
   fixtures/support/       project (APIs en el proyecto único o proyecto efímero), cmek (llave de
                           apoyo), network (VPC de apoyo)
-  integration/            pruebas de los 26 módulos
+  integration/            pruebas de los 24 módulos
   e2e/                    prueba de extremo a extremo, config.example.json y la prueba de humo
                           de dev (smoke_test.go)
 ```
 
 Cada prueba de integración:
 
-1. se marca `t.Parallel()` y se omite (`t.Skip`) si faltan variables o su compuerta;
+1. se marca `t.Parallel()` (salvo `TestOrg`, ver Compuertas) y se omite (`t.Skip`) si faltan
+   variables o su compuerta;
 2. obtiene su proyecto con `fixtures/support/project`:
    - **por defecto**, el proyecto único de pruebas `TERRATEST_PROJECT_ID` (ADR 0029: un solo
      proyecto, sin carpetas ni organización). Solo habilita las APIs que pide, sin apagarlas al
@@ -66,11 +67,11 @@ vive en el código.
 | `TERRATEST_PROJECT_ID` | Proyecto único de pruebas, donde corren todas las de integración por defecto (también cuota y llamadas sin proyecto propio) | Todas, salvo con `TEST_EPHEMERAL_PROJECTS=true` |
 | `TEST_EPHEMERAL_PROJECTS` | `true`: un proyecto efímero por prueba en vez del proyecto único (necesita las tres de abajo) | Opcional |
 | `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | Solo con `TEST_EPHEMERAL_PROJECTS=true` |
-| `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de proyectos y carpetas efímeros. Opcional: sin ella se usa la organización | Proyectos efímeros; `TestProjectFactory`, `TestFolders` |
-| `TERRATEST_ORG_ID` | Número de la organización | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
+| `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de los proyectos efímeros. Opcional: sin ella se usa la organización | Proyectos efímeros |
+| `TERRATEST_ORG_ID` | Número de la organización. Sin ella se omiten las pruebas que solo valen con organización | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
 | `GOOGLE_CLOUD_PROJECT` | Proyecto por defecto de `gcloud` y del proveedor | Recomendado |
 | `TEST_REGION` / `TEST_DR_REGION` | Regiones (por defecto `us-central1` / `us-east4`). Deben estar en los mapas de códigos cortos de los módulos | Opcional |
-| `TEST_DIRECTORY_CUSTOMER_ID` | Cliente de Cloud Identity (`C…`) | `TestOrg` |
+| `TEST_DIRECTORY_CUSTOMER_ID` | Cliente de Cloud Identity (`C…`). Opcional: con ella `TestOrg` también prueba `iam.allowedPolicyMemberDomains` | `TestOrg` |
 | `TEST_ACCESS_POLICY_ID` | Política de Access Context Manager existente (una organización solo tiene una) | `TestVPCSC` |
 | `TEST_NOTIFICATION_EMAIL` | Buzón real que recibe las alertas de prueba | `TestObservability`, `TestAuditAlerts` |
 | `TEST_GKE_SECURITY_GROUP` | `gke-security-groups@<dominio>` | `TestGKE` |
@@ -82,22 +83,24 @@ La identidad es la de Application Default Credentials (`gcloud auth application-
 en local; WIF con `TERRATEST_SERVICE_ACCOUNT` en CI). Necesita en el proyecto único los roles de
 los recursos que crean los fixtures y habilitar APIs; solo con proyectos efímeros, crear
 proyectos y asociarles facturación en el padre, y para las pruebas de organización, los roles de
-cada recurso. Las pruebas de `org`, `vpc-sc`, `folders` y `project-factory` prueban módulos de
-la landing zone de varios proyectos; mientras esos módulos existan siguen aquí, con sus
-compuertas, y piden organización o carpeta. La variante jerárquica de `firewall` se quitó: el
-módulo solo crea la política de red de una VPC (ADR 0029 §6).
+cada recurso (`roles/orgpolicy.policyAdmin` en la organización para `TestOrg` y
+`roles/accesscontextmanager.policyEditor` sobre la política de acceso para `TestVPCSC`). Los
+módulos `org` y `vpc-sc` trabajan sobre el proyecto (ADR 0029 §1) y solo se usan con
+organización, así que sus pruebas piden `TERRATEST_ORG_ID`. Las pruebas de `folders` y
+`project-factory` se quitaron con esos módulos, y la variante jerárquica de `firewall` también:
+el módulo solo crea la política de red de una VPC (ADR 0029 §6).
 
 ## Compuertas
 
 | Compuerta | Pruebas | Motivo |
 |---|---|---|
-| `TEST_ALLOW_ORG=true` | `TestOrg`, `TestVPCSC` | Alcance de organización. Para acotar el efecto: las nueve políticas se aplican a una carpeta contenedora vacía creada por la prueba; el sink de `org` sí es de organización, con un filtro que no coincide con nada; el perímetro va en dry-run |
+| `TEST_ALLOW_ORG=true` (más `TERRATEST_ORG_ID`) | `TestOrg`, `TestVPCSC` | Necesitan organización y permisos en ella. Para acotar el efecto: las políticas de `org` se aplican solo al proyecto de la prueba y el destroy las quita; mientras duran valen para todo el proyecto, por eso `TestOrg` no se marca `t.Parallel()` y `go test` la termina antes de soltar las paralelas del paquete. El perímetro va en dry-run |
 | `TEST_ALLOW_EXPENSIVE=true` | `TestGKE`, `TestCloudSQL`, `TestMemorystore`, `TestFilestore`, `TestHybridConnectivity`, `TestBackupDR` | Lentas (10–20 min) o con cobro por hora relevante |
 | `TEST_E2E=true` | `TestEndToEnd` | Aplica la landing zone completa en su proyecto real |
 | `TEST_SMOKE=true` (más `TEST_E2E_STATE_BUCKET`) | `TestDevSmoke` | Lee el estado real y crea Connectivity Tests en dev; la activa `apply.yml` |
 
 Sin compuerta (recursos baratos o gratuitos): `storage`, `kms`, `secrets`,
-`log-export`, `iam`, `folders`, `project-factory`, `network-hub`, `network-spoke`, `firewall` (de
+`log-export`, `iam`, `network-hub`, `network-spoke`, `firewall` (de
 red), `dns`, `cloud-armor`, `cloud-run`, `compute-mig`, `load-balancer` (externo),
 `observability`, `audit-alerts`.
 
@@ -176,12 +179,10 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 | `TestStorage` | storage | CMEK con la llave pedida, versionado, acceso uniforme, PAP `enforced`, reglas de ciclo de vida, etiquetas, sin `allUsers` |
 | `TestKMS` | kms | Rotación ≤ 90 días y próxima rotación, `ENCRYPT_DECRYPT`, nombres §4.2, `encrypter_decrypters` |
 | `TestSecrets` | secrets | Sin versiones (nunca valores), réplica con CMEK en la región, etiquetas, accessor |
-| `TestLogExport` | log-export | CMEK, retención de 30 días sin bloquear, PAP, sink al bucket, `writer_identity` con `objectCreator` |
-| `TestFolders` | folders | Carpetas por entorno bajo el padre, `folders/<n>`, ACTIVE |
-| `TestProjectFactory` | project-factory | Sin red default, facturación, etiquetas, APIs, host de Shared VPC y proyecto de servicio asociado |
+| `TestLogExport` | log-export | CMEK, retención de 30 días sin bloquear, PAP, sink de proyecto al bucket con la exclusión del propio bucket, `writer_identity` con `objectCreator` |
 | `TestIAM` | iam | Rol de proyecto aditivo, rol condicionado en bucket |
-| `TestOrg` | org | Exactamente las nueve políticas con su valor; sink agregado con hijos |
-| `TestVPCSC` | vpc-sc | Dry-run explícito, proyecto en el perímetro, `storage` restringido, regla de entrada |
+| `TestOrg` | org | Exactamente las siete políticas (ocho con `TEST_DIRECTORY_CUSTOMER_ID`) con su valor, con padre `projects/<id>` |
+| `TestVPCSC` | vpc-sc | Perímetro `common` en dry-run explícito sobre una política existente, proyecto en el perímetro, `storage` restringido, regla de entrada |
 | `TestNetworkHub` | network-hub | VPC personalizada, PGA y flow logs al 100 % (valor por defecto) en cada subred, router por región con ASN 64514 |
 | `TestNetworkSpoke` | network-spoke | PGA y flow logs al 100 % (valor por defecto), rangos secundarios, proxy-only, PSA, peering en ambos sentidos con rutas personalizadas, NAT |
 | `TestFirewallNetwork` | firewall | Llave de etiqueta por etiqueta (`GCE_FIREWALL`), reglas por etiqueta, denegación por defecto, asociación a la VPC |

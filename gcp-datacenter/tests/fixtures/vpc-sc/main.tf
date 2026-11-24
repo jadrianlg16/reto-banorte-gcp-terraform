@@ -1,7 +1,8 @@
-# Fixture de integración del módulo vpc-sc (alcance de organización: TEST_ALLOW_ORG=true).
-# Una organización tiene una sola política de acceso de nivel organización, así que la prueba
-# exige una existente (TEST_ACCESS_POLICY_ID) y crea en ella un perímetro único en dry-run con
-# el proyecto de la prueba dentro. En dry-run no bloquea ningún tráfico.
+# Fixture de integración del módulo vpc-sc (TEST_ALLOW_ORG=true, TERRATEST_ORG_ID y
+# TEST_ACCESS_POLICY_ID). Una organización tiene una sola política de acceso de nivel
+# organización y el módulo no la crea, así que la prueba exige una existente y crea en ella un
+# perímetro único en dry-run alrededor del proyecto de la prueba, como el de 1-base alrededor
+# del proyecto único (ADR 0029 §1). En dry-run no bloquea ningún tráfico.
 
 terraform {
   required_version = ">= 1.9"
@@ -11,11 +12,6 @@ terraform {
 }
 
 provider "google" {}
-
-variable "org_id" {
-  description = "Número de la organización."
-  type        = string
-}
 
 variable "access_policy_id" {
   description = "Número de la política de Access Context Manager existente."
@@ -47,9 +43,8 @@ resource "google_service_account" "pipeline" {
 module "vpc_sc" {
   source = "../../../modules/vpc-sc"
 
-  org_id              = var.org_id
   prefix              = var.prefix
-  environment         = "dev"
+  environment         = "common"
   access_policy_id    = var.access_policy_id
   resources           = ["projects/${var.project_number}"]
   restricted_services = ["storage.googleapis.com", "bigquery.googleapis.com"]
@@ -65,6 +60,11 @@ output "ingress_identity" {
 output "perimeter_name" {
   description = "Nombre completo del perímetro."
   value       = module.vpc_sc.perimeter_name
+}
+
+output "perimeter_short_name" {
+  description = "Nombre corto del perímetro."
+  value       = module.vpc_sc.perimeter_short_name
 }
 
 output "access_policy_id" {

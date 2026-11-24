@@ -1,8 +1,8 @@
-# Fixture de integración del módulo org (alcance de organización: TEST_ALLOW_ORG=true).
-# Para no afectar a la organización real, las nueve políticas se aplican en una carpeta
-# contenedora vacía creada por la prueba (policy_parent) y el sink agregado de la organización
-# usa un filtro que no coincide con ningún registro. El sink sí es de organización: el módulo
-# no admite otro tipo.
+# Fixture de integración del módulo org (TEST_ALLOW_ORG=true y TERRATEST_ORG_ID): aplica las
+# políticas de organización al proyecto de la prueba (padre projects/<id>, ADR 0029 §1), como
+# hace 1-base cuando el proyecto está dentro de una organización. El destroy borra las
+# políticas y el proyecto vuelve a heredar las de su padre. Mientras dura la prueba las
+# políticas valen para todo el proyecto: por eso TestOrg no corre en paralelo con las demás.
 
 terraform {
   required_version = ">= 1.9"
@@ -13,28 +13,13 @@ terraform {
 
 provider "google" {}
 
-variable "org_id" {
-  description = "Número de la organización."
-  type        = string
-}
-
-variable "parent" {
-  description = "Donde se crea la carpeta contenedora: folders/<n> u organizations/<n>."
-  type        = string
-}
-
 variable "project_id" {
-  description = "Proyecto de la prueba (aloja el bucket destino del sink)."
-  type        = string
-}
-
-variable "prefix" {
-  description = "Prefijo único de la ejecución."
+  description = "Proyecto de la prueba (padre de las políticas)."
   type        = string
 }
 
 variable "region" {
-  description = "Región del bucket destino y región permitida."
+  description = "Región permitida por gcp.resourceLocations."
   type        = string
 }
 
@@ -44,42 +29,18 @@ variable "dr_region" {
 }
 
 variable "directory_customer_id" {
-  description = "Cliente de Cloud Identity (Cxxxxxxxx) para iam.allowedPolicyMemberDomains."
+  description = "Cliente de Cloud Identity (Cxxxxxxxx) para iam.allowedPolicyMemberDomains. null: esa política no se crea."
   type        = string
-}
-
-variable "labels" {
-  description = "Etiquetas obligatorias de la prueba."
-  type        = map(string)
-}
-
-resource "google_folder" "container" {
-  display_name        = "terratest-${var.prefix}-org"
-  parent              = var.parent
-  deletion_protection = false
-}
-
-resource "google_storage_bucket" "sink" {
-  project                     = var.project_id
-  name                        = "${var.project_id}-${var.prefix}-sink"
-  location                    = var.region
-  uniform_bucket_level_access = true
-  public_access_prevention    = "enforced"
-  force_destroy               = true
-  labels                      = var.labels
+  default     = null
 }
 
 module "org" {
   source = "../../../modules/org"
 
-  org_id                       = var.org_id
-  prefix                       = var.prefix
-  policy_parent                = google_folder.container.name
+  project_id                   = var.project_id
   allowed_regions              = [var.region, var.dr_region]
   additional_allowed_locations = ["us"]
   directory_customer_id        = var.directory_customer_id
-  log_sink_destination         = "storage.googleapis.com/${google_storage_bucket.sink.name}"
-  log_sink_filter              = "logName=\"organizations/${var.org_id}/logs/terratest-sin-registros\""
 }
 
 output "policy_names" {
@@ -88,21 +49,6 @@ output "policy_names" {
 }
 
 output "policy_parent" {
-  description = "Carpeta donde se aplicaron."
+  description = "Recurso donde se aplicaron (projects/<id>)."
   value       = module.org.policy_parent
-}
-
-output "sink_name" {
-  description = "Sink agregado."
-  value       = module.org.sink_name
-}
-
-output "sink_writer_identity" {
-  description = "Identidad del sink."
-  value       = module.org.sink_writer_identity
-}
-
-output "sink_bucket" {
-  description = "Bucket destino."
-  value       = google_storage_bucket.sink.name
 }

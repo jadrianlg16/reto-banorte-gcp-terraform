@@ -39,7 +39,7 @@ variables {
       member   = "serviceAccount:example-sa@example-project-id.iam.gserviceaccount.com"
       condition = {
         title      = "solo-prefijo"
-        expression = "resource.name.startsWith(\"projects/_/buckets/example-state-bucket/objects/1-org/\")"
+        expression = "resource.name.startsWith(\"projects/_/buckets/example-state-bucket/objects/1-base/\")"
       }
     },
     {

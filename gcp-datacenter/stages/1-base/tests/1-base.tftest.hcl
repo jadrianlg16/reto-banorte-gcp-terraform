@@ -355,3 +355,34 @@ run "rechaza_secretos_de_common" {
 
   expect_failures = [var.secret_names]
 }
+
+run "admite_patrones_de_imagen_validos" {
+  command = plan
+
+  variables {
+    binary_authorization_allowlist_patterns = [
+      "us-docker.pkg.dev/cloudrun/container/hello*",
+      "us-docker.pkg.dev/otro-proyecto/base/**",
+      "registry.example.com:5000/equipo/imagen",
+    ]
+  }
+
+  assert {
+    condition = alltrue([
+      length(google_binary_authorization_policy.this.admission_whitelist_patterns) == 6,
+      contains([for p in google_binary_authorization_policy.this.admission_whitelist_patterns : p.name_pattern], "us-docker.pkg.dev/cloudrun/container/hello*"),
+    ])
+    error_message = "Los patrones válidos se suman a los repositorios del proyecto en la lista de permitidos."
+  }
+}
+
+# Un registro entero (gcr.io/*) admitiría las imágenes de cualquier proyecto.
+run "rechaza_patron_de_registro_entero" {
+  command = plan
+
+  variables {
+    binary_authorization_allowlist_patterns = ["gcr.io/*"]
+  }
+
+  expect_failures = [var.binary_authorization_allowlist_patterns]
+}

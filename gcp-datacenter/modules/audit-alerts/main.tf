@@ -5,8 +5,8 @@
 # de Security Health Analytics dice que busca cada detector ("Checks whether the filter property
 # of the project's LogsMetric resource is set to ..."):
 # https://docs.cloud.google.com/security-command-center/docs/concepts-vulnerabilities-findings
-# Por eso no se les agrega nada: los cambios de políticas de firewall (jerárquicas y de red, que
-# son lo que usa este repositorio en lugar de reglas de VPC) van en una novena métrica aparte
+# Por eso no se les agrega nada: los cambios de políticas de firewall (las de red que usa este
+# repositorio en lugar de reglas de VPC, y las jerárquicas) van en una novena métrica aparte
 # (firewall_policy), para no arriesgar que el detector de 2.8 deje de reconocer su filtro.
 # VERIFICAR-EN-APPLY: que SHA reconozca los filtros escritos en una sola línea (la documentación
 # los muestra en varias) y que dé por buenas las alertas (pendiente 58).
@@ -125,11 +125,11 @@ locals {
       ])
     }
     # Extensión de 2.8 (no es un filtro de CIS): el repositorio no crea reglas de VPC sino
-    # políticas de firewall de red (spokes y onprem-sim) y una jerárquica en la organización.
-    # Solo el registro de actividad: con Data Access activo (carpeta prod) las lecturas también
-    # llegan como registros de auditoría. Los cambios de la política jerárquica se registran
-    # en la organización, no en un proyecto (HYPOTHESIS, pendiente 58): esta métrica de
-    # proyecto no los ve; ahí el control es el drift diario de 3-networks.
+    # políticas de firewall de red (spokes y onprem-sim); el filtro también cubre las jerárquicas,
+    # que ya no crea (ADR 0029 §6). Solo el registro de actividad: con Data Access de Compute las
+    # lecturas también llegarían como auditoría. Los cambios de una política jerárquica se
+    # registran en la organización (HYPOTHESIS, pendiente 58): esta métrica de proyecto no los
+    # ve. Las políticas de red las vigila además el drift diario de 2-networks.
     firewall_policy = {
       cis           = "2.8"
       title         = "Cambios de políticas de firewall jerárquicas y de red"
