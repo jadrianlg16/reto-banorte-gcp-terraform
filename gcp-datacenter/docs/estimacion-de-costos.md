@@ -52,7 +52,7 @@ carpetas y la VPC compartida no tenían costo propio.
 
 `1-base` ya no crea llaves que nadie usa. Las de la región de DR (`<uso>_dr`) y la `storage` de
 la multirregión (`_us`) existen solo en los entornos de `dr_environments`, que por defecto es
-`["prod"]` (`stages/1-base/kms.tf:24-37`, `stages/1-base/variables.tf:261-271`). Detalle de las
+`["prod"]` (`stages/1-base/kms.tf:24-37`, `stages/1-base/variables.tf:249-259`). Detalle de las
 llaves en la §2.2.
 
 | Renglón | Antes (bajo / alto) | Ahora (bajo / alto) | Causa y cálculo |
@@ -194,20 +194,20 @@ En el hub (`stages/2-networks/terraform.tfvars.example`):
 | Pieza | Tamaño | Fuente |
 |---|---|---|
 | GKE | Clúster regional (location = región) | `stages/3-workloads/envs/prod/compute.tf:13`, `modules/gke/main.tf:31` |
-| GKE: nodos | Pool `general`, e2-standard-4, mín. 1 y máx. 3 **por zona** | `stages/3-workloads/envs/prod/terraform.tfvars.example:44-50`, `stages/3-workloads/envs/prod/variables.tf:260` |
+| GKE: nodos | Pool `general`, e2-standard-4, mín. 1 y máx. 3 **por zona** | `stages/3-workloads/envs/prod/terraform.tfvars.example:43-49`, `stages/3-workloads/envs/prod/variables.tf:260` |
 | GKE: zonas | 3 (sin `node_locations`, el clúster regional usa tres zonas) | `modules/gke/main.tf:206`; [regional-clusters](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/regional-clusters) |
 | GKE: disco de nodo | 100 GB pd-balanced | `stages/3-workloads/envs/prod/variables.tf:265-266` |
 | GKE: Binary Authorization | Aplicada en el clúster; una sola política en el proyecto (`1-base`) | `modules/gke/main.tf:88-90`, `stages/1-base/artifacts.tf:169` |
-| MIG | e2-standard-2; qa 1 a 3 VM, prod 2 a 6 VM; regional | `stages/3-workloads/envs/qa/terraform.tfvars.example:30-32`, `stages/3-workloads/envs/prod/terraform.tfvars.example:59-61`, `modules/compute-mig/main.tf:138` |
+| MIG | e2-standard-2; qa 1 a 3 VM, prod 2 a 6 VM; regional | `stages/3-workloads/envs/qa/terraform.tfvars.example:30-32`, `stages/3-workloads/envs/prod/terraform.tfvars.example:58-60`, `modules/compute-mig/main.tf:138` |
 | MIG: disco | 50 GB pd-balanced | `modules/compute-mig/variables.tf:201`, `:212` |
 | Cloud Run | 1 vCPU, 512 MiB, mín. 0 instancias, máx. 10 | `modules/cloud-run/variables.tf:162`, `:173`, `:184`; `stages/3-workloads/envs/prod/variables.tf:472-475` |
 | Cloud SQL | Edición ENTERPRISE, PostgreSQL 16, siempre se crea | `modules/cloud-sql/variables.tf:126`, `stages/3-workloads/envs/prod/data.tf:5` |
-| Cloud SQL: tipo | dev `db-custom-1-3840` (1 vCPU, 3.75 GiB); qa y prod `db-custom-2-7680` (2 vCPU, 7.5 GiB) | `stages/3-workloads/envs/dev/terraform.tfvars.example:35`, `…/qa/…:39`, `…/prod/…:68` |
+| Cloud SQL: tipo | dev `db-custom-1-3840` (1 vCPU, 3.75 GiB); qa y prod `db-custom-2-7680` (2 vCPU, 7.5 GiB) | `stages/3-workloads/envs/dev/terraform.tfvars.example:35`, `…/qa/…:39`, `…/prod/…:67` |
 | Cloud SQL: HA | ZONAL fuera de prod, REGIONAL (HA) en prod | `modules/cloud-sql/main.tf:6` |
 | Cloud SQL: disco | 20 GB PD_SSD con crecimiento automático | `modules/cloud-sql/main.tf:78-80`, `modules/cloud-sql/variables.tf:267` |
 | Cloud SQL: réplica de DR | Con `enable_dr`, en `dr_region`, mismo tipo, disco y disponibilidad (REGIONAL en prod) | `modules/cloud-sql/main.tf:232`, `:246-250` |
-| Memorystore | 5 GB; BASIC fuera de prod, STANDARD_HA en prod | `…/qa/terraform.tfvars.example:46`, `…/prod/terraform.tfvars.example:73`, `modules/memorystore/main.tf:5` |
-| Filestore | REGIONAL, 1024 GiB (prod) | `stages/3-workloads/envs/prod/terraform.tfvars.example:74-75` |
+| Memorystore | 5 GB; BASIC fuera de prod, STANDARD_HA en prod | `…/qa/terraform.tfvars.example:46`, `…/prod/terraform.tfvars.example:72`, `modules/memorystore/main.tf:5` |
+| Filestore | REGIONAL, 1024 GiB (prod) | `stages/3-workloads/envs/prod/terraform.tfvars.example:73-74` |
 | Cloud Storage: bucket de la app | STANDARD. Sin DR: regional. Con `enable_dr`: doble región `us-central1`+`us-east4` con turbo replication | `stages/3-workloads/envs/prod/data.tf:105`, `:115-119`, `modules/storage/variables.tf:113` |
 | Cloud Storage: estado | Multirregión US | `stages/0-bootstrap/terraform.tfvars.example:27`, `stages/0-bootstrap/main.tf:202-206` |
 | Cloud Storage: logs de auditoría | `us-central1`, STANDARD, CMEK, retención de 365 días | `stages/1-base/main.tf:112-135`, `stages/1-base/terraform.tfvars.example:54`, `modules/log-export/variables.tf:83` |
@@ -217,11 +217,11 @@ En el hub (`stages/2-networks/terraform.tfvars.example`):
 | Balanceador externo | Uno por entorno: existe si hay algún backend, y Cloud Run está encendido en los tres. 2 reglas de reenvío globales (443 y 80) | `stages/3-workloads/envs/prod/load_balancing.tf:86`, `:178-180`; `modules/load-balancer/main.tf:255`, `:290` |
 | Balanceador interno | Uno por región con cómputo (solo la primaria sin `dr_active`), 2 reglas `INTERNAL_MANAGED` (443 y 80) | `stages/3-workloads/envs/prod/load_balancing.tf:204-206`; `modules/load-balancer/main.tf:447`, `:492` |
 | Cloud Armor | 1 política por balanceador externo, 12 reglas: 9 OWASP, cve-canary, límite de tasa y regla por defecto | `stages/3-workloads/envs/prod/load_balancing.tf:166-168`; `modules/cloud-armor/variables.tf:56-65`; `modules/cloud-armor/main.tf:44`, `:58`, `:85` |
-| Cloud KMS | 37 llaves SOFTWARE con rotación de 90 días (detalle debajo de la tabla) | `stages/1-base/kms.tf:24-26`, `:28-37`, `:43-54`; `stages/1-base/main.tf:92-108`; `stages/0-bootstrap/main.tf:171-187`; `modules/kms/variables.tf:66`; `stages/1-base/variables.tf:235-238`, `:261-271` |
+| Cloud KMS | 37 llaves SOFTWARE con rotación de 90 días (detalle debajo de la tabla) | `stages/1-base/kms.tf:24-26`, `:28-37`, `:43-54`; `stages/1-base/main.tf:92-108`; `stages/0-bootstrap/main.tf:171-187`; `modules/kms/variables.tf:66`; `stages/1-base/variables.tf:223-226`, `:249-259` |
 | Secret Manager | 1 secreto por entorno; réplica primaria siempre y de DR solo en `dr_environments` = 4 versiones activas cuando se carguen los valores | `stages/1-base/terraform.tfvars.example:17-21`, `stages/1-base/kms.tf:100-120` |
-| Artifact Registry | 1 repositorio Docker por entorno y aplicación (3 con `applications = ["app"]`) en la multirregión `us` | `stages/1-base/artifacts.tf:7-13`, `:92-100`; `stages/1-base/variables.tf:108`, `:150-160` |
-| Backup and DR | Bóveda en `dr_region` y plan diario de Cloud SQL (30 días) en cada entorno | `stages/3-workloads/envs/prod/operations.tf:41`, `:51`; `modules/backup-dr/main.tf:23-25` |
-| Backup for GKE | Solo con `enable_backup`, `enable_gke` y `enable_dr` (prod); plan en `dr_region`, todos los namespaces | `stages/3-workloads/envs/prod/operations.tf:35`, `modules/backup-dr/main.tf:90-94`, `:109-111` |
+| Artifact Registry | 1 repositorio Docker por entorno y aplicación (3 con `applications = ["app"]`) en la multirregión `us` | `stages/1-base/artifacts.tf:7-13`, `:92-100`; `stages/1-base/variables.tf:108`, `:138-160` |
+| Backup and DR | Bóveda en `dr_region` y plan diario de Cloud SQL (30 días) en cada entorno | `stages/3-workloads/envs/prod/operations.tf:41`, `:51`; `modules/backup-dr/main.tf:34-36` |
+| Backup for GKE | Solo con `enable_backup`, `enable_gke` y `enable_dr` (prod); plan en `dr_region`, todos los namespaces | `stages/3-workloads/envs/prod/operations.tf:35`, `modules/backup-dr/main.tf:101-105`, `:120-122` |
 | Cloud DNS | 19 zonas: 1 de reenvío en el hub + 6 por spoke; registro de consultas encendido | `stages/2-networks/dns.tf:22-31`, `stages/2-networks/envs/prod/dns.tf:58-92` |
 | Logging | Sink de proyecto con el filtro `logName:"cloudaudit.googleapis.com"` hacia el bucket de logs. Acceso a datos de 5 servicios en todo el proyecto. GKE con logs de sistema y de cargas. Flow logs: 0.5 en dev y qa, 1.0 en prod, hub y `onprem-sim`. NAT: solo errores | `stages/1-base/main.tf:43-49`, `:58-87`; `modules/log-export/main.tf:98`, `modules/log-export/variables.tf:148`; `modules/gke/main.tf:123-125`; `stages/2-networks/envs/prod/terraform.tfvars.example:38`; `modules/network-spoke/main.tf:230-232` |
 | Monitoring | Managed Prometheus en GKE; 1 uptime check cada 60 s por entorno; políticas de alerta por entorno | `modules/gke/main.tf:127-131`, `modules/observability/variables.tf:97`, `modules/observability/main.tf:129`, `:175`, `:225`, `:266`, `:335` |
@@ -240,7 +240,7 @@ Las 37 llaves de Cloud KMS se reparten así (con los valores por defecto de `1-b
   - prod, 16: las mismas 9 más 6 en la región de DR (`gke`, `compute`, `run`, `sql`, `backup`,
     `secrets`) y `storage` en la multirregión `us`, porque está en `dr_environments`;
   - 9 + 9 + 16 = 34. La prueba `nombres_de_llave_de_la_salida` de
-    `stages/1-base/tests/1-base.tftest.hcl:316-331` fija las 9 llaves de dev y las 16 de prod;
+    `stages/1-base/tests/1-base.tftest.hcl:332-347` fija las 9 llaves de dev y las 16 de prod;
 - 2 comunes de `1-base` (`logs` y `pubsub`);
 - 1 del estado, en `0-bootstrap`.
 
@@ -601,7 +601,7 @@ solo variables, están marcadas como tales: son propuestas, no cambios hechos.
     de la mitad (114.88\*, cambio de código).
 - **Llaves de `1-base`.**
   - Variante solo dev: `environments = ["dev"]` y `dr_environments = []` en `1-base`
-    (`stages/1-base/variables.tf:89-103`, `:261-271`; `dr_environments` debe ser un subconjunto
+    (`stages/1-base/variables.tf:89-103`, `:249-259`; `dr_environments` debe ser un subconjunto
     de `environments`). Quedan las 9 llaves de dev más las 2 comunes: 11 versiones ×
     0.000082192 × 730 = 0.66 en vez de 2.16 (−1.50). Para pasar después a qa y prod hay que
     agregarlos a las listas y volver a aplicar `1-base`.
@@ -679,7 +679,7 @@ solo variables, están marcadas como tales: son propuestas, no cambios hechos.
 ### 6.3 Infracost en el pipeline
 
 `pr.yml` calcula el costo del plan real de cada raíz afectada con Infracost y lo publica en el
-comentario del PR (`../.github/workflows/pr.yml:17`, `:317-327`). Para activarlo:
+comentario del PR (`../.github/workflows/pr.yml:17`, `:318-328`). Para activarlo:
 
 - la variable de repositorio `GCP_ENABLED = true` (`../.github/workflows/pr.yml:26`);
 - el secreto opcional `INFRACOST_API_KEY` (`../.github/workflows/pr.yml:47`,

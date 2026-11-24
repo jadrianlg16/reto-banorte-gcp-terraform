@@ -21,7 +21,7 @@ flowchart LR
     subgraph COMP["4 · Cómputo sin IP pública"]
       run["Cloud Run<br/>entrada interna y del balanceador<br/>sin allUsers (ADR 0020)"]
       mig["MIG regional<br/>Shielded VM · OS Login<br/>etiquetas lb_backend e iap_ssh"]
-      gke["GKE regional bnt-prod-app-gke, nodos privados<br/>Workload Identity: app-prod/app → cuenta workload<br/>Binary Authorization"]
+      gke["GKE regional bnt-prod-app-gke, nodos privados<br/>Workload Identity: pods del clúster → cuenta workload<br/>Binary Authorization"]
     end
     ilb["Balanceador interno, uno por región<br/>subred proxy-only · acceso global"]
     subgraph DATA["7 · Datos solo por IP privada"]
@@ -77,11 +77,13 @@ flowchart LR
   repositorio de la aplicación, y Cloud SQL por IAM limitado a las instancias del entorno.
   `3-workloads` solo las lee de `runtime_service_accounts`; `tf-wl-<env>` solo tiene
   `serviceAccountUser` sobre las que adjunta (pendientes 131 a 133).
-- **Workload Identity.** El pool `<proyecto>.svc.id.goog` es el mismo para los tres entornos. Por
-  eso el namespace es fijo, `<app>-<env>` (ADR 0029 §9). La cuenta de Kubernetes es
-  `gke_workload_ksa_name` de `1-base` (por defecto `app`), y el enlace con la cuenta `workload`
-  lo crea `1-base` con `gke_workload_identity_bindings = true` después del primer clúster, porque
-  GKE crea el pool con él (pendiente 135).
+- **Workload Identity.** El pool `<proyecto>.svc.id.goog` es el mismo para los tres entornos, y
+  el principal de un namespace vale desde cualquier clúster del proyecto. Por eso `1-base` enlaza
+  la cuenta `workload` a todos los pods del clúster `<prefix>-<env>-<app>-gke[-dr]`
+  (`principalSet` `…/kubernetes.cluster/…`), no a un namespace (ADR 0029 §9): la frontera es el
+  clúster. El namespace `<app>-<env>` queda como convención. El enlace se crea con
+  `gke_workload_identity_bindings = true` después del primer clúster, porque GKE crea el pool
+  con él (pendientes 135 y 158).
 - **Imágenes.** Un repositorio por entorno y aplicación (`<prefix>-<env>-<app>`, multirregión
   `us`) y una sola política de Binary Authorization, las dos en `1-base`. Solo escriben los
   `artifact_registry_publishers` (`serviceAccount:`, `group:` o `principal…`, nunca `user:`).

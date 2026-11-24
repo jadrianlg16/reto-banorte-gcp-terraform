@@ -15,6 +15,12 @@ cuentas de ejecución y el enlace de Workload Identity los crea `1-base`
 (`stages/1-base/runtime_accounts.tf`), no la raíz de cargas; el namespace queda fijo en
 `<app>-<env>`; la política de Binary Authorization admite un atestador por entorno (ADR 0024).
 
+Enmendado una tercera vez el 2026-11-24, con el arreglo de la re-revisión de seguridad (rama
+`r2/seg2`, hallazgo N1): el enlace de Workload Identity es por clúster y no por namespace, porque
+un namespace con el mismo nombre en otro clúster del proyecto obtenía la misma identidad; `1-base`
+ya no tiene `gke_workload_ksa_name`; `tf-wl-<env>` tiene `container.clusterAdmin` condicionado a
+sus clústeres en lugar de `container.admin`.
+
 Tipo: Conforme.
 
 ## Contexto
@@ -49,13 +55,23 @@ adjunta. La cuenta de Compute por defecto se rechaza (y `0-bootstrap` le quita e
 `DEPRIVILEGE`). El clúster de GKE se llama `<prefix>-<env>-<app>-gke[-dr]` (variable
 `cluster_name` del módulo, que valida el prefijo `<prefix>-<env>-`).
 
-Con GKE, `1-base` enlaza la cuenta de Kubernetes `<app>-<env>/<gke_workload_ksa_name>` a la
-cuenta `workload` con `roles/iam.workloadIdentityUser`, y los pods usan esa cuenta. El pool de
-Workload Identity (`<proyecto>.svc.id.goog`) es el mismo en los tres entornos y lo crea GKE con
-el primer clúster: el enlace se enciende con `gke_workload_identity_bindings = true` después del
-primer apply de cargas con GKE (punto 135), y el namespace es fijo para que un entorno no tome la
-cuenta de otro (ADR 0029 §9). `1-base` publica el miembro en `gke_workload_identity_members`, y
-la raíz lo repite en su salida `gke_workload_identity_member`. Cada cuenta de ejecución cuyo
+Con GKE, `1-base` da `roles/iam.workloadIdentityUser` sobre la cuenta `workload` al
+`principalSet` de todos los pods del clúster `<prefix>-<env>-<app>-gke` y, en `dr_environments`,
+del `<prefix>-<env>-<app>-gke-dr`
+(`…/kubernetes.cluster/https://container.googleapis.com/v1/projects/<proyecto>/locations/<ubicación>/clusters/<clúster>`,
+[Workload Identity](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)).
+Los pods usan esa cuenta con una cuenta de Kubernetes anotada con
+`iam.gke.io/gcp-service-account`. El pool (`<proyecto>.svc.id.goog`) es el mismo en los tres
+entornos y un principal por namespace y cuenta de Kubernetes vale desde cualquier clúster del
+proyecto: por eso la frontera es el clúster, que es de un solo entorno y una sola aplicación
+(ADR 0029 §3 y §9). La documentación no tiene un identificador que combine clúster, namespace y
+cuenta de Kubernetes: cualquier pod del clúster con una cuenta anotada obtiene `workload` (punto
+158). El pool lo crea GKE con el primer clúster: el enlace se enciende con
+`gke_workload_identity_bindings = true` después del primer apply de cargas con GKE (punto 135).
+`1-base` publica los miembros por clúster en `gke_workload_identity_members`, y la raíz los
+repite en su salida `gke_workload_identity_member`. `tf-wl-<env>` administra el clúster con
+`container.clusterAdmin`, condicionado a `<prefix>-<env>-`, sin permisos sobre los objetos de
+Kubernetes (ADR 0029 §3). Cada cuenta de ejecución cuyo
 cómputo está encendido (`workload` con GKE, `run` con Cloud Run, `mig` con el MIG) es usuario IAM
 de Cloud SQL (ADR 0015): el usuario lo crea la raíz de cargas y el permiso, condicionado a las
 instancias `<prefix>-<env>-data-`, lo da `1-base` (puntos 132 y 133). Las imágenes de GKE y Cloud
@@ -79,9 +95,13 @@ proyecto (ADR 0024).
 - Negativas: tres superficies de endurecimiento y de observabilidad que mantener. El plano de
   control privado de GKE no es alcanzable desde el hub ni desde on-premises (peering no
   transitivo, ADR 0003); hace falta un bastión en el spoke o el endpoint por DNS (no construido).
-- El pool de Workload Identity se toma de `module.gke["primary"]`. HIPÓTESIS: durante una
-  conmutación con la región primaria caída, leer ese clúster en el plan podría fallar y exigir
-  `-refresh=false` o `-target` (no comprobado; runbook 04).
+- El miembro de Workload Identity ya no se toma de `module.gke["primary"]`: `1-base` lo arma con
+  el proyecto, la región y el nombre del clúster, así que una conmutación con la región primaria
+  caída no lee ese clúster para el enlace. El `principalSet` del clúster de DR se enlaza antes de
+  que el clúster exista; que IAM lo acepte es HIPÓTESIS (punto 158).
+- Con `container.clusterAdmin` condicionado por nombre, GKE evalúa `clusters.create` sobre el
+  proyecto: la cuenta de otro entorno podría crear un clúster con un nombre de este entorno que
+  todavía no exista (riesgo 3 del ADR 0029 §9).
 - Primer apply: rango del plano de control si GKE usa Private Service Connect y `gke_master`
   queda sin uso (punto 8), cuotas de CPU, IP y clústeres para prod (punto 9), el enlace de
   Workload Identity (punto 46) y Binary Authorization con la imagen de la aplicación (punto 42

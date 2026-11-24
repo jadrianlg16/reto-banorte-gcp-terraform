@@ -67,9 +67,10 @@ flowchart TB
   termine bien. Por raíz, un trabajo `plan` sin entorno (cuenta de lectura, sin candado) y, solo
   si hay cambios, un trabajo `apply` en el entorno de GitHub, que vuelve a planear con la cuenta
   de la raíz y aplica solo si la huella es la del plan revisado
-  (ADR [0025](../adr/0025-plan-aprobacion-y-apply-separados.md)). WIF solo da esa cuenta a un
-  trabajo de `main`, de un flujo de `.github/workflows/` del repositorio y con su entorno de
-  GitHub (`attribute.deploy`). Si la prueba de humo de dev falla, qa y prod no se aplican.
+  (ADR [0025](../adr/0025-plan-aprobacion-y-apply-separados.md)). WIF solo da esa cuenta al
+  trabajo `apply` de `_terraform-root.yml` leído de `main`, en una ejecución de `main` disparada
+  por `push` o `workflow_dispatch` y con su entorno de GitHub (`attribute.deploy`;
+  [`pipeline.md`](../pipeline.md) §5). Si la prueba de humo de dev falla, qa y prod no se aplican.
   `0-bootstrap` no está en el pipeline. Las raíces de un entorno de `GCP_DISABLED_ENVS` (solo
   dev o qa) no se planean ni se aplican: con dev apagado, qa empieza después del hub.
 - **Aprobaciones.** Los revisores de `common` y `prod` se configuran en GitHub, no en YAML. En un

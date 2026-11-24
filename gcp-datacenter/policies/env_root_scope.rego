@@ -6,13 +6,13 @@
 # variable, y los planes de ejemplo sin variables no se revisan aquí.
 #
 # En esas raíces rechaza:
-# 1. Tipos que existen una vez por proyecto (§4.1 y la tabla de §2): la lista PROJECT_SINGLETONS
+# 1. Tipos que existen una vez por proyecto (§4 punto 1 y la tabla de §2): la lista PROJECT_SINGLETONS
 #    de `scripts/destroy-plan-check.py`, más `google_project` (§1) y las familias
 #    `google_compute_project_metadata*` y `google_scc_*notification*`.
 # 2. Tipos por entorno que el ADR pasa a `1-base` (§4, "Llaves y secretos" e "Imágenes"):
 #    llaveros y llaves de KMS, contenedores de secretos y repositorios de Artifact Registry. La
 #    raíz del entorno solo da permisos sobre ellos.
-# 3. IAM de proyecto y de cuentas de servicio (§4.2, hallazgo N5 de la revisión R1): todo
+# 3. IAM de proyecto y de cuentas de servicio (§4 punto 2, hallazgo N5 de la re-revisión): todo
 #    `google_project_iam_member` y `google_project_iam_member_remove`, sea cual sea el principal
 #    (también las cuentas `<prefix>-<env>-...`), y todo `google_service_account_iam_*` (`_member`,
 #    `_binding`, `_policy`). Los roles de proyecto de las cuentas de ejecución, Cloud SQL por IAM y
@@ -20,7 +20,7 @@
 #    `google_project_iam_binding` y `_policy` ya los rechaza la regla 1 (una vez por proyecto). El
 #    IAM de un recurso (secretos, repositorios, valores de etiqueta, servicios de Cloud Run,
 #    buckets...) sí se permite: no da permisos sobre otros recursos del proyecto.
-# 4. Nombres sin `<prefix>-<env>-` (§4.3), solo en los tipos que el ADR identifica por el nombre:
+# 4. Nombres sin `<prefix>-<env>-` (§4 punto 3), solo en los tipos que el ADR identifica por el nombre:
 #    los que no llevan etiquetas y se reconocen por él al buscar huérfanos (§8: VPC, subredes,
 #    routers, políticas de firewall de red y cuentas de servicio), y los buckets, porque el
 #    `storage.admin` de la cuenta del entorno va condicionado a ese prefijo (§3). Los demás tipos
@@ -95,7 +95,7 @@ env_root_iam_grant(type) if type in env_root_project_member_types
 
 env_root_iam_grant(type) if startswith(type, "google_service_account_iam_")
 
-# Atributo con el nombre, por tipo (§4.3).
+# Atributo con el nombre, por tipo (§4 punto 3).
 env_root_name_attrs := {
 	"google_compute_network": "name",
 	"google_compute_subnetwork": "name",

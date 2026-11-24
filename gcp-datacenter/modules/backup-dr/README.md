@@ -2,8 +2,9 @@
 
 Crea el respaldo del entorno con dos servicios. Backup and DR Service: una bóveda
 (`google_backup_dr_backup_vault`) en `dr_region` con retención mínima forzada igual a
-`retention_days` y acceso restringido a la organización, un plan diario por cada tipo de recurso
-de `backup_plans` (por defecto VM de Compute Engine y Cloud SQL) en `region`, y asociaciones
+`retention_days` y acceso restringido al proyecto (`access_restriction`), un plan diario por
+cada tipo de recurso de `backup_plans` (por defecto VM de Compute Engine y Cloud SQL) en
+`region`, y asociaciones
 opcionales de recursos a esos planes (`protected_resources`). El plan de Cloud SQL fija
 `log_retention_days = sql_log_retention_days` (7 por defecto): con respaldos mejorados el plan
 sobrescribe la configuración de respaldos de la instancia y esos días son la ventana de
@@ -18,6 +19,14 @@ el plan de GKE van en `dr_region`, que debe ser distinta de `region`.
 Ubicación: los planes de Backup and DR tienen que estar en la región del recurso que respaldan,
 por eso van en `region`; la bóveda puede estar en otra región para VM, discos y Cloud SQL, y se
 pone en la secundaria. Backup and DR no ofrece CMEK propia para la bóveda en el proveedor 6.x.
+
+Restricción de acceso: `access_restriction` vale `WITHIN_PROJECT` por defecto porque la bóveda,
+los planes y los recursos respaldados están en el mismo proyecto (ADR 0029). Si no se indica, la
+API usa `WITHIN_ORGANIZATION`, que supone una organización
+([REST de `backupVaults`](https://docs.cloud.google.com/backup-disaster-recovery/docs/reference/rest/v1/projects.locations.backupVaults)).
+Según la [documentación de las bóvedas](https://docs.cloud.google.com/backup-disaster-recovery/docs/concepts/backup-vault),
+el valor es permanente: se elige antes de crear la bóveda. Que la bóveda se cree con
+`WITHIN_PROJECT` en un proyecto sin organización es `VERIFICAR-EN-APPLY`.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -56,6 +65,7 @@ No modules.
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | Prefijo de la empresa para los nombres (§4.2), por ejemplo "bnt". | `string` | n/a | yes |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | ID del proyecto donde se crean la bóveda y los planes (los planes de Backup and DR deben estar en el mismo proyecto que su bóveda). | `string` | n/a | yes |
 | <a name="input_region"></a> [region](#input\_region) | Región de las cargas protegidas (primaria). Los planes de Backup and DR se crean aquí: deben estar en la región del recurso que respaldan. | `string` | n/a | yes |
+| <a name="input_access_restriction"></a> [access\_restriction](#input\_access\_restriction) | Desde dónde se puede respaldar en la bóveda y hacia dónde restaurar (access\_restriction de la API de Backup and DR). WITHIN\_PROJECT (por defecto): solo recursos del mismo proyecto, que es el diseño de un solo proyecto (ADR 0029). WITHIN\_ORGANIZATION y WITHIN\_ORG\_BUT\_UNRESTRICTED\_FOR\_BA suponen una organización; UNRESTRICTED no limita nada. La documentación dice que el valor es permanente: se elige antes de crear la bóveda. | `string` | `"WITHIN_PROJECT"` | no |
 | <a name="input_backup_plans"></a> [backup\_plans](#input\_backup\_plans) | Planes de Backup and DR a crear. Llave: nombre corto del plan. Valor: tipo de recurso que respalda (compute.googleapis.com/Instance, compute.googleapis.com/Disk o sqladmin.googleapis.com/Instance). | `map(string)` | <pre>{<br/>  "sql": "sqladmin.googleapis.com/Instance",<br/>  "vm": "compute.googleapis.com/Instance"<br/>}</pre> | no |
 | <a name="input_backup_time_zone"></a> [backup\_time\_zone](#input\_backup\_time\_zone) | Zona horaria (IANA) para interpretar la ventana diaria de respaldo. | `string` | `"America/Mexico_City"` | no |
 | <a name="input_backup_window_start_hour"></a> [backup\_window\_start\_hour](#input\_backup\_window\_start\_hour) | Hora (0 a 17) en que abre la ventana diaria de respaldo; la ventana dura 6 horas. | `number` | `1` | no |

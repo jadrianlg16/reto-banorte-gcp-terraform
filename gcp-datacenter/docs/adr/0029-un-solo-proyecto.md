@@ -31,6 +31,23 @@ el `serviceUsageConsumer` de `tf-read` (§3), lo que niega la política de deneg
 etiqueta (§5), la inversión del ADR 0019 y la tabla de ADR afectados. Los riesgos aceptados del
 §9 quedan con la lista exacta de lo que sigue sin condición.
 
+Enmendado otra vez el 2026-11-24, después de la re-revisión de seguridad (`seg2`, cinco
+hallazgos) y de su arreglo (rama `r2/seg2`):
+
+- `tf-wl-<env>` tiene `container.clusterAdmin` en lugar de `container.admin`, y
+  `cloudsql.admin`, `container.clusterAdmin` y `backupdr.admin` quedan condicionados a los
+  recursos de su entorno. Monitoring va con cinco roles finos en lugar de `monitoring.editor`
+  (§3).
+- La cuenta `sched` tiene el rol del apagado condicionado a la instancia y a los clústeres de su
+  entorno. La cuenta `workload` se enlaza a todos los pods de un clúster, no a un namespace
+  (§3 y §9).
+- `attribute.deploy` exige además el `job_workflow_ref` exacto de `_terraform-root.yml` en
+  `main` y `event_name` igual a `push` o `workflow_dispatch` (§3).
+- La regla 2 de la denegación niega además cambiar los servicios habilitados, y una regla 4
+  impide a todos crear llaves de cuentas de servicio (§5).
+- Conftest rechaza todo IAM de proyecto y de cuentas de servicio en las raíces de entorno (§4).
+- El §9 se rehace con los cuatro riesgos residuales de la re-revisión.
+
 Tipo: Desviación del diseño anterior por pedido del cliente. En la junta del 23 nov 2026,
 Banorte pidió que todo vaya dentro de un solo proyecto.
 
@@ -60,6 +77,13 @@ donde este ADR diga otra cosa.
   trae `iam.serviceAccounts.deleteTagBinding`, un permiso que la denegación no puede negar),
   `serviceAccountUser` y `setIamPolicy` sobre todas las cuentas, y WIF se la entregaba a
   cualquier rama que declarara el entorno. La enmienda de este ADR recoge sus arreglos.
+- La re-revisión de seguridad (24 nov 2026) encontró que la misma cuenta todavía llegaba a los
+  secretos y a Cloud SQL de prod por GKE: `container.admin` trae permisos sobre los objetos de
+  Kubernetes de todos los clústeres, y el enlace de Workload Identity por namespace vale desde
+  cualquier clúster del proyecto. También encontró permisos de Service Usage en
+  `monitoring.editor`, un filtro de WIF más ancho que lo documentado, llaves de cuentas de
+  servicio sin ninguna regla que las impida y una regla de Conftest que admitía IAM de proyecto.
+  La segunda enmienda recoge sus arreglos.
 
 ## Decisión
 
@@ -130,20 +154,29 @@ WIF, con el mismo proveedor y la misma `attribute_condition` por ID numérico (A
 
 - Las cuentas que escriben aceptan el `principalSet` de `attribute.deploy`: `common` para
   `tf-base` y `tf-net`, y `<env>` para cada `tf-*-<env>`.
-- `attribute.deploy` vale el entorno de GitHub del trabajo solo si el token trae
-  `ref == refs/heads/main` y un `job_workflow_ref` que empieza con
-  `<github_repository>/.github/workflows/`. Si no, vale `none`, que ninguna cuenta acepta
-  (`stages/0-bootstrap/wif.tf`). Los únicos trabajos que escriben son el `apply` de
-  `_terraform-root.yml`, que `apply.yml` y `destroy.yml` llaman como flujo reutilizable. Google
-  sugiere restringir por rama o flujo
+- `attribute.deploy` vale el entorno de GitHub del trabajo solo si el token trae las cuatro
+  cosas: la afirmación `environment`, `ref == refs/heads/main`,
+  `job_workflow_ref == <github_repository>/.github/workflows/_terraform-root.yml@refs/heads/main`
+  y `event_name` igual a `push` o `workflow_dispatch`, los eventos de `apply.yml` y
+  `destroy.yml`. Si no, vale `none`, que ninguna cuenta acepta (`stages/0-bootstrap/wif.tf`). Los
+  únicos trabajos que escriben son el `apply` de `_terraform-root.yml`, que `apply.yml` y
+  `destroy.yml` llaman como flujo reutilizable. Otro flujo del repositorio, `_terraform-root.yml`
+  de otra rama y un flujo con `pull_request_target`, `workflow_run` o `issue_comment` (cuyo `ref`
+  también es la rama por defecto,
+  [eventos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows))
+  reciben `none`. Que GitHub ponga `@refs/heads/main` y no un SHA
+  en `job_workflow_ref` cuando el flujo se llama con ruta local no está documentado: si no, el
+  apply falla al autenticar, sin abrir permisos (punto 156). Google sugiere restringir por rama o
+  flujo
   ([WIF con pipelines](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines));
   las afirmaciones son las de GitHub
-  ([OIDC](https://docs.github.com/en/actions/reference/security/oidc)). Puntos 123 y 124.
+  ([OIDC](https://docs.github.com/en/actions/reference/security/oidc)). Puntos 123, 124 y 156.
 - `tf-read` acepta tokens de cualquier trabajo del repositorio (`attribute.repository_id`).
 - La regla "Deployment branches: main" de cada entorno de GitHub queda como segunda barrera
   (punto 121).
 
-Un trabajo sin entorno de GitHub, o de otra rama, solo obtiene la cuenta de lectura.
+Un trabajo sin entorno de GitHub, de otra rama, de otro evento o de otro flujo solo obtiene la
+cuenta de lectura.
 
 - Los `plan` corren con `tf-read` y `-lock=false`: la cuenta no puede escribir el candado del
   estado. El apply toma el candado con la cuenta de la raíz.
@@ -180,12 +213,52 @@ Roles de las cuentas que escriben (lista completa en el [contrato](../CONTRATO.m
 - `roles/resourcemanager.projectIamAdmin` solo lo tiene `tf-base`, en dos asignaciones con
   concesión delegada (`modifiedGrantsByRole`, hasta 10 roles por lista): los roles de lectura de
   los grupos y los roles de las cuentas de ejecución.
-- Compute, GKE, Cloud Run, Cloud SQL, Memorystore, Filestore, Backup and DR, Certificate Manager
-  y Monitoring se dan **sin condición** a `tf-wl-<env>`, y las de red a `tf-net-<env>`. Una
-  condición por nombre sobre un tipo que no la admite niega todo, y esto no se puede probar sin
-  GCP. Una cuenta de dev puede, técnicamente, cambiar recursos de prod de esos servicios (riesgo
-  aceptado, §9). Lo frenan que solo un trabajo de `main` en el entorno `dev` obtiene esa cuenta y
-  que todo cambio pasa por PR con plan revisado (ADR 0025).
+- `tf-wl-<env>` recibe condicionados los roles de los servicios que figuran en los
+  [atributos de recurso](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes)
+  de IAM: Cloud SQL (`Instance` y `BackupRun`), GKE (`Cluster`) y Backup and DR (`BackupVaults`).
+  La condición tiene la forma `resource.type != <tipo> || resource.name.startsWith(<prefijo del
+  entorno>)`: limita los permisos que se evalúan sobre un recurso de ese tipo y deja pasar los que
+  se evalúan sobre otro tipo o sobre el proyecto. GKE comprueba `clusters.create` sobre el
+  proyecto
+  ([permisos de la API de GKE](https://cloud.google.com/kubernetes-engine/docs/reference/api-permissions)),
+  así que la condición no limita el nombre de un clúster nuevo (riesgo 3 del §9). Roles finales
+  (`workloads_roles` de `stages/0-bootstrap/service_accounts.tf`):
+
+  | Rol de `tf-wl-<env>` | Condición |
+  |---|---|
+  | `backupdr.admin` | bóvedas `projects/<id>/locations/<primary_region o dr_region>/backupVaults/<prefix>-<env>-` |
+  | `cloudsql.admin` | instancias y sus respaldos `projects/<id>/instances/<prefix>-<env>-data-` |
+  | `container.clusterAdmin` (no `container.admin`) | clústeres `projects/<id>/locations/<primary_region o dr_region>/clusters/<prefix>-<env>-` |
+  | `storage.admin` | buckets `projects/_/buckets/<prefix>-<env>-` |
+  | `certificatemanager.editor`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `file.editor`, `gkebackup.admin`, `monitoring.alertPolicyEditor`, `monitoring.dashboardEditor`, `monitoring.notificationChannelEditor`, `monitoring.servicesEditor`, `monitoring.uptimeCheckConfigEditor`, `redis.admin`, `run.admin` | ninguna |
+  | `cloudscheduler.admin` | ninguna; solo `tf-wl-dev` y `tf-wl-qa` (ADR 0028) |
+
+  `container.clusterAdmin` administra clústeres y pools sin permisos sobre los objetos de
+  Kubernetes (pods, secretos, tokens de cuentas de Kubernetes), que `container.admin` sí trae en
+  todos los clústeres del proyecto. Monitoring va con cinco roles finos porque
+  `monitoring.editor` trae `serviceusage.services.enable` y `serviceusage.consumerpolicy.update`.
+  Que estas condiciones dejen aplicar la raíz y nieguen lo de otro entorno es HYPOTHESIS (puntos
+  152 y 153).
+- Compute, Cloud Run, Memorystore, Filestore, Backup for GKE, Certificate Manager y Monitoring van
+  **sin condición** a `tf-wl-<env>`, y los de red a `tf-net-<env>`: no admiten `resource.name`, o
+  su rol abarca tipos que no lo admiten, y una condición por nombre sobre un tipo que no la
+  admite niega todo. Una cuenta de dev puede,
+  técnicamente, cambiar recursos de prod de esos servicios (riesgo aceptado, §9). Lo frenan que
+  solo un trabajo de `main` en el entorno `dev` obtiene esa cuenta y que todo cambio pasa por PR
+  con plan revisado (ADR 0025).
+- Las cuentas de ejecución que crea `1-base` (§4) también tienen condiciones:
+  - `sched` (solo en `off_hours_environments`): el rol `<prefix>OffHoursScheduler` limitado a la
+    instancia `<prefix>-<env>-data-` y a los clústeres `<prefix>-<env>-` de su entorno, con la
+    misma forma por tipo (punto 157);
+  - `workload`: `iam.workloadIdentityUser` para el `principalSet` de todos los pods del clúster
+    `<prefix>-<env>-<app>-gke` y, en `dr_environments`, del `-gke-dr`
+    (`…/kubernetes.cluster/https://container.googleapis.com/v1/projects/<id>/locations/<ubicación>/clusters/<clúster>`,
+    [Workload Identity](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)).
+    La documentación no tiene un identificador que combine clúster, namespace y cuenta de
+    Kubernetes: cualquier pod de ese clúster con una cuenta de Kubernetes anotada obtiene
+    `workload` (punto 158);
+  - `workload`, `run` y `mig`: `cloudsql.client` e `instanceUser` limitados a las instancias
+    `<prefix>-<env>-data-` (punto 133).
 
 ### 4. Regla de recursos únicos y principales compartidos
 
@@ -200,14 +273,16 @@ Una raíz de entorno (`2-networks/envs/<env>`, `3-workloads/envs/<env>`) **no pu
    - llaveros y llaves KMS, secretos y repositorios de Artifact Registry.
 2. Permisos de proyecto (`google_project_iam_member`) para cualquier principal: cuentas del
    pipeline, grupos, agentes de servicio, la cuenta de Compute por defecto y también las cuentas
-   de ejecución, que ahora crea `1-base`.
+   de ejecución, que ahora crea `1-base`. Tampoco el IAM de cuentas de servicio
+   (`google_service_account_iam_*`).
 3. Recursos con nombre que no lleve `<prefix>-<env>-` (o `<env>` dentro de los nombres cortos
    que limita GCP, ADR 0017).
 
 La regla de Conftest `env_root_scope` la revisa en el plan de cada PR cuando la variable
-`environment` vale `dev`, `qa` o `prod` (`policies/env_root_scope.rego`; punto 146). Diferencia
-conocida: la regla todavía admite permisos de proyecto para cuentas `<prefix>-<env>-…` (el punto
-2 de arriba no la deja); sin `projectIamAdmin`, `tf-wl-<env>` no podría aplicarlos.
+`environment` vale `dev`, `qa` o `prod` (`policies/env_root_scope.rego`; punto 146). Desde la
+re-revisión rechaza todo `google_project_iam_member` y `_member_remove`, sea cual sea el
+principal, y todo `google_service_account_iam_*`; el IAM de un recurso del entorno (secretos,
+repositorios, valores de etiqueta, servicios de Cloud Run, buckets) sí pasa.
 
 Por eso pasan a `1-base`:
 
@@ -235,9 +310,10 @@ Por eso pasan a `1-base`:
 - **Cuentas de ejecución:** `<prefix>-<env>-<app>-<uso>` (`gke-nodes`, `workload`, `mig`, `run` y,
   en `off_hours_environments`, `sched`), con sus roles de proyecto, la lectura de los secretos de
   su entorno y de su repositorio de imágenes, Cloud SQL por IAM condicionado a las instancias
-  `<prefix>-<env>-data-`, el enlace de Workload Identity y `serviceAccountUser` para `tf-wl-<env>`
-  solo sobre las que adjunta (`stages/1-base/runtime_accounts.tf`; puntos 131 a 135). También la
-  cuenta `<prefix>-common-net-dns` de la VM DNS de `onprem-sim` (§6).
+  `<prefix>-<env>-data-`, el rol del apagado condicionado a la instancia y los clústeres del
+  entorno, el enlace de Workload Identity por clúster y `serviceAccountUser` para `tf-wl-<env>`
+  solo sobre las que adjunta (`stages/1-base/runtime_accounts.tf`; puntos 131 a 135, 157 y 158).
+  También la cuenta `<prefix>-common-net-dns` de la VM DNS de `onprem-sim` (§6).
 - **IAM de personas:** grupos de solo lectura (`roles/viewer`, `roles/logging.viewer` y los de
   auditoría).
 
@@ -245,7 +321,7 @@ Y quedan en `0-bootstrap`, porque piden permisos que ninguna cuenta del pipeline
 
 - **Rol del apagado fuera de horario:** `<prefix>OffHoursScheduler`. Crear un rol personalizado
   pide `iam.roleAdmin`, y con ese rol una cuenta podría ampliarse a sí misma. `1-base` lo publica
-  como `off_hours_role_id` y se lo da a cada cuenta `sched`.
+  como `off_hours_role_id` y se lo da a cada cuenta `sched`, condicionado a su entorno (§3).
 - **Cuenta de Compute por defecto:** `google_project_default_service_accounts` con
   `action = "DEPRIVILEGE"`, para quitarle el rol Editor que el proyecto le da al crearse. Quitar
   un rol básico pide `setIamPolicy` sin condición. Ninguna carga la usa.
@@ -266,18 +342,37 @@ La política de denegación ya no puede ir en una carpeta. Va en el proyecto y u
 
 - `0-bootstrap` crea la clave de etiqueta `<prefix>-proteccion`, con valor `etapa-0`, y la liga
   al bucket de estado, al llavero del estado y a las nueve cuentas del pipeline.
-- La política `<prefix>-bootstrap-sec-deny-pipeline` tiene tres reglas contra las nueve cuentas:
-  - **Con la etiqueta:** borrar el bucket o cambiar su configuración, su IAM y sus etiquetas;
-    cambiar el IAM del llavero o de la llave, cambiar la llave o destruir versiones; y, sobre las
-    cuentas del pipeline, cambiar su IAM, tomar su identidad (`actAs`, tokens y firmas),
-    cambiarlas, borrarlas o deshabilitarlas.
-  - **Sin condición:** pedir tokens o firmas de **cualquier** cuenta de servicio
-    (`getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, `signJwt`); cambiar
-    pools y proveedores de WIF o roles personalizados; crear llaves de cuentas de servicio
-    (`serviceAccountKeys.create`) y borrar el proyecto (`projects.delete`). `actAs` no se niega:
-    adjuntar una cuenta de ejecución a un recurso lo necesita (punto 127).
-  - **Valores de secretos:** `secretmanager.versions.access` para todas salvo `tf-net`, que lee
-    la llave de la VPN real.
+- La política `<prefix>-bootstrap-sec-deny-pipeline` tiene cuatro reglas. Las tres primeras son
+  contra las nueve cuentas; la cuarta, contra todos:
+  1. **Con la etiqueta:** borrar el bucket o cambiar su configuración, su IAM y sus etiquetas;
+     cambiar el IAM del llavero o de la llave, cambiar la llave o destruir versiones; y, sobre las
+     cuentas del pipeline, cambiar su IAM, tomar su identidad (`actAs`, tokens y firmas),
+     cambiarlas, borrarlas o deshabilitarlas.
+  2. **Sin condición:** pedir tokens o firmas de **cualquier** cuenta de servicio
+     (`getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, `signJwt`); cambiar
+     pools y proveedores de WIF o roles personalizados; crear llaves de cuentas de servicio
+     (`serviceAccountKeys.create`); borrar el proyecto (`projects.delete`); y cambiar qué
+     servicios están habilitados (`serviceusage.googleapis.com/services.enable`,
+     `services.disable` y `consumerpolicy.update`). Solo `0-bootstrap` habilita APIs, y la aplica
+     una persona que no está en la regla. No niega `serviceusage.services.use`, que las nueve
+     cuentas usan como proyecto de cuota. `actAs` no se niega: adjuntar una cuenta de ejecución a
+     un recurso lo necesita (puntos 127 y 154).
+  3. **Valores de secretos:** `secretmanager.versions.access` para todas salvo `tf-net`, que lee
+     la llave de la VPN real.
+  4. **Llaves de cuentas de servicio, para todos:** `iam.googleapis.com/serviceAccountKeys.create`
+     negado a `principalSet://goog/public:all`, la forma de la documentación para centralizar un
+     permiso ([deny](https://docs.cloud.google.com/iam/docs/deny-overview)). Sin organización no
+     existe la política `iam.disableServiceAccountKeyCreation`, y `tf-base`, que administra el
+     IAM de las cuentas de ejecución, podría dar `serviceAccountKeyAdmin` sobre una a otro
+     principal. El pipeline usa WIF y ningún flujo usa llaves JSON (ADR 0007).
+- La regla 4 no tiene excepción: ninguna variable de `0-bootstrap` identifica a la persona o al
+  grupo que la administra. Consecuencia: **nadie** crea llaves de cuentas de servicio en el
+  proyecto, tampoco la persona de la etapa 0 ni los dueños. Si alguna vez hiciera falta una, esa
+  persona quita o cambia la regla con `roles/iam.denyAdmin` (los permisos `iam.denypolicies.*` no
+  se pueden negar), crea la llave y lo registra. Que ningún agente de servicio de las APIs del
+  proyecto necesite crear llaves administradas por el usuario es HYPOTHESIS (punto 155). Mejora
+  propuesta, no construida: una variable `stage0_admin_principal` (grupo o usuario) que vaya en
+  `exception_principals` de la regla 4 (backlog).
 - Algunos permisos no se pueden negar: `iam.serviceAccounts.createTagBinding` y
   `deleteTagBinding`, `cloudkms.keyRings.deleteTagBinding`, `resourcemanager.tagValueBindings.*`
   e `iam.denypolicies.*`. Por eso ninguna cuenta del pipeline tiene `tagUser`, `tagAdmin`,
@@ -286,8 +381,8 @@ La política de denegación ya no puede ir en una carpeta. Va en el proyecto y u
   llavero y que las etiquetas funcionen en un proyecto sin organización es HYPOTHESIS
   (`VERIFICAR-EN-APPLY`, puntos 90 a 93). Si no funciona (`enable_protection_tags = false`), la
   protección queda en que ninguna cuenta tiene `storage.admin` sin condición,
-  `iam.serviceAccountAdmin`, `projectIamAdmin` sin condición ni `tagUser`, y en la regla sin
-  condición de la denegación.
+  `iam.serviceAccountAdmin`, `projectIamAdmin` sin condición ni `tagUser`, y en las reglas 2, 3
+  y 4 de la denegación, que no usan la etiqueta.
 
 ### 6. Red
 
@@ -353,7 +448,8 @@ En un proyecto fijo ya no se borra un proyecto entero.
   - Los restos que GKE nombra con el clúster (firewall, NEG, discos) se asocian al entorno por la
     red o la subred del spoke, la etiqueta del clúster o el namespace `<app>-<env>`; los que no
     se pueden asociar salen como aviso y no hacen fallar el trabajo (`scripts/destroy-orphans.py`;
-    punto 140).
+    punto 140). El namespace `<app>-<env>` queda como convención para esto: Workload Identity ya
+    no depende de él (§3).
 - **`destroy-plan-check.py`** rechaza además cualquier recurso del plan de destroy cuyo nombre no
   lleve `<prefix>-<env>-` (protege lo compartido).
 - **Nombres que no se reutilizan de inmediato** (roles personalizados, pools de WIF) solo existen
@@ -366,59 +462,68 @@ Lo que separa a dev, qa y prod:
 - **Red:** una VPC por entorno, sin peering entre ellas.
 - **Nombres y etiquetas:** `<prefix>-<env>-` y `env`, revisados por Conftest (`env_root_scope` y
   `required_labels`).
-- **Identidad del pipeline:** una cuenta por raíz y entorno, que solo se obtiene desde `main`, en
-  un flujo del repositorio y con el entorno de GitHub (§3).
-- **Permisos por recurso o condicionados:**
+- **Identidad del pipeline:** una cuenta por raíz y entorno, que solo se obtiene desde `main`,
+  en `_terraform-root.yml`, con `push` o `workflow_dispatch` y con el entorno de GitHub (§3).
+- **Permisos por recurso o condicionados** (§3):
   - Storage por prefijo de bucket;
+  - `cloudsql.admin` de `tf-wl-<env>` por instancias, `container.clusterAdmin` por clústeres y
+    `backupdr.admin` por bóvedas del entorno;
   - la lectura de cada secreto y de cada repositorio de imágenes, solo para las cuentas de
     ejecución de su entorno;
   - Cloud SQL por IAM, condicionado a las instancias del entorno;
+  - el rol del apagado de cada cuenta `sched`, condicionado a la instancia y los clústeres de su
+    entorno;
   - `serviceAccountUser` de `tf-wl-<env>` solo sobre sus cuentas de ejecución;
   - `tagUser` de `tf-wl-<env>` solo sobre los valores de etiqueta de su spoke.
-- **Workload Identity:**
-  - Las cuentas de Kubernetes de un namespace se identifican con el pool del proyecto
-    (`<proyecto>.svc.id.goog`), igual en los tres entornos
-    ([Workload Identity](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)).
-  - Por eso `1-base` enlaza la cuenta `workload` de cada entorno solo al namespace fijo
-    `<app>-<env>` (cuenta de Kubernetes `gke_workload_ksa_name`).
-- **Un clúster de GKE por entorno.**
+- **Workload Identity por clúster:** el pool `<proyecto>.svc.id.goog` es uno para el proyecto, y
+  un principal por namespace y cuenta de Kubernetes vale desde cualquier clúster del proyecto
+  ("Identity sameness" de
+  [Workload Identity](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)).
+  Por eso `1-base` enlaza la cuenta `workload` de cada entorno al `principalSet` de todos los pods
+  del clúster `<prefix>-<env>-<app>-gke[-dr]` (§3): la frontera es el clúster, que es de un solo
+  entorno y una sola aplicación.
+- **Un clúster de GKE por entorno**, sin permisos del pipeline sobre los objetos de Kubernetes
+  (`container.clusterAdmin`, y 3-workloads no usa el proveedor `kubernetes`).
 
-Lo que ya **no** separa, y queda como riesgo aceptado. Estos son los roles que siguen sin
-condición en el código (`workloads_roles` y `net_env_roles` de
-`stages/0-bootstrap/service_accounts.tf`). Con ellos, la cuenta de un entorno puede actuar sobre
-otro:
+Lo que ya **no** separa, y queda como riesgo aceptado. Siguen los cuatro riesgos residuales de la
+re-revisión de seguridad (24 nov 2026), con lo que cada uno permite (confidencialidad, C;
+integridad, I; disponibilidad, A), qué lo detecta y qué lo cerraría:
+
+| Riesgo | Qué permite | Qué lo detecta | Qué lo cerraría |
+|---|---|---|---|
+| 1. `compute.instanceAdmin.v1` de `tf-wl-<env>` sin condición | Cambiar los metadatos (`startup-script`, `enable-oslogin=FALSE`) de las VM y de los nodos de GKE de prod, lo que da `root` con la cuenta de esa VM: sus permisos sobre secretos, Cloud SQL o imágenes (C e I). Detener o borrar VM de prod (A) | Solo los registros de auditoría de `compute.instances.setMetadata` hechos por `tf-wl-dev` o `tf-wl-qa` sobre nombres `-prod-`. `drift.yml` no lo ve: las VM de un MIG y los nodos de GKE no están en ningún estado. La alerta no está construida (backlog) | Condicionar Compute por los tipos que admite la página de atributos (HYPOTHESIS para los nodos de GKE), o proyectos separados (rama `archivo/multiproyecto`) |
+| 2. Un MIG con la plantilla de prod que ya existe (HYPOTHESIS de la re-revisión) | Crear VM con la cuenta `mig` de prod sin `actAs`, porque las crea el agente de servicio de Compute; con `setMetadata` (riesgo 1) se obtiene su token (C e I) | Los registros de auditoría de `instanceGroupManagers.insert` con una plantilla `-prod-` hechos por otra cuenta; el MIG nuevo sale como recurso no administrado en `drift.yml` | Lo mismo que el riesgo 1 |
+| 3. Clúster con el nombre de prod creado por otro entorno | La condición de `clusters.update` ya impide un pool propio en el clúster de prod (punto 152). Pero GKE comprueba `clusters.create` en el proyecto: `tf-wl-dev` podría crear un clúster con el nombre de prod que aún no exista (`<prefix>-prod-<app>-gke-dr` antes de una conmutación, o el primario si prod no usa GKE), y `1-base` ya enlazó ese `principalSet`. Con `root` en sus nodos (riesgo 1), un token de cuenta de Kubernetes de ese clúster da la cuenta `workload` de prod: secretos y Cloud SQL de prod (C e I) | Los registros de auditoría de `CreateCluster` con nombre `-prod-` hechos por una cuenta que no es `tf-wl-prod`; el clúster sale como recurso no administrado en `drift.yml`. La alerta no está construida (backlog) | Un principal por UID de la cuenta de Kubernetes, enlazar solo los clústeres que ya existen, o proyectos separados |
+| 4. Otros servicios sin condición o con condición parcial | Memorystore (`redis.admin`): cambiar o borrar la instancia de prod (I y A; AUTH está apagado, ADR 0015). Filestore (`file.editor`): respaldos y borrado (A). Backup for GKE (`gkebackup.admin`): restaurar un respaldo de prod en otro clúster (C; HYPOTHESIS). Backup and DR: la condición solo limita las bóvedas; planes, asociaciones y restauraciones fuera de la bóveda quedan sin límite (I y A; las restauraciones, HYPOTHESIS). Los cinco roles de Monitoring pueden borrar las alertas y los canales de `1-base` y de otro entorno: deja sin detección (A). `networkUser` con `instanceAdmin.v1`: VM en las subredes de prod, que llegan por red a Memorystore, Filestore y Cloud SQL (C). Las condiciones de Cloud SQL no limitan usuarios ni bases (`cloudsql.users.*`, `cloudsql.databases.*`). Cualquier pod del clúster obtiene `workload` (I) | `drift.yml` para lo que está en un estado (instancias, alertas, canales, planes); recursos nuevos fuera del código en su trabajo de recursos no administrados; las alertas de `audit-alerts` mientras existan | Proyectos separados; para las alertas de `1-base`, una regla de denegación por etiqueta sobre ellas (HYPOTHESIS, backlog) |
+
+Además siguen sin condición, con efecto entre entornos (`workloads_roles`, `net_env_roles` y
+`hub_roles` de `stages/0-bootstrap/service_accounts.tf`):
 
 | Cuenta | Rol sin condición | Qué puede hacer en otro entorno | Qué lo detecta | Qué lo cerraría |
 |---|---|---|---|---|
-| `tf-wl-<env>` | `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin` | Cambiar o borrar plantillas, MIG, VM, balanceadores, certificados SSL y políticas de Cloud Armor de otro entorno | `drift.yml`: el plan diario de la raíz de ese entorno; recursos nuevos fuera del código, en el trabajo de recursos no administrados | Condiciones o denegación por etiqueta de recurso, si Compute las admite (HYPOTHESIS); o un proyecto por entorno |
-| `tf-wl-<env>` | `compute.networkUser` | Usar las subredes de otro spoke para crear recursos | Recursos no administrados de `drift.yml` | `networkUser` sobre las subredes del spoke (lo daría el spoke) |
-| `tf-wl-<env>` | `container.admin`, `gkebackup.admin` | Cambiar o borrar clústeres, pools y planes de respaldo de GKE de otro entorno. Según la descripción del rol, `container.admin` también alcanza los objetos de Kubernetes de todos los clústeres del proyecto (por verificar) | `drift.yml` para la configuración de los clústeres; nada para los objetos dentro del clúster | Un proyecto por entorno; o RBAC de Kubernetes con un rol de GKE más chico (por verificar) |
+| `tf-wl-<env>` | `compute.loadBalancerAdmin`, `compute.securityAdmin` | Cambiar o borrar balanceadores, certificados SSL y políticas de Cloud Armor de otro entorno | `drift.yml`: el plan diario de la raíz de ese entorno | Condiciones o denegación por etiqueta de recurso, si Compute las admite (HYPOTHESIS); o un proyecto por entorno |
 | `tf-wl-<env>` | `run.admin` | Cambiar o borrar servicios de Cloud Run de otro entorno y su IAM de invocador | `drift.yml` | Condiciones por nombre, si Cloud Run las admite (HYPOTHESIS); o un proyecto por entorno |
-| `tf-wl-<env>` | `cloudsql.admin` | Detener, cambiar o borrar instancias de otro entorno (prod tiene protección contra borrado obligatoria) | `drift.yml` y la alerta de cambios de configuración de Cloud SQL de `audit-alerts` | Condicionar el rol a `<prefix>-<env>-data-`, como ya se hace con el acceso por IAM (punto 133), si crear instancias admite la condición (por verificar) |
-| `tf-wl-<env>` | `redis.admin`, `file.editor` | Cambiar o borrar Memorystore y Filestore de otro entorno | `drift.yml` | Un proyecto por entorno |
-| `tf-wl-<env>` | `backupdr.admin` | Cambiar o borrar bóvedas, planes y asociaciones de respaldo de otro entorno, prod incluido | `drift.yml` | Un proyecto por entorno, o planes de respaldo fuera del alcance de las cuentas de entorno |
 | `tf-wl-<env>` | `certificatemanager.editor` | Cambiar certificados y autorizaciones DNS de otro entorno | `drift.yml` | Un proyecto por entorno |
-| `tf-wl-<env>` | `monitoring.editor` | Cambiar o borrar alertas, canales, tableros y SLO de otro entorno **y los de `1-base`** (alertas de auditoría y canal de seguridad) | El `drift.yml` diario de `1-base` y de la raíz del otro entorno | Crear las alertas del entorno desde `1-base`, o un rol más chico sobre las alertas propias (Monitoring no tiene condiciones por nombre en el código; HYPOTHESIS) |
-| `tf-wl-dev`, `tf-wl-qa` | `cloudscheduler.admin` | Cambiar o borrar los trabajos del apagado del otro entorno (dev y qa) | `drift.yml` (los trabajos se declaran con `paused = false`, ADR 0028) | Un proyecto por entorno |
+| `tf-wl-dev`, `tf-wl-qa` | `cloudscheduler.admin` | Cambiar o borrar los trabajos del apagado del otro entorno (dev y qa). Un trabajo que apunte a otro entorno debe fallar: la cuenta `sched` tiene el rol del apagado solo sobre el suyo (punto 157) | `drift.yml` (los trabajos se declaran con `paused = false`, ADR 0028) | Un proyecto por entorno |
 | `tf-net-<env>` | `compute.networkAdmin` | Cambiar o borrar VPC, subredes, rutas, peerings, routers y NAT de otro spoke, del hub y de `onprem-sim` | `drift.yml` y las alertas de rutas y de redes de `audit-alerts` | Un proyecto por entorno (Shared VPC pide organización) |
 | `tf-net-<env>` | `compute.securityAdmin` | Cambiar las políticas de firewall de red de otra VPC | `drift.yml` y la alerta `firewall_policy` de `audit-alerts` | Un proyecto por entorno |
 | `tf-net-<env>` | `dns.admin` | Cambiar las zonas DNS de otro entorno y del hub | `drift.yml` | Un proyecto por entorno |
 | `tf-net-<env>` | `servicenetworking.networksAdmin` | Cambiar o borrar la conexión de PSA de otro spoke | `drift.yml` | Un proyecto por entorno |
 | `tf-net-<env>` | `<prefix>TfNetworkTagManager` | Cambiar las claves y valores de etiquetas seguras de otro spoke y su IAM, también el de la clave de protección. No puede quitar la etiqueta de lo protegido: no tiene `deleteTagBinding` (§5) | `drift.yml` para las claves y los valores; un miembro de IAM agregado sobre un valor no lo ve el plan (asignaciones aditivas): solo los registros de auditoría | Dar el IAM de los valores desde `0-bootstrap`, o condicionar el rol si Resource Manager lo admite (HYPOTHESIS) |
-| `tf-net` (hub) | `compute.instanceAdmin.v1`, solo con `onprem_dns_vm = true` | Cambiar o borrar las VM de los entornos | `drift.yml` | Apagar `onprem_dns_vm` después de la prueba de DNS (backlog G11) |
+| `tf-net` (hub) | `compute.instanceAdmin.v1`, solo con `onprem_dns_vm = true` | Cambiar o borrar las VM de los entornos (el riesgo 1, desde el hub) | Los mismos registros de auditoría que el riesgo 1 | Apagar `onprem_dns_vm` después de la prueba de DNS (backlog G11) |
 
 `serviceusage.serviceUsageConsumer`, sin condición en las nueve cuentas, solo sirve para usar el
-proyecto como proyecto de cuota: no da acceso a recursos de otro entorno.
+proyecto como proyecto de cuota: no da acceso a recursos de otro entorno. Ninguna cuenta del
+pipeline puede habilitar ni deshabilitar servicios (regla 2 de la denegación, §5).
 
-Además:
+También:
 
-- **Cuenta `sched`:** el rol `OffHoursScheduler` va sin condición. La de dev podría detener la
-  instancia de prod o cambiar sus pools. Una instancia de prod detenida hace fallar el plan de
-  prod por la `postcondition` del módulo `cloud-sql`, y `drift.yml` termina en rojo (ADR 0028).
 - **`tf-base`:** `TfServiceAccountManager` va sin condición, sobre todas las cuentas del proyecto
   salvo las nueve del pipeline, que protege la denegación. Podría cambiar el IAM de una cuenta de
-  ejecución de cualquier entorno. Lo detecta el `drift.yml` diario de `1-base`, salvo los
-  miembros agregados por fuera del código.
+  ejecución de cualquier entorno, o darle `serviceAccountTokenCreator` a otro principal. No puede
+  hacer que alguien cree una llave de esa cuenta: la regla 4 de la denegación vale para todos.
+  Lo detecta el `drift.yml` diario de `1-base`, salvo los miembros agregados por fuera del
+  código. Las concesiones delegadas limitan roles, no destinatarios ni condiciones.
 - **Agentes de servicio:** uno por proyecto. El de cada servicio tiene permiso sobre las llaves de
   los tres entornos, y el de Cloud Run lee los repositorios de los tres.
 - **Binary Authorization sin atestadores por entorno:** la lista de permitidos global (§4), y la
@@ -454,7 +559,7 @@ Nombres y tipos fijos: un constructor que necesite otra salida se detiene y lo r
 | | `secret_ids` | map(map(string)) | entorno → secreto → ID |
 | | `artifact_registry_repositories` | map(map(string)) | entorno → aplicación → URL `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>` |
 | | `runtime_service_accounts` | map(map(map(string))) | entorno → aplicación → uso (`gke_nodes`, `workload`, `mig`, `run` y `scheduler`) → correo |
-| | `gke_workload_identity_members` | map(map(string)) | entorno → aplicación → miembro de Workload Identity, o null |
+| | `gke_workload_identity_members` | map(map(map(string))) | entorno → aplicación → clúster (`primary` y, en `dr_environments`, `dr`) → `principalSet` de todos los pods del clúster, o null mientras `gke_workload_identity_bindings` sea false |
 | | `onprem_dns_service_account` | string (o null) | cuenta de la VM DNS |
 | | `off_hours_role_id` | string | rol del apagado |
 | | `security_alert_email`, `notification_channel_ids` | string, map(string) | avisos: `security` y, con `operations_alert_email`, `operations` |
@@ -502,12 +607,12 @@ Nombres y tipos fijos: un constructor que necesite otra salida se detiene y lo r
 | 0003 | Se mantiene una VPC por entorno con peering al hub, sin Shared VPC |
 | 0005 | El balanceador y Cloud Armor quedan en el proyecto único, en la raíz de cargas del entorno |
 | 0006 | El hub crea `onprem-sim` en el proyecto único; la VM DNS es código opcional; con on-premises real, el plan del hub falla en el pipeline |
-| 0007 | Seis flujos en total; WIF de escritura solo desde `main` (`attribute.deploy`); plan con `tf-read`; `GCP_DISABLED_ENVS` |
+| 0007 | Seis flujos en total; WIF de escritura solo desde `main`, en `_terraform-root.yml` y con `push` o `workflow_dispatch` (`attribute.deploy`); plan con `tf-read`; `GCP_DISABLED_ENVS` |
 | 0008 | La llave del estado sigue en `0-bootstrap`, protegida además por la etiqueta |
 | 0009 | Reemplazado: el perímetro es opcional, solo con organización, lo crea `0-bootstrap` alrededor de todo el proyecto y queda en dry-run |
 | 0010 | Escritura en el prefijo propio y lectura mínima: el hub no lee nada, los spokes leen el hub; `tf-read` lee todo |
 | 0011 | El orden de despliegue es 0 → 1 → 2 → 3 |
-| 0012 | Las cargas usan las cuentas de ejecución de `1-base`; Workload Identity con namespace `<app>-<env>` |
+| 0012 | Las cargas usan las cuentas de ejecución de `1-base`; Workload Identity por clúster: `1-base` enlaza la cuenta `workload` al `principalSet` de todos los pods de `<prefix>-<env>-<app>-gke[-dr]`; `3-workloads` tiene `container.clusterAdmin` condicionado a sus clústeres |
 | 0014 | La raíz del hub pasa a `stages/2-networks/` y cada spoke a `envs/<env>/` |
 | 0015 | Los contenedores de secretos y su lectura por las cuentas de ejecución los da `1-base`; ninguna cuenta de entorno tiene IAM de secretos |
 | 0017 | Cuentas del pipeline por raíz y entorno; las de ejecución y la de la VM DNS las crea `1-base` |
@@ -516,9 +621,9 @@ Nombres y tipos fijos: un constructor que necesite otra salida se detiene y lo r
 | 0020 | Cloud Run nunca con `allUsers`, con o sin organización (Conftest `iam_public_principal`) |
 | 0021 | Las pruebas de las raíces nuevas siguen con `override_during = plan` |
 | 0022 | El estado multirregional y la VPN de DR siguen; las llaves de DR existen solo en `dr_environments` |
-| 0023 | Política de denegación con etiqueta en el proyecto; WIF por `attribute.deploy`; sin `tagUser` ni `tagAdmin` de proyecto |
+| 0023 | Política de denegación en el proyecto con cuatro reglas (§5), la cuarta contra la creación de llaves de cuentas de servicio por cualquier principal; WIF por `attribute.deploy` con `job_workflow_ref` y `event_name`; sin `tagUser` ni `tagAdmin` de proyecto |
 | 0024 | Un repositorio por entorno y aplicación, una sola política de Binary Authorization y atestadores por entorno opcionales |
 | 0025 | Los `plan` corren con la cuenta de lectura (§3) |
 | 0026 | Las zonas del VIP restringido siguen en los tres spokes |
 | 0027 | Las desviaciones del CIS se revisan con el mapa nuevo; 1.7 se cierra con las cuentas de ejecución en `1-base` |
-| 0028 | El rol del apagado lo crea `0-bootstrap`; la cuenta del apagado y su permiso, `1-base` |
+| 0028 | El rol del apagado lo crea `0-bootstrap`; la cuenta del apagado y su permiso, condicionado a la instancia y los clústeres de su entorno, `1-base` |

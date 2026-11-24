@@ -10,6 +10,16 @@ hallazgos en las ramas `r2/integracion`, `r2/politicas`, `r2/pipeline` y `r2/ide
 concilió la documentación con ese código. Lo que sigue es R4, que espera al proyecto de GCP. Lo
 que solo un apply confirma está en [`pendientes-apply.md`](pendientes-apply.md).
 
+**Re-revisión y arreglo, 24 nov 2026:** una re-revisión de seguridad encontró cinco hallazgos
+(N1 a N5: GKE y Workload Identity, Monitoring y Service Usage, el filtro de WIF, el apagado y
+las llaves, y la regla de Conftest). Los corrigió la rama `r2/seg2`, y `r3/cierre` cerró los
+cambios chicos de código y la documentación (segunda enmienda del ADR 0029, pendientes 152 a
+159, backlog M25 a M30). Conteos de ese código, desde `gcp-datacenter/`:
+`PATH="$HOME/go/bin:$PATH" bash scripts/policy-check.sh` → "138 tests, 138 passed" y "43 planes
+con el resultado esperado"; `bash scripts/selftest.sh` → 218 `OK` y 0 `FALLA`;
+`grep -rh '^run "' --include=*.tftest.hcl . | wc -l` → 499 bloques `run`; `bash
+scripts/docs.sh --check` → "Resultado: PASS (33)".
+
 **Origen:** en la junta del 23 nov 2026, Banorte confirmó que todo el despliegue va dentro de
 **un solo proyecto de GCP**.
 
@@ -32,7 +42,7 @@ que solo un apply confirma está en [`pendientes-apply.md`](pendientes-apply.md)
 | SCC de la organización | Activación en el proyecto (Standard o Premium); el cumplimiento solo cubre ese proyecto. Que funcione sin organización es HYPOTHESIS | [Activar SCC](https://docs.cloud.google.com/security-command-center/docs/activate-scc-overview) |
 | Registros de acceso a datos solo en prod | La configuración de auditoría es única por proyecto: vale para los tres entornos | ADR 0029 §7 |
 | Presupuesto | Un presupuesto del proyecto, que crea una persona en `0-bootstrap`. Las etiquetas solo filtran presupuestos de cuenta de facturación | [Budgets](https://docs.cloud.google.com/billing/docs/how-to/budgets) |
-| Aislamiento de IAM por proyecto | Una cuenta del pipeline por entorno ligada al entorno de GitHub, y condiciones por nombre en Storage, KMS y Secret Manager. El resto queda como riesgo aceptado | ADR 0029 §3 y §9 |
+| Aislamiento de IAM por proyecto | Una cuenta del pipeline por entorno ligada al entorno de GitHub, y condiciones por nombre en Storage, KMS y Secret Manager (desde la re-revisión, también en Cloud SQL, GKE y Backup and DR). El resto queda como riesgo aceptado | ADR 0029 §3 y §9 |
 | Destroy borrando el proyecto | Destroy recurso por recurso; huérfanos por la etiqueta `env` y por el prefijo `<prefix>-<env>-` | ADR 0029 §8 |
 
 Lo que **sí funciona en un proyecto**, según la documentación oficial: peering entre VPC del mismo
@@ -54,7 +64,7 @@ Lo que cambió por la revisión independiente:
 |---|---|---|
 | El estado, el pipeline y las cargas quedan en el mismo proyecto; `storage.admin` de la etapa 5 alcanzaría el bucket de estado | Alto | Ninguna cuenta con `storage.admin` sin condición. Política de denegación con una etiqueta sobre el bucket de estado (HYPOTHESIS que funcione sin organización). ADR 0029 §3 y §5 |
 | "Una cuenta por etapa" no separa entornos | Alto | Nueve cuentas: una por raíz y entorno, ligadas por WIF al entorno de GitHub, más `tf-read` de solo lectura para los `plan`. ADR 0029 §3 |
-| La regla de recursos únicos no bastaba | Alto | Regla ampliada. Fuera de las raíces de entorno quedan los permisos de proyecto para principales compartidos, el rol del apagado, los repositorios y la política de Binary Authorization, y la cuenta de Compute por defecto. Además, namespace de GKE `<app>-<env>` (Workload Identity comparte el pool del proyecto). ADR 0029 §4 y §9 |
+| La regla de recursos únicos no bastaba | Alto | Regla ampliada. Fuera de las raíces de entorno quedan los permisos de proyecto para principales compartidos, el rol del apagado, los repositorios y la política de Binary Authorization, y la cuenta de Compute por defecto. Además, namespace de GKE `<app>-<env>` (Workload Identity comparte el pool del proyecto); la re-revisión lo cambió por un enlace por clúster, porque el principal de un namespace vale desde cualquier clúster del proyecto, y el namespace quedó como convención. ADR 0029 §4 y §9 |
 | Sin borrar proyectos no hay "empezar de cero" | Alto | El destroy de un entorno quita sus cargas, y el spoke solo con `incluir_red`. Lo persistente del entorno vive en `1-base`. Huérfanos por la etiqueta `env` y el prefijo. ADR 0029 §8 |
 | El calendario no era creíble | Alto | Calendario nuevo (§3): rebanada vertical primero y grabación de una ejecución ensayada, no de la primera |
 | La etiqueta es `env`, no `environment` | Medio | Corregido en todo el plan |
@@ -70,7 +80,8 @@ El inventario se sacó con `grep` el 24 nov 2026, antes de R1; los conteos de l�
 la revisión. El resultado de R1 y R2 cambió dos filas: quedan 24 módulos (se retiraron `folders`
 y `project-factory`; `ls modules | wc -l` → 24) y 12 reglas de Conftest (las 7 de antes más
 `bucket_uniform_access`, `env_root_scope`, `iam_public_principal`, `resource_locations` y
-`service_account_key`), contadas el 24 nov 2026 con `ls policies/*.rego`.
+`service_account_key`), contadas el 24 nov 2026 con
+`ls policies/*.rego | grep -v -e _test -e lib | wc -l` → 12.
 
 | Parte | Qué pasa |
 |---|---|

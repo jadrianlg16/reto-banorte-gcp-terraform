@@ -11,7 +11,7 @@ El PNG sale de [`fuente/`](fuente/LEEME.md). El diagrama de texto usa `prefix = 
 
 ```mermaid
 flowchart TB
-  gha["GitHub Actions<br/>trabajo con environment<br/>para escribir: solo desde main"]
+  gha["GitHub Actions<br/>trabajo con environment<br/>escribe solo _terraform-root.yml en main"]
 
   subgraph ID["Identidad del pipeline (0-bootstrap, nueve cuentas)"]
     wif["Workload Identity Federation<br/>sin llaves JSON · attribute.deploy"]
@@ -19,7 +19,7 @@ flowchart TB
     envs["dev · qa · prod: bnt-tf-net-{env} · bnt-tf-wl-{env}"]
     read["bnt-tf-read: plan, drift, prueba de humo, huérfanos"]
     state[("Bucket de estado multirregión US<br/>un prefijo por raíz · CMEK · versionado")]
-    deny{{"IAM Deny + etiqueta bnt-proteccion = etapa-0<br/>ninguna cuenta borra el bucket, cambia WIF ni pide tokens"}}
+    deny{{"IAM Deny + etiqueta bnt-proteccion = etapa-0<br/>ninguna cuenta borra el bucket, cambia WIF ni pide tokens<br/>nadie crea llaves de cuentas de servicio"}}
   end
   gha -- "OIDC" --> wif
   wif --> common
@@ -40,7 +40,7 @@ flowchart TB
   envs -. "tf-wl-{env} solo adjunta las de su entorno" .-> runsa
 
   subgraph OFF["Apagado fuera de horario (solo dev y qa, ADR 0028)"]
-    sched["Cloud Scheduler · cuenta bnt-{env}-app-sched (de 1-base)<br/>rol bntOffHoursScheduler (de 0-bootstrap)"]
+    sched["Cloud Scheduler · cuenta bnt-{env}-app-sched (de 1-base)<br/>rol bntOffHoursScheduler (de 0-bootstrap), solo su entorno"]
     sqloff["Cloud SQL detenida 20:00–07:00 y fin de semana"]
     gkeoff["Pools de GKE a 0"]
     migoff["MIG a 0 con programa de escalado"]
@@ -70,15 +70,16 @@ flowchart TB
 ## Cómo se lee
 
 - **Identidad.** Nueve cuentas del pipeline, todas de `0-bootstrap`. Un trabajo de GitHub
-  Actions obtiene una cuenta que escribe solo si es de `main`, de un flujo de
-  `.github/workflows/` del repositorio y con el entorno de GitHub de esa cuenta
-  (`attribute.deploy`); cualquier otro obtiene `tf-read`. Las cuentas de ejecución de las cargas
+  Actions obtiene una cuenta que escribe solo si es el `apply` de `_terraform-root.yml` leído de
+  `main`, en una ejecución de `main` disparada por `push` o `workflow_dispatch` y con el entorno
+  de GitHub de esa cuenta (`attribute.deploy`); cualquier otro obtiene `tf-read`. Las cuentas de ejecución de las cargas
   las crea `1-base`, y `tf-wl-<env>` solo puede adjuntar las de su entorno. Las personas solo
   leen ([diagrama 1](01-organizacion-gobierno-acceso.md)).
-- **Protección del estado.** La política de denegación y la etiqueta (ADR 0029 §5). Si las
-  etiquetas no funcionan en el proyecto (HYPOTHESIS sin organización),
-  `enable_protection_tags = false` deja solo la regla sin condición, y la protección queda en
-  que ninguna cuenta tiene `storage.admin` ni `projectIamAdmin` sin condición
+- **Protección del estado.** La política de denegación, con cuatro reglas, y la etiqueta (ADR
+  0029 §5). La regla 4 niega a todos, también a la persona dueña, crear llaves de cuentas de
+  servicio. Si las etiquetas no funcionan en el proyecto (HYPOTHESIS sin organización),
+  `enable_protection_tags = false` deja solo las tres reglas sin etiqueta, y la protección del
+  estado queda en que ninguna cuenta tiene `storage.admin` ni `projectIamAdmin` sin condición
   (`stages/0-bootstrap/README.md`).
 - **Auditoría (ADR 0029 §7).** La configuración de auditoría es única por proyecto, así que los
   registros de acceso a datos valen para los tres entornos. Un sink de proyecto los copia al
@@ -90,9 +91,10 @@ flowchart TB
 - **Apagado fuera de horario.** Solo dev y qa (prod lo rechaza). Cloud SQL y los pools de GKE con
   trabajos de Cloud Scheduler; el MIG con un programa de escalado; Cloud Run ya escala a cero.
   La cuenta `sched` la crea `1-base` en los entornos de `off_hours_environments` y le da el rol
-  del apagado, que crea `0-bootstrap`. El rol no tiene condición: la cuenta de dev podría detener
-  recursos de otro entorno; los trabajos solo apuntan a los del suyo
-  (`stages/1-base/runtime_accounts.tf`).
+  del apagado, que crea `0-bootstrap`, condicionado a la instancia de Cloud SQL y a los
+  clústeres de GKE de su entorno (`local.off_hours_condition` de
+  `stages/1-base/runtime_accounts.tf`; que la condición deje pasar los tres trabajos es
+  `VERIFICAR-EN-APPLY`, pendiente 157).
 - **Monitoreo.** Uno por entorno, limitado a los recursos del entorno por nombre y etiqueta.
   También avisa al canal de operaciones de `1-base` (`operations_alert_email`), si existe; el
   canal de seguridad queda solo para las alertas de auditoría.
@@ -103,7 +105,8 @@ flowchart TB
 ## Lo que cambió del primer texto del ADR 0029 al código
 
 - El rol `<prefix>OffHoursScheduler` lo crea `0-bootstrap`, no `1-base`; `1-base` lo publica
-  (`off_hours_role_id`) y se lo da a la cuenta `sched`.
+  (`off_hours_role_id`) y se lo da a la cuenta `sched`, condicionado a su entorno (re-revisión de
+  seguridad).
 - Las cuentas de ejecución, `sched` incluida, las crea `1-base`, no cada raíz de entorno.
 - Las cuentas que escriben se toman por `attribute.deploy`, no por `attribute.environment`. La
   tabla completa está en el [diagrama 1](01-organizacion-gobierno-acceso.md).

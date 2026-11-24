@@ -1,7 +1,7 @@
 # Regla 11 (ADR 0029 §1; reemplaza `gcp.resourceLocations`): recurso fuera de las ubicaciones
 # permitidas.
 #
-# Permitidas, las mismas que `modules/org` da a la política de organización desde `1-base`:
+# Permitidas, las mismas que `modules/org` da a la política de organización desde `0-bootstrap`:
 # - `us-central1` (primaria) y `us-east4` (DR) con sus zonas: los grupos `in:<región>-locations`
 #   de `primary_region` y `dr_region` (ADR 0002);
 # - `us`, el valor de `additional_allowed_locations` por defecto: bucket de estado, llaveros y

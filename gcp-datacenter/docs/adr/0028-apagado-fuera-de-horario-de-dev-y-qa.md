@@ -15,6 +15,10 @@ cuenta `<prefix>-<env>-<app>-sched` y su rol ya no los crea `stages/3-workloads/
 `serviceAccountUser` sobre esa cuenta para adjuntarla a los trabajos (punto 134 de
 [`pendientes-apply.md`](../pendientes-apply.md)).
 
+Enmendado una tercera vez el 2026-11-24, con el arreglo de la re-revisión de seguridad (rama
+`r2/seg2`, hallazgo N4): `1-base` da el rol a la cuenta `sched` condicionado a la instancia de
+Cloud SQL y a los clústeres de GKE de su entorno, no en todo el proyecto (punto 157).
+
 Tipo: Aclaración. Construye la mitigación de costo opcional que el contrato (§8) dejaba sin
 construir; no cambia la especificación.
 
@@ -53,8 +57,15 @@ Quién crea cada pieza en el proyecto único:
   `tf-wl-dev` y `tf-wl-qa` `roles/cloudscheduler.admin` en el proyecto.
 - `1-base`, para cada entorno de `off_hours_environments` y aplicación, crea la cuenta
   `<prefix>-<env>-<app>-sched`, que firma los tokens de los trabajos. Le da el rol en el proyecto
-  por la concesión delegada de `tf-base`, **sin condición**: el rol junta permisos de Cloud SQL y
-  de GKE, y una condición por nombre sobre un tipo que no la admite niega todo (ADR 0029 §3).
+  por la concesión delegada de `tf-base`, condicionado a su entorno: el rol junta permisos de
+  Cloud SQL y de GKE, y los dos tipos admiten `resource.name`, así que la condición tiene una
+  parte por tipo con la forma `resource.type != <tipo> || resource.name.startsWith(<prefijo>)`:
+  la instancia `projects/<id>/instances/<prefix>-<env>-data-` y los clústeres
+  `projects/<id>/locations/<primary_region o dr_region>/clusters/<prefix>-<env>-` (ADR 0029 §3;
+  `local.off_hours_condition` de `stages/1-base/runtime_accounts.tf`). Sin ella, la cuenta del
+  apagado de dev podría parchear la instancia o cambiar los clústeres de prod con un trabajo que
+  llame a esas API. Que la condición deje pasar las tres llamadas y niegue las de otro entorno es
+  HYPOTHESIS (punto 157).
   Da a `tf-wl-<env>` `iam.serviceAccountUser` solo sobre esa cuenta, y publica el correo en
   `runtime_service_accounts[<env>][<app>]["scheduler"]` y el ID del rol en `off_hours_role_id`.
 - `stages/3-workloads/envs/<env>`, con `off_hours_shutdown.enabled`, crea los trabajos con esa
@@ -167,14 +178,15 @@ Cloud Scheduler:
     VPN y el almacenamiento de Cloud SQL se siguen cobrando.
   - No hay alerta si un trabajo de Cloud Scheduler falla (limitación en
     [`pendientes-apply.md`](../pendientes-apply.md) §5).
-  - La cuenta `-sched` de dev tiene el rol en todo el proyecto: técnicamente podría detener la
-    instancia o cambiar los pools de qa o de prod; sus trabajos solo apuntan a los de su entorno
-    (riesgo aceptado, ADR 0029 §9). `cloudscheduler.admin` de `tf-wl-dev` y `tf-wl-qa` también
-    alcanza los trabajos del otro entorno.
+  - La cuenta `-sched` de cada entorno tiene el rol condicionado a su instancia y sus clústeres
+    (punto 157). Pero `cloudscheduler.admin` de `tf-wl-dev` y `tf-wl-qa` va sin condición y
+    alcanza los trabajos del otro entorno: puede cambiarlos o borrarlos, aunque un trabajo que
+    apunte a otro entorno falla porque la cuenta `-sched` no tiene el rol allí (riesgo aceptado,
+    ADR 0029 §9).
 - **Fórmula de ahorro:**
   - Horas apagadas por semana: `H = 168 − días × (hora de apagado − hora de encendido)`.
   - Ahorro mensual: `730 × H / 168 × (vCPU y memoria de Cloud SQL por hora + VM y disco del MIG
     por hora × mig_min_replicas + nodo y disco de GKE por hora × zonas × min_node_count)`, menos
     los trabajos de Cloud Scheduler (2 por instancia y 4 por pool, con 3 gratis por cuenta de
     facturación).
-- **Primer apply:** puntos 70 a 81 (§3.8) y 134 de [`pendientes-apply.md`](../pendientes-apply.md).
+- **Primer apply:** puntos 70 a 81 (§3.8), 134 y 157 de [`pendientes-apply.md`](../pendientes-apply.md).

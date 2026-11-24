@@ -134,16 +134,21 @@ Rutas relativas a `gcp-datacenter/`. Los valores reales van en la llave de cada 
      si no existen. Con `off_hours_shutdown.enabled`, el entorno tiene que estar en
      `off_hours_environments` de `1-base` (cuenta `sched`). El rango del plano de control de GKE
      sale de `reserved_cidrs` del spoke.
-   - **Workload Identity (con GKE).** El namespace es `<app>-<env>` (fijo) y la cuenta de
-     Kubernetes, `gke_workload_ksa_name` de `1-base` (`app` por defecto): el pool de Workload
-     Identity es el mismo para los tres entornos (ADR 0029 §9). El enlace con la cuenta `workload`
-     lo crea `1-base`, en dos pasadas: el pool `<ID>.svc.id.goog` lo crea GKE con el primer
-     clúster, así que primero se aplica esta raíz con `enable_gke` (el plan avisa que falta el
-     enlace) y después `gke_workload_identity_bindings = true` en la llave `stages/1-base` y
-     `apply.yml` otra vez (pendiente 135). Fuera de Terraform, en el clúster:
+   - **Workload Identity (con GKE).** El pool de Workload Identity es el mismo para los tres
+     entornos y el principal de un namespace valdría desde cualquier clúster, así que `1-base`
+     enlaza la cuenta `workload` a todos los pods del clúster `<prefix>-<env>-<app>-gke[-dr]`
+     (`principalSet` `…/kubernetes.cluster/…`, ADR 0029 §9): cualquier pod de ese clúster con
+     una cuenta de Kubernetes anotada obtiene la cuenta `workload`. El namespace `<app>-<env>` y
+     el nombre de la cuenta de Kubernetes son convención, no los fija Terraform. El enlace lo
+     crea `1-base` en dos pasadas: el pool `<ID>.svc.id.goog` lo crea GKE con el primer clúster,
+     así que primero se aplica esta raíz con `enable_gke` (el plan avisa que falta el enlace) y
+     después `gke_workload_identity_bindings = true` en la llave `stages/1-base` y `apply.yml`
+     otra vez (pendientes 135 y 158; el clúster de DR solo tiene enlace si el entorno está en
+     `dr_environments`). Fuera de Terraform, en el clúster (que la anotación baste con el enlace
+     por clúster es `VERIFICAR-EN-APPLY`, pendiente 158):
 
      ```bash
-     # <ksa>: gke_workload_ksa_name de 1-base (app por defecto)
+     # <ksa>: nombre de la cuenta de Kubernetes de la aplicación (convención: app)
      kubectl create namespace <app>-<env>
      kubectl create serviceaccount <ksa> --namespace <app>-<env>
      kubectl annotate serviceaccount <ksa> --namespace <app>-<env> \

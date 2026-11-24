@@ -6,7 +6,10 @@
 > vez, cada fallo es un hallazgo del módulo o de la prueba, no una regresión. Las pruebas sin
 > GCP (las de `config.example.json`, de tipos, de conectividad con respuestas escritas a mano y
 > de `helpers`) sí corren: `go vet ./...` y `go test -count=1 ./...` en el trabajo
-> `go (vet y pruebas sin GCP)` de `pr.yml`, en cada PR.
+> `go (vet y pruebas sin GCP)` de `pr.yml`, en cada PR. Corrido el 24 nov 2026 desde
+> `gcp-datacenter/tests/` (código de la rama `r3/cierre`), sin variables de GCP: `go vet ./...`
+> sale con 0 y `go test -count=1 -json ./...` sale con 0, con 47 eventos `pass`, 26 `skip` y 0
+> `fail`, contando pruebas y subpruebas (campo `"Action"` de cada línea con `"Test"`).
 
 Niveles del contrato (§9.2) que viven aquí:
 

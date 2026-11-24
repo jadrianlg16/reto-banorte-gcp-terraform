@@ -44,8 +44,8 @@ domain_names = ["app.dev.example.com"]
 notification_emails = ["alertas-dev@example.com"]
 
 # Apagado fuera de horario (ADR 0028): Cloud SQL detenida de 20:00 a 07:00 (hora de Monterrey)
-# y todo el fin de semana. Cloud Run ya escala a 0. La cuenta de los trabajos la crea esta raíz
-# con el rol del apagado de 1-base.
+# y todo el fin de semana. Cloud Run ya escala a 0. La cuenta de los trabajos (sched) la crea
+# 1-base con el rol del apagado, si off_hours_environments de 1-base incluye dev.
 off_hours_shutdown = {
   enabled        = true
   time_zone      = "America/Monterrey"

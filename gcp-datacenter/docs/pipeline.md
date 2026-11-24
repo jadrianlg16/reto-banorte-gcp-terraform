@@ -28,7 +28,7 @@ Cuentas del pipeline (las crea `0-bootstrap`, ADR 0029 §3; detalle en el README
 
 | Cuenta | Llave de `GCP_STAGE_SERVICE_ACCOUNTS` | Raíz que aplica | Quién la obtiene (§5) |
 |---|---|---|---|
-| `<prefix>-tf-base` | `1-base` | `stages/1-base` | Un trabajo de `main`, de un flujo de `.github/workflows/` del repositorio, en el entorno `common` |
+| `<prefix>-tf-base` | `1-base` | `stages/1-base` | El trabajo `apply` de `_terraform-root.yml` en `main`, disparado por `push` o `workflow_dispatch`, en el entorno `common` |
 | `<prefix>-tf-net` | `2-networks` | `stages/2-networks` (hub) | Igual, en `common` |
 | `<prefix>-tf-net-<env>` | `2-networks/<env>` | `stages/2-networks/envs/<env>` | Igual, en `<env>` |
 | `<prefix>-tf-wl-<env>` | `3-workloads/<env>` | `stages/3-workloads/envs/<env>` | Igual, en `<env>` |
@@ -163,9 +163,9 @@ cambios):
 2. Huella de las tres variables igual a la del trabajo `plan`; si no, falla antes de `init`
    con un mensaje que nombra el entorno (§2).
 3. Autenticación por WIF con `fromJSON(GCP_STAGE_SERVICE_ACCOUNTS)[<llave>]`: la cuenta de la
-   raíz, que solo acepta tokens de un trabajo de `main`, de un flujo del repositorio y de ese
-   entorno de GitHub (`attribute.deploy`, ADR 0029 §3; HYPOTHESIS hasta la primera ejecución,
-   §5).
+   raíz, que solo acepta tokens de este trabajo (`_terraform-root.yml` en `main`), de un evento
+   `push` o `workflow_dispatch` y de ese entorno de GitHub (`attribute.deploy`, ADR 0029 §3;
+   HYPOTHESIS hasta la primera ejecución, §5).
 4. `scripts/root-tfvars.py` e `init`, como en el plan, sobre el mismo commit. Vuelve a planear
    **con** el candado (`-lock-timeout=5m`) y calcula la huella del plan nuevo. Si el plan ya no
    tiene cambios o su huella no es la revisada (algo cambió entre el plan y la aprobación),
@@ -479,7 +479,12 @@ pedido de destrucción
    **VERIFICAR** en el primer destroy de dev (pendientes 85, 140 y 141): que Cloud Asset
    devuelva `labels` y, para las cuentas de servicio, `additionalAttributes.email`, que liste el
    proyecto mismo, el formato con que nombra los restos de GKE y si el listado trae la red en
-   `additionalAttributes` o en `versionedResources` (el flujo no pasa `--read-mask`).
+   `additionalAttributes` o en `versionedResources`. Sin `--read-mask` el listado trae todos los
+   campos salvo `versionedResources`
+   ([referencia de `gcloud asset search-all-resources`](https://docs.cloud.google.com/sdk/gcloud/reference/asset/search-all-resources)),
+   así que el flujo pide con `--read-mask` los campos que leen `destroy-orphans.py` y
+   `unmanaged-resources.py`, `versionedResources` incluido (pendiente 141, resuelto en el
+   código).
 
 **Contra un destroy de prod.** En el flujo, cuatro barreras independientes: la lista cerrada de
 `entorno` (HYPOTHESIS: que GitHub rechace por API un valor fuera de `options`; la
@@ -805,33 +810,45 @@ repositorio.
    del equipo antes de contar con estos controles (pendiente 12 del primer apply). Sin
    revisores obligatorios, `common` y `prod` se aplicarían sin aprobación.
 
-## 5. WIF de escritura solo desde `main` y desde los flujos del repositorio
+## 5. WIF de escritura solo desde `_terraform-root.yml` en `main`
 
 Documentado en el README de `stages/0-bootstrap` y en el ADR 0029 §3 (antes, ADR
 [0023](adr/0023-endurecimiento-de-la-identidad-del-pipeline.md)). El proveedor de WIF
 (`stages/0-bootstrap/wif.tf`) acepta solo tokens con `assertion.repository_id == <id>` y
 `assertion.repository_owner_id == <id>` (IDs numéricos: un repositorio borrado y vuelto a crear
 con el mismo nombre no hereda la confianza). Las cuentas que escriben se atan al atributo
-`attribute.deploy`, que el proveedor calcula así:
+`attribute.deploy`, que el proveedor calcula así (`local.wif_deploy`):
 
 ```
 ('environment' in assertion
  && assertion.ref == 'refs/heads/main'
  && 'job_workflow_ref' in assertion
- && assertion.job_workflow_ref.startsWith('<github_repository>/.github/workflows/'))
+ && assertion.job_workflow_ref == '<github_repository>/.github/workflows/_terraform-root.yml@refs/heads/main'
+ && 'event_name' in assertion
+ && (assertion.event_name == 'push' || assertion.event_name == 'workflow_dispatch'))
  ? assertion.environment : 'none'
 ```
 
-Es decir: el entorno de GitHub del trabajo, solo si la ejecución es de `main` y el trabajo viene
-de un flujo reutilizable de `.github/workflows/` de este mismo repositorio; en cualquier otro
-caso, `none`, que ninguna cuenta acepta. Las afirmaciones que el token puede no traer se leen
-solo después de comprobar que están: un mapeo que falla dejaría sin token también a `tf-read`.
-Cada cuenta da `roles/iam.workloadIdentityUser` a un `principalSet` distinto
-(`stages/0-bootstrap/service_accounts.tf`):
+Es decir: el entorno de GitHub del trabajo, solo si se cumplen las tres cosas:
+
+- la ejecución es de `main` (`ref`);
+- el trabajo es de `_terraform-root.yml` de este repositorio, leído de `main`
+  (`job_workflow_ref`, "la ruta del flujo reutilizable" según la lista de afirmaciones de
+  [OIDC de GitHub](https://docs.github.com/en/actions/reference/security/oidc), con el formato
+  `ORG/REPO/.github/workflows/<archivo>@<ref>` de
+  [OIDC con flujos reutilizables](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows));
+  el nombre está en `local.wif_deploy_workflow`;
+- el evento que disparó la ejecución es `push` o `workflow_dispatch` (`event_name`;
+  `local.wif_deploy_events`), los únicos de los bloques `on:` de `apply.yml` y `destroy.yml`.
+
+En cualquier otro caso vale `none`, que ninguna cuenta acepta. Las afirmaciones que el token
+puede no traer se leen solo después de comprobar que están: un mapeo que falla dejaría sin token
+también a `tf-read`. Cada cuenta da `roles/iam.workloadIdentityUser` a un `principalSet`
+distinto (`stages/0-bootstrap/service_accounts.tf`):
 
 | Cuenta | `principalSet` | La obtiene |
 |---|---|---|
-| `tf-base`, `tf-net` | `…/attribute.deploy/common` | un trabajo de `main`, de un flujo del repositorio, en el entorno `common` |
+| `tf-base`, `tf-net` | `…/attribute.deploy/common` | el trabajo `apply` de `_terraform-root.yml` en `main`, con `push` o `workflow_dispatch`, en el entorno `common` |
 | `tf-net-<env>`, `tf-wl-<env>` | `…/attribute.deploy/<env>` | igual, en el entorno `<env>` |
 | `tf-read` | `…/attribute.repository_id/<id>` | cualquier trabajo del repositorio, de cualquier rama |
 
@@ -843,27 +860,48 @@ y `destroy.yml` llaman como flujo reutilizable desde `main`. Lo que el diseño r
 - un trabajo de `dev` no obtiene las cuentas de `prod`, ni al revés;
 - una rama que trae su propio flujo con `environment: prod` no obtiene las cuentas de prod,
   aunque cambie la condición `github.ref == refs/heads/main` del YAML: su `ref` no es `main`.
-  "Deployment branches: `main`" queda como segunda barrera (§4; pendiente 121).
+  "Deployment branches: `main`" queda como segunda barrera (§4; pendiente 121);
+- un flujo que no es `_terraform-root.yml` (también uno nuevo en `main`), o el mismo archivo
+  llamado con `uses: …/_terraform-root.yml@<otra rama>`, no obtiene una cuenta que escribe;
+- un flujo disparado por `pull_request_target`, `workflow_run` o `issue_comment` tampoco, aunque
+  para esos eventos `GITHUB_REF` es la rama por defecto
+  ([eventos que disparan flujos](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)):
+  su `event_name` no está en la lista (hallazgo N3 de la re-revisión, pendiente 156).
+
+**Qué significa para un flujo nuevo.** Un flujo nuevo que necesite escribir en GCP no puede
+pedir el token por su cuenta: tiene que llamar a `_terraform-root.yml` (como `apply.yml` y
+`destroy.yml`) y dispararse con `push` o `workflow_dispatch`. Si necesita otro evento, o si
+`apply.yml` o `destroy.yml` cambian sus bloques `on:`, hay que cambiar `local.wif_deploy_events`
+en `stages/0-bootstrap/wif.tf` y volver a aplicar `0-bootstrap` (lo hace una persona, runbook
+01); lo mismo si `_terraform-root.yml` se renombra (`local.wif_deploy_workflow`). Hasta entonces
+el trabajo obtiene `attribute.deploy = none` y falla en la autenticación (falla cerrado). Un
+flujo nuevo de solo lectura no necesita nada: obtiene `tf-read` desde cualquier rama.
 
 **HYPOTHESIS** hasta la primera ejecución (`VERIFICAR-EN-APPLY` en `stages/0-bootstrap/wif.tf`):
-que el trabajo `apply` de `_terraform-root.yml` llamado desde `main` traiga `job_workflow_ref`
-con el valor esperado (`<dueño>/<repo>/.github/workflows/_terraform-root.yml@refs/heads/main`)
-y obtenga `attribute.deploy` igual a su entorno (pendiente 123); y que un trabajo sin entorno o
-fuera de `main` obtenga `tf-read` con `attribute.deploy = none` sin que falle el mapeo
-(pendiente 124). El nombre del repositorio se compara tal cual: si se renombra, todas las
-cuentas que escriben quedan en `none` hasta volver a aplicar `0-bootstrap` con el nombre nuevo.
+que el trabajo `apply` de `_terraform-root.yml` llamado desde `main` con
+`uses: ./.github/workflows/_terraform-root.yml` traiga `job_workflow_ref` con el valor esperado
+(`<dueño>/<repo>/.github/workflows/_terraform-root.yml@refs/heads/main`; GitHub no documenta el
+`ref` de una llamada con ruta local, y si fuera el SHA el apply falla en la autenticación) y
+`event_name` `push` o `workflow_dispatch`, y obtenga `attribute.deploy` igual a su entorno
+(pendientes 123 y 156); y que un trabajo sin entorno o fuera de `main` obtenga `tf-read` con
+`attribute.deploy = none` sin que falle el mapeo (pendiente 124). El nombre del repositorio se
+compara tal cual: si se renombra, todas las cuentas que escriben quedan en `none` hasta volver a
+aplicar `0-bootstrap` con el nombre nuevo.
 
 Lo que sigue abierto:
 
-- **Quien fusiona a `main` decide el flujo.** Un flujo nuevo o cambiado en `main` que declare un
-  entorno obtiene las cuentas de ese entorno. Entrar a `main` exige el PR revisado (§4):
-  `CODEOWNERS` pone `.github/`, `stages/0-bootstrap/`, `stages/1-base/`, `scripts/`,
-  `policies/`, `.checkov.yaml`, `.tflint.hcl` y `tests/e2e/` a cargo de seguridad. Conviene
-  limitar quién tiene permiso de escritura en el repositorio.
-- **Lo que alcanza una cuenta de entorno.** `tf-wl-<env>` tiene los roles de Compute, GKE, Cloud
-  Run, Cloud SQL, Memorystore y Filestore sin condición, y `tf-net-<env>` los de red: la cuenta
-  de dev puede, técnicamente, cambiar recursos de prod de esos servicios (riesgo aceptado,
-  ADR 0029 §3 y §9).
+- **Quien fusiona a `main` decide lo que hace `_terraform-root.yml`.** Un cambio a ese archivo,
+  a `apply.yml` o a `destroy.yml` en `main` cambia lo que corre con las cuentas que escriben.
+  Entrar a `main` exige el PR revisado (§4): `CODEOWNERS` pone `.github/`,
+  `stages/0-bootstrap/`, `stages/1-base/`, `scripts/`, `policies/`, `.checkov.yaml`,
+  `.tflint.hcl` y `tests/e2e/` a cargo de seguridad. Conviene limitar quién tiene permiso de
+  escritura en el repositorio.
+- **Lo que alcanza una cuenta de entorno.** `tf-wl-<env>` tiene Cloud SQL, GKE
+  (`container.clusterAdmin`, sin permisos sobre los objetos de Kubernetes) y Backup and DR
+  condicionados a los recursos de su entorno, pero Compute, Cloud Run, Memorystore, Filestore,
+  Backup for GKE, Certificate Manager y Monitoring sin condición, y `tf-net-<env>` los de red:
+  la cuenta de dev puede, técnicamente, cambiar recursos de prod de esos servicios (riesgos
+  residuales 1 a 4 del ADR 0029 §9).
 - **`tf-read` la obtiene cualquier rama.** Es de solo lectura, pero lee todo el bucket de
   estado, y los estados llevan valores sensibles (por ejemplo, el secreto compartido de la VPN
   simulada solo existe en el estado del hub, README de `stages/2-networks`; pendiente 122).
