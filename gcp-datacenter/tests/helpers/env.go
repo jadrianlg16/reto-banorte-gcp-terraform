@@ -24,6 +24,10 @@ const (
 	// prueba como no administrados.
 	EnvProjectID    = "TERRATEST_PROJECT_ID"
 	EnvQuotaProject = "GOOGLE_CLOUD_PROJECT" // proyecto por defecto de gcloud y del proveedor
+	// EnvLandingZoneProjectID es el proyecto de la landing zone (GCP_TFVARS_JSON.common.project_id;
+	// terratest.yml lo exporta con scripts/terratest-project-check.py). Si está definido y es
+	// igual a TERRATEST_PROJECT_ID, RequireProjectEnv detiene la prueba con un error.
+	EnvLandingZoneProjectID = "TERRATEST_LANDING_ZONE_PROJECT_ID"
 	// EnvEphemeralProjects = "true" vuelve al modo de un proyecto efímero por prueba (contrato
 	// §9.2): necesita TERRATEST_BILLING_ACCOUNT y una carpeta u organización donde crearlo.
 	EnvEphemeralProjects = "TEST_EPHEMERAL_PROJECTS"
@@ -114,6 +118,24 @@ func RequireExpensive(t testing.TB, what string) {
 func RequireOrgScope(t testing.TB, what string) {
 	t.Helper()
 	RequireGate(t, EnvAllowOrg, what+" crea recursos con alcance de organización")
+}
+
+// OrgSkipMarker va en el mensaje de t.Skip de las pruebas que solo valen con organización
+// (RequireOrganization). Con TERRATEST_ORG_ID vacío, scripts/go-test-report.sh no cuenta esas
+// omisiones contra TERRATEST_MAX_SKIPS: sin organización no hay cómo correrlas (ADR 0029: el
+// proyecto puede no estar en una), así que no son una omisión inesperada. Sin < > ni &, que
+// go test -json escaparía.
+const OrgSkipMarker = "[sin-organizacion]"
+
+// RequireOrganization omite la prueba, con OrgSkipMarker en el motivo, si TERRATEST_ORG_ID está
+// vacío. Va antes de las demás compuertas: con organización, la prueba sigue sujeta a
+// TEST_ALLOW_ORG y sus omisiones cuentan como cualquier otra.
+func RequireOrganization(t testing.TB, what string) {
+	t.Helper()
+	if Getenv(EnvOrgID, "") == "" {
+		t.Skipf("se omite %s: %s solo vale con organización y %s está vacío (ver tests/README.md)",
+			OrgSkipMarker, what, EnvOrgID)
+	}
 }
 
 // Region devuelve la región primaria de las pruebas.

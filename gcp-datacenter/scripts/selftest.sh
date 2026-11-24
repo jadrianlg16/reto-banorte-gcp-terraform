@@ -3,6 +3,8 @@
 #   unmanaged-resources.py  recursos de Cloud Asset del proyecto que no están en los estados
 #   affected-roots.sh       raíces que planea pr.yml (y drift.yml con --all)
 #   root-tfvars.py          variables de cada raíz desde GCP_TFVARS_JSON
+#   disabled-envs.py        entornos apagados con GCP_DISABLED_ENVS (apply.yml y drift.yml)
+#   terratest-project-check.py   proyecto de Terratest distinto del de la landing zone
 #   go-test-report.sh       conteo de pruebas omitidas de go test -json
 #   module-tests.sh         pruebas de integración de cada módulo
 #   plan-fingerprint.py     huella del plan revisado (apply.yml)
@@ -105,6 +107,21 @@ check "unmanaged-resources: una API habilitada a mano sale con 1" 1 $?
 [ "$(grep '^NO ADMINISTRADO ' "$tmp/out3.txt")" = \
   "NO ADMINISTRADO serviceusage.googleapis.com/Service projects/111111111111/services/aiplatform.googleapis.com" ]
 check "unmanaged-resources: solo la API manual sale; storage-api y containerfilesystem se permiten" 0 $?
+# Imágenes de contenedor (DockerImage, HIPÓTESIS de formato): las del repositorio de 1-base son
+# hijas del repositorio; la de un repositorio creado a mano (cloud-run-source-deploy) la permite
+# la regla de imágenes, pero el repositorio sí sale como no administrado.
+um --assets "$u/assets-imagenes.json" --state "$u/1-base.state.json" >"$tmp/out-img.txt" 2>&1
+rc=$?
+[ "$rc" = 1 ] && [ "$(grep '^NO ADMINISTRADO ' "$tmp/out-img.txt")" = \
+  "NO ADMINISTRADO artifactregistry.googleapis.com/Repository projects/111111111111/locations/us-central1/repositories/cloud-run-source-deploy" ] &&
+  grep -q '^  hijos de un recurso administrado: 2$' "$tmp/out-img.txt" &&
+  grep -q '^  permitidos por regla: 1$' "$tmp/out-img.txt"
+check "unmanaged-resources: imágenes permitidas (2 hijas del repositorio de 1-base, 1 por regla) y el repositorio manual sí sale" 0 $?
+grep -v 'DockerImage' scripts/unmanaged-allowlist.txt >"$tmp/allow-sin-imagenes.txt"
+um --assets "$u/assets-imagenes.json" --state "$u/1-base.state.json" --allowlist "$tmp/allow-sin-imagenes.txt" \
+  >"$tmp/out-img2.txt" 2>&1
+grep -c '^NO ADMINISTRADO artifactregistry.googleapis.com/DockerImage ' "$tmp/out-img2.txt" >"$tmp/n-img.txt"
+check "unmanaged-resources: sin la regla de imágenes, la imagen del repositorio manual sale como no administrada" 1 "$(cat "$tmp/n-img.txt")"
 # drift.yml lista el proyecto (no una carpeta) y pasa su ID y su número al script.
 grep -qF -- '--scope="projects/${PROJECT_ID}"' "$WF/drift.yml" &&
   grep -qF -- '--project "${PROJECT_ID}" --project-number "${PROJECT_NUMBER}"' "$WF/drift.yml" &&
@@ -172,8 +189,11 @@ ar_case "un cambio en 3-workloads de qa planea solo esa raíz" gcp-datacenter/st
 ar_case "un cambio en 0-bootstrap no planea nada (la aplica una persona)" gcp-datacenter/stages/0-bootstrap/main.tf ""
 ar_case "un cambio en modules/ planea todas las raíces" gcp-datacenter/modules/storage/main.tf "$all_roots"
 ar_case "un cambio en policies/ planea todas las raíces" gcp-datacenter/policies/p.rego "$all_roots"
-ar_case "stages/3-workloads/README.md planea las tres raíces de 3-workloads" \
-  gcp-datacenter/stages/3-workloads/README.md "$workload_roots"
+ar_case "stages/3-workloads/README.md no planea nada (los .md no cambian un plan)" \
+  gcp-datacenter/stages/3-workloads/README.md ""
+ar_case "el README de un módulo no planea nada (terraform-docs)" gcp-datacenter/modules/storage/README.md ""
+ar_case "el README de una raíz no planea nada" gcp-datacenter/stages/1-base/README.md ""
+ar_case "un .md en policies/ no planea nada" gcp-datacenter/policies/README.md ""
 ar_case "código común en stages/3-workloads/comun planea las tres raíces de 3-workloads" \
   gcp-datacenter/stages/3-workloads/comun/main.tf "$workload_roots"
 ar_case "un módulo local dentro del hub planea el hub y el spoke que lo usa" \
@@ -192,48 +212,236 @@ grep -qF 'bash scripts/affected-roots.sh "${BASE_SHA}" "${HEAD_SHA}"' "$WF/pr.ym
   grep -qF 'bash scripts/affected-roots.sh --all' "$WF/drift.yml"
 check "affected-roots: pr.yml lo llama con base y cabeza del PR y drift.yml con --all" 0 $?
 
-# apply.yml: las raíces, llaves y entornos de GitHub son los de affected-roots.sh y el orden es
-# el del ADR 0029 §2 (cada trabajo espera al anterior; qa después de la prueba de humo de dev).
+# --- disabled-envs.py (GCP_DISABLED_ENVS) ---------------------------------------------------
+de() { GCP_DISABLED_ENVS="$1" "$PY" scripts/disabled-envs.py "${@:2}"; }
+[ "$(de "" outputs | tr '\n' ' ')" = "dev=true qa=true " ]
+check "disabled-envs: vacía, ningún entorno apagado" 0 $?
+[ "$(de "dev" outputs | tr '\n' ' ')" = "dev=false qa=true " ] &&
+  [ "$(de " QA , dev " outputs | tr '\n' ' ')" = "dev=false qa=false " ] &&
+  [ "$(de "qa qa" outputs | tr '\n' ' ')" = "dev=true qa=false " ]
+check "disabled-envs: dev, qa y los dos (comas o espacios, sin importar mayúsculas)" 0 $?
+de "dev,prod" outputs >/dev/null 2>"$tmp/de-err.txt"
+[ $? = 2 ] && grep -q 'prod no se puede apagar' "$tmp/de-err.txt"
+check "disabled-envs: prod en la variable es error (2) con mensaje" 0 $?
+de "prod" filter </dev/null >/dev/null 2>&1
+check "disabled-envs: prod también es error al filtrar (drift.yml)" 2 $?
+de "common" outputs >/dev/null 2>&1
+rc_common=$?
+de "dev,test" outputs >/dev/null 2>&1
+check "disabled-envs: common y nombres desconocidos son error" "2 2" "$rc_common $?"
+: >"$tmp/de-out.txt"
+de "dev,prod" outputs "$tmp/de-out.txt" >"$tmp/de-stdout.txt" 2>/dev/null
+[ $? = 2 ] && [ ! -s "$tmp/de-out.txt" ] && grep -q '^::error::' "$tmp/de-stdout.txt"
+check "disabled-envs: con archivo, el error va como ::error:: y no escribe salidas" 0 $?
+printf 'otra=1\n' >"$tmp/de-out.txt"
+de "qa" outputs "$tmp/de-out.txt" >"$tmp/de-stdout.txt" 2>&1
+[ $? = 0 ] && [ "$(tr '\n' ' ' <"$tmp/de-out.txt")" = "otra=1 dev=true qa=false " ] &&
+  grep -q '^::notice::.*qa' "$tmp/de-stdout.txt"
+check "disabled-envs: con archivo agrega las salidas al final (GITHUB_OUTPUT) y avisa con ::notice::" 0 $?
+bash scripts/affected-roots.sh --all >"$tmp/de-roots.txt"
+de "dev" filter <"$tmp/de-roots.txt" >"$tmp/de-filtered.txt" 2>/dev/null
 "$PY" -c '
-import json, re, sys
+import json, sys
+got = json.loads(open(sys.argv[1], encoding="utf-8").read().strip()[len("roots="):])
+want = [r for r in json.loads(open(sys.argv[2], encoding="utf-8").read().strip()[len("roots="):])
+        if r["environment"] != "dev"]
+sys.exit(0 if got == want and len(got) == 6 and all(r["environment"] != "dev" for r in got) else 1)
+' "$tmp/de-filtered.txt" "$tmp/de-roots.txt" 2>/dev/null
+check "disabled-envs: filter quita las 2 raíces de dev y deja las otras 6 en el mismo formato" 0 $?
+[ "$(de "" filter <"$tmp/de-roots.txt")" = "$(cat "$tmp/de-roots.txt")" ]
+check "disabled-envs: filter sin entornos apagados deja la lista igual" 0 $?
+printf 'nada\n' | de "" filter >/dev/null 2>&1
+check "disabled-envs: filter sin línea roots= es error" 2 $?
+grep -qF 'python3 scripts/disabled-envs.py outputs "${GITHUB_OUTPUT}"' "$WF/apply.yml" &&
+  grep -qF 'GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}' "$WF/apply.yml" &&
+  grep -qF 'python3 scripts/disabled-envs.py filter "${GITHUB_OUTPUT}" < "${RUNNER_TEMP}/roots.txt"' "$WF/drift.yml" &&
+  grep -qF 'GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}' "$WF/drift.yml"
+check "disabled-envs: apply.yml (gate) y drift.yml (raíces) lo usan con la variable de repositorio" 0 $?
+
+# apply.yml: las raíces, llaves y entornos de GitHub son los de affected-roots.sh y el orden es
+# el del ADR 0029 §2 (cada trabajo depende, directa o indirectamente, del anterior; qa después
+# de la prueba de humo de dev; los spokes en serie). Después simula el flujo: evalúa las
+# condiciones if de cada trabajo (subconjunto de expresiones de GitHub Actions que usa el flujo,
+# con el success() implícito cuando la condición no trae una función de estado; un trabajo
+# omitido o fallido omite a los que lo necesitan, docs.github.com "jobs.<job_id>.needs") con
+# las salidas reales de disabled-envs.py, y compara qué trabajos corren en cada escenario.
+"$PY" - "$WF/apply.yml" "$tmp/all.json" "$PROJECT_DIR/scripts/disabled-envs.py" >"$tmp/apply-order.txt" 2>&1 <<'PYEOF'
+import json, os, re, subprocess, sys
 wf = open(sys.argv[1], encoding="utf-8").read()
 roots = json.load(open(sys.argv[2], encoding="utf-8"))
+script = sys.argv[3]
 jobs = dict(re.findall(r"\n  ([a-z][a-z0-9-]*):\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n|\Z)", wf[wf.index("\njobs:"):], re.S))
 def field(body, key):
     m = re.search(r"^      %s: (.+)$" % key, body, re.M)
     return m.group(1).strip() if m else None
 def needs(body):
     m = re.search(r"^    needs: (.+)$", body, re.M)
-    return m.group(1).strip() if m else None
+    if not m:
+        return []
+    v = m.group(1).strip()
+    return [n.strip() for n in v.strip("[]").split(",")] if v.startswith("[") else [v]
+def condition(body):
+    m = re.search(r"^    if: (.*)$", body, re.M)
+    if not m:
+        return None
+    v = m.group(1).strip()
+    if v in (">-", ">"):
+        rest = []
+        for line in body[m.end() + 1:].splitlines():
+            if not line.startswith("      "):
+                break
+            rest.append(line.strip())
+        v = " ".join(rest)
+    if v.startswith("${{") and v.endswith("}}"):
+        v = v[3:-2].strip()
+    return v
+TOKEN = re.compile(r"\s*(?:(&&|\|\||==|!=|!|\(|\))|('[^']*')|([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*)(\(\))?)")
+STATUS = ("success", "failure", "always", "cancelled")
+def compile_expr(expr):
+    out, pos, status = [], 0, False
+    while pos < len(expr):
+        m = TOKEN.match(expr, pos)
+        if not m or m.end() == pos:
+            raise ValueError("expresión no reconocida: %r" % expr[pos:])
+        pos = m.end()
+        op, lit, path, call = m.groups()
+        if op:
+            out.append({"&&": " and ", "||": " or ", "!": " not "}.get(op, op))
+        elif lit:
+            out.append(repr(lit[1:-1]))
+        elif call:
+            if path not in STATUS:
+                raise ValueError("función no soportada: %s" % path)
+            status = True
+            out.append("F(%r)" % path)
+        else:
+            out.append("C(%r)" % path)
+    code = "".join(out)
+    return code if status else "F('success') and (%s)" % code
 bad = []
-cond = "    if: vars.GCP_ENABLED == \x27true\x27 && github.ref == \x27refs/heads/main\x27\n"
 deployed = []
 for name, body in jobs.items():
-    if name != "gate" and cond not in body + "\n":
-        bad.append("%s sin la condición de GCP_ENABLED y main" % name)
     if "uses: ./.github/workflows/_terraform-root.yml" in body:
         deployed.append({"root": field(body, "root"), "stage": field(body, "stage"),
                          "environment": field(body, "environment")})
 if sorted(deployed, key=lambda r: str(r["root"])) != sorted(roots, key=lambda r: r["root"]):
     bad.append("raíces de apply.yml distintas de affected-roots.sh --all: %s" % deployed)
+need = {n: needs(b) for n, b in jobs.items()}
+def ancestors(n, seen=None):
+    seen = set() if seen is None else seen
+    for p in need.get(n, []):
+        if p not in seen:
+            seen.add(p)
+            ancestors(p, seen)
+    return seen
 label = {n: field(b, "root") or ("humo" if "TestDevSmoke" in b else n) for n, b in jobs.items()}
-order, cur = [], "gate"
-while True:
-    nxt = [n for n, b in jobs.items() if needs(b) == cur]
-    if len(nxt) != 1:
-        break
-    cur = nxt[0]
-    order.append(label[cur])
-want = ["stages/1-base", "stages/2-networks", "stages/2-networks/envs/dev", "stages/3-workloads/envs/dev", "humo",
-        "stages/2-networks/envs/qa", "stages/3-workloads/envs/qa", "stages/2-networks/envs/prod",
+by_label = {v: k for k, v in label.items()}
+want = ["gate", "stages/1-base", "stages/2-networks", "stages/2-networks/envs/dev", "stages/3-workloads/envs/dev",
+        "humo", "stages/2-networks/envs/qa", "stages/3-workloads/envs/qa", "stages/2-networks/envs/prod",
         "stages/3-workloads/envs/prod"]
-if order != want:
-    bad.append("orden %s" % order)
+if sorted(label.values()) != sorted(want):
+    bad.append("trabajos %s" % sorted(label.values()))
+else:
+    for a, b in zip(want, want[1:]):
+        if by_label[a] not in ancestors(by_label[b]):
+            bad.append("%s no espera a %s" % (b, a))
+    for j in jobs:
+        if j != "gate" and "gate" not in ancestors(j):
+            bad.append("%s no espera a gate" % j)
+try:
+    conds = {n: compile_expr(condition(b)) for n, b in jobs.items() if n != "gate"}
+except ValueError as e:
+    conds = {}
+    bad.append(str(e))
+for n, b in jobs.items():
+    if n != "gate" and condition(b) is None:
+        bad.append("%s sin condición" % n)
+for n, ps in need.items():
+    for p in ps:
+        if p not in jobs:
+            bad.append("%s necesita %s, que no existe" % (n, p))
+def gate_outputs(value):
+    env = dict(os.environ, GCP_DISABLED_ENVS=value)
+    r = subprocess.run([sys.executable, script, "outputs"], env=env, stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL, universal_newlines=True)
+    if r.returncode != 0:
+        return "failure", {}
+    return "success", dict(l.split("=", 1) for l in r.stdout.split())
+def simulate(enabled, ref, disabled, fails):
+    results, outputs = {}, {}
+    pending = list(jobs)
+    while pending:
+        ready = [n for n in pending if all(p in results for p in need[n])]
+        if not ready:
+            raise ValueError("ciclo en needs")
+        for n in ready:
+            pending.remove(n)
+            if n == "gate":
+                results[n], outputs[n] = gate_outputs(disabled)
+                continue
+            def C(path, n=n):
+                parts = path.split(".")
+                if path == "vars.GCP_ENABLED":
+                    return enabled
+                if path == "github.ref":
+                    return ref
+                if parts[0] == "needs" and len(parts) >= 3:
+                    if parts[1] not in need[n]:
+                        raise ValueError("%s usa needs.%s sin necesitarlo" % (n, parts[1]))
+                    if parts[2] == "result":
+                        return results[parts[1]]
+                    if parts[2] == "outputs" and len(parts) == 4:
+                        return outputs.get(parts[1], {}).get(parts[3], "")
+                raise ValueError("%s: contexto no soportado %s" % (n, path))
+            def F(name, n=n):
+                rs = [results[p] for p in need[n]]
+                return {"success": all(r == "success" for r in rs), "failure": any(r == "failure" for r in rs),
+                        "always": True, "cancelled": False}[name]
+            if eval(conds[n], {"C": C, "F": F}):
+                results[n] = fails.get(n, "success")
+            else:
+                results[n] = "skipped"
+    return results
+COMMON = {"base", "networks-hub"}
+DEV = {"dev-networks", "dev-workloads", "dev-smoke"}
+QA = {"qa-networks", "qa-workloads"}
+PROD = {"prod-networks", "prod-workloads"}
+F_ = "failure"
+scenarios = [
+    ("todo encendido", "true", "refs/heads/main", "", {}, COMMON | DEV | QA | PROD),
+    ("dev apagado: qa sigue después del hub", "true", "refs/heads/main", "dev", {}, COMMON | QA | PROD),
+    ("qa apagado: prod después de la prueba de humo de dev", "true", "refs/heads/main", "qa", {}, COMMON | DEV | PROD),
+    ("dev y qa apagados: prod después del hub", "true", "refs/heads/main", "dev,qa", {}, COMMON | PROD),
+    ("con espacios y mayúsculas", "true", "refs/heads/main", " QA ", {}, COMMON | DEV | PROD),
+    ("falla la prueba de humo de dev", "true", "refs/heads/main", "", {"dev-smoke": F_}, COMMON | DEV),
+    ("falla dev / 3-workloads (humo omitido)", "true", "refs/heads/main", "", {"dev-workloads": F_},
+     COMMON | {"dev-networks", "dev-workloads"}),
+    ("qa apagado y falla la prueba de humo", "true", "refs/heads/main", "qa", {"dev-smoke": F_}, COMMON | DEV),
+    ("dev apagado y falla qa / 3-workloads", "true", "refs/heads/main", "dev", {"qa-workloads": F_}, COMMON | QA),
+    ("falla qa / 2-networks", "true", "refs/heads/main", "", {"qa-networks": F_}, COMMON | DEV | {"qa-networks"}),
+    ("dev apagado y falla el hub", "true", "refs/heads/main", "dev", {"networks-hub": F_}, COMMON),
+    ("dev y qa apagados y falla el hub", "true", "refs/heads/main", "dev,qa", {"networks-hub": F_}, COMMON),
+    ("falla 1-base", "true", "refs/heads/main", "", {"base": F_}, {"base"}),
+    ("prod en GCP_DISABLED_ENVS: gate falla y nada corre", "true", "refs/heads/main", "dev,prod", {}, set()),
+    ("nombre desconocido en GCP_DISABLED_ENVS", "true", "refs/heads/main", "test", {}, set()),
+    ("GCP_ENABLED distinto de true", "false", "refs/heads/main", "", {}, set()),
+    ("ejecución desde otra rama", "true", "refs/heads/otra", "dev", {}, set()),
+]
+if conds:
+    for name, enabled, ref, disabled, fails, expected in scenarios:
+        try:
+            r = simulate(enabled, ref, disabled, fails)
+        except ValueError as e:
+            bad.append("%s: %s" % (name, e))
+            continue
+        ran = {n for n, v in r.items() if n != "gate" and v != "skipped"}
+        if ran != expected:
+            bad.append("%s: corren %s, se esperaba %s" % (name, sorted(ran), sorted(expected)))
 print("; ".join(bad))
 sys.exit(1 if bad else 0)
-' "$WF/apply.yml" "$tmp/all.json" >"$tmp/apply-order.txt" 2>&1
+PYEOF
 rc=$?
-check "apply.yml: 1-base → hub → dev (red, cargas, humo) → qa → prod, con las llaves y entornos de affected-roots $(cat "$tmp/apply-order.txt")" 0 "$rc"
+check "apply.yml: 1-base → hub → dev (red, cargas, humo) → qa → prod, spokes en serie, llaves y entornos de affected-roots y 17 escenarios de GCP_DISABLED_ENVS y fallas $(cat "$tmp/apply-order.txt")" 0 "$rc"
 
 # Cuentas (ADR 0029 §3 y ADR 0025): todo plan corre con la cuenta de lectura y -lock=false; el
 # apply, con la cuenta de la raíz y el candado.
@@ -279,13 +487,13 @@ printf 'variable "otra" {\n  type = string\n}\n' >"$rt/stages/sin-proyecto/varia
 tfv() { # tfv <TFVARS_JSON> <raíz>: corre root-tfvars.py desde $rt; devuelve su código
   (cd "$rt" && TFVARS_JSON="$1" "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "$2" >/dev/null 2>&1)
 }
-tfv '{"common": {"project_id": "example-landing-zone", "prefix": "bnt"}, "stages/1-base": {"prefix": "otro"}}' stages/1-base
+tfv '{"common": {"project_id": "bnt-lz-pruebas", "prefix": "bnt"}, "stages/1-base": {"prefix": "otro"}}' stages/1-base
 check "root-tfvars: con common.project_id escribe las variables" 0 $?
 "$PY" -c '
 import json, sys
 v = json.load(open(sys.argv[1], encoding="utf-8"))
 same = open(sys.argv[2], encoding="utf-8").read() == open(sys.argv[3], encoding="utf-8").read()
-sys.exit(0 if v == {"project_id": "example-landing-zone", "prefix": "otro"} and same else 1)
+sys.exit(0 if v == {"project_id": "bnt-lz-pruebas", "prefix": "otro"} and same else 1)
 ' "$rt/stages/1-base/zz-ci.auto.tfvars.json" "$rt/stages/1-base/terraform.tfvars" \
   "$rt/stages/1-base/terraform.tfvars.example" 2>/dev/null
 check "root-tfvars: common + la llave de la raíz (gana la raíz) y terraform.tfvars copiado del ejemplo" 0 $?
@@ -306,13 +514,154 @@ tfv '{"common": "x"}' stages/1-base
 check "root-tfvars: una llave que no es un objeto es error" 2 $?
 tfv '{}' stages/sin-proyecto
 check "root-tfvars: una raíz sin la variable project_id no lo exige" 0 $?
-tfv '{"common": {"project_id": "example-landing-zone"}}' stages/no-existe
+tfv '{"common": {"project_id": "bnt-lz-pruebas"}}' stages/no-existe
 check "root-tfvars: una raíz que no existe es error" 2 $?
+# Marcadores de los ejemplos (H6): un valor resuelto de una variable declarada con example.com,
+# example-..., REEMPLAZAR, <...> o un ID de solo ceros es error (2) y no escribe nada. Resuelto:
+# el del JSON si la variable está en common o en la llave de la raíz; si no, el del ejemplo sin
+# comentarios. Las variables que la raíz no declara no se revisan.
+mkdir -p "$rt/stages/marcas"
+for v in project_id security_alert_email essential_contacts labels cloud_run_image github_id secret_id; do
+  printf 'variable "%s" {}\n' "$v"
+done >"$rt/stages/marcas/variables.tf"
+printf '%s\n' '# Ejemplo con marcadores; los comentarios no cuentan: x@example.com' \
+  'project_id           = "REEMPLAZAR"' \
+  'security_alert_email = "seguridad@example.com"' \
+  'essential_contacts = {' \
+  '  "admin@example.com" = ["LEGAL", "SECURITY"]' \
+  '}' \
+  'labels = {' \
+  '  app   = "red"' \
+  '  owner = "example-team"' \
+  '}' \
+  '# cloud_run_image = "us-docker.pkg.dev/example-lz-000000/bnt-dev-app/api:1.0.0"' \
+  'cloud_run_image = "us-docker.pkg.dev/bnt-lz-pruebas/bnt-dev-app/api:1.0.0" # no example.com' \
+  'github_id = "000000000"' \
+  'secret_id = "projects/<proyecto>/secrets/<nombre>"' \
+  'no_declarada = "otro@example.com"' >"$rt/stages/marcas/terraform.tfvars.example"
+tfv_err() { # tfv_err <TFVARS_JSON> <raíz>: como tfv, pero guarda stderr en $tmp/rt-err.txt
+  (cd "$rt" && TFVARS_JSON="$1" "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "$2" >/dev/null 2>"$tmp/rt-err.txt")
+}
+tfv_err '{"common": {"project_id": "bnt-lz-pruebas"}}' stages/marcas
+rc=$?
+[ "$rc" = 2 ] && [ ! -e "$rt/stages/marcas/zz-ci.auto.tfvars.json" ] && [ ! -e "$rt/stages/marcas/terraform.tfvars" ]
+check "root-tfvars: marcadores que llegan del ejemplo son error (2) y no escriben nada" 0 $?
+[ "$(grep -oE '^  [a-z_]+ \(de terraform\.tfvars\.example\)' "$tmp/rt-err.txt" | awk '{print $1}' | tr '\n' ' ')" = \
+  "essential_contacts github_id labels secret_id security_alert_email " ]
+check "root-tfvars: nombra las 5 variables con marcador (ni comentarios, ni project_id del JSON, ni no declaradas)" 0 $?
+! grep -qE 'seguridad@|admin@|example-team|000000000|<proyecto>' "$tmp/rt-err.txt"
+check "root-tfvars: el mensaje no muestra los valores" 0 $?
+real='"security_alert_email": "seguridad@banorte-lz.test", "essential_contacts": {"admin@banorte-lz.test": ["LEGAL"]}, "labels": {"app": "red", "owner": "redes"}, "github_id": "123456789", "secret_id": "projects/bnt-lz-pruebas/secrets/vpn"'
+tfv "{\"common\": {\"project_id\": \"bnt-lz-pruebas\", \"labels\": {\"owner\": \"example-team\"}}, \"stages/marcas\": {${real}}}" stages/marcas
+check "root-tfvars: con los valores reales en el JSON pasa (la llave de la raíz pisa labels de common)" 0 $?
+rm -f "$rt/stages/marcas/zz-ci.auto.tfvars.json" "$rt/stages/marcas/terraform.tfvars"
+tfv_err "{\"common\": {\"project_id\": \"bnt-lz-pruebas\"}, \"stages/marcas\": {${real}, \"cloud_run_image\": \"us-docker.pkg.dev/example-lz-000000/bnt-dev-app/api:1.0.0\"}}" stages/marcas
+[ $? = 2 ] && grep -q "cloud_run_image (de GCP_TFVARS_JSON\['stages/marcas'\]): nombre de ejemplo" "$tmp/rt-err.txt"
+check "root-tfvars: un marcador en el JSON también es error y dice de qué llave viene" 0 $?
+tfv_err "{\"common\": {\"project_id\": \"example-landing-zone\"}, \"stages/marcas\": {${real}}}" stages/marcas
+[ $? = 2 ] && grep -q "project_id (de GCP_TFVARS_JSON\['common'\])" "$tmp/rt-err.txt"
+check "root-tfvars: el proyecto de los ejemplos (example-landing-zone) es error" 0 $?
+tfv_err "{\"common\": {\"project_id\": \"bnt-lz-pruebas\"}, \"stages/marcas\": {${real}, \"essential_contacts\": {\"x@example.com\": [\"LEGAL\"]}}}" stages/marcas
+[ $? = 2 ] && grep -q '^  essential_contacts (de GCP_TFVARS_JSON' "$tmp/rt-err.txt"
+check "root-tfvars: un marcador en una llave de un mapa del JSON (correo de essential_contacts) es error" 0 $?
+# Los terraform.tfvars.example reales (copiados a la carpeta temporal: root-tfvars.py escribe en
+# la raíz si pasa): con solo project_id, cada raíz del pipeline falla y nombra lo que hay que
+# poner en GCP_TFVARS_JSON; el hub con esos valores pasa.
+for r in 1-base 2-networks 2-networks/envs/dev 2-networks/envs/qa 2-networks/envs/prod \
+  3-workloads/envs/dev 3-workloads/envs/qa 3-workloads/envs/prod; do
+  mkdir -p "$rt/real/stages/$r"
+  cp stages/"$r"/*.tf stages/"$r"/terraform.tfvars.example "$rt/real/stages/$r/"
+done
+missing_marks=""
+while read -r r want; do
+  (cd "$rt/real" && TFVARS_JSON='{"common": {"project_id": "bnt-lz-pruebas"}}' \
+    "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" "stages/$r" >/dev/null 2>"$tmp/rt-real.txt")
+  [ $? = 2 ] || missing_marks="$missing_marks [$r no falla]"
+  for v in $want; do
+    grep -q "^  $v (de terraform.tfvars.example)" "$tmp/rt-real.txt" || missing_marks="$missing_marks [$r $v]"
+  done
+done <<'EOF'
+1-base security_alert_email essential_contacts groups
+2-networks onprem_dns_domain labels
+2-networks/envs/dev onprem_dns_domain labels
+2-networks/envs/qa onprem_dns_domain labels
+2-networks/envs/prod onprem_dns_domain labels
+3-workloads/envs/dev cloud_run_image domain_names notification_emails
+3-workloads/envs/qa cloud_run_image domain_names notification_emails mig_image
+3-workloads/envs/prod cloud_run_image domain_names notification_emails mig_image gke_authenticator_security_group internal_domain_names
+EOF
+[ -z "$missing_marks" ]
+check "root-tfvars: los marcadores de los terraform.tfvars.example reales se detectan${missing_marks:+ (faltan:$missing_marks)}" 0 $?
+(cd "$rt/real" && TFVARS_JSON='{"common": {"project_id": "bnt-lz-pruebas", "labels": {"app": "network", "owner": "redes", "cost_center": "ti-001"}}, "stages/2-networks": {"onprem_dns_domain": "corp.banorte-lz.internal."}}' \
+  "$PY" "$PROJECT_DIR/scripts/root-tfvars.py" stages/2-networks >/dev/null 2>&1)
+check "root-tfvars: el hub real con onprem_dns_domain y labels reales pasa (sin falsos positivos en su ejemplo)" 0 $?
 n=0
 for f in pr.yml drift.yml _terraform-root.yml; do
   n=$((n + $(grep -cF 'python3 scripts/root-tfvars.py "${ROOT}"' "$WF/$f")))
 done
 check "root-tfvars: los flujos lo usan antes de cada init (pr, drift y plan y apply de _terraform-root: 4)" 4 "$n"
+
+# pr.yml corre las pruebas de Go sin GCP (config.example.json contra los variables.tf, entre
+# otras): go vet y go test de todos los paquetes en tests/, sin id-token ni cuentas de GCP.
+"$PY" -c '
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"\n  go:\n(.*?)(?=\n  [a-z][a-z0-9_-]*:\n|\Z)", t, re.S)
+body = m.group(1) if m else ""
+ok = (body and "name: go (vet y pruebas sin GCP)" in body and "working-directory: gcp-datacenter/tests" in body
+      and "run: go vet ./..." in body and "run: go test -count=1 ./..." in body
+      and "id-token" not in body and "google-github-actions/auth" not in body and "if:" not in body)
+sys.exit(0 if ok else 1)
+' "$WF/pr.yml"
+check "pr.yml: trabajo go (vet y pruebas sin GCP) con go vet y go test de tests/, sin credenciales ni condición" 0 $?
+
+# --- terratest-project-check.py --------------------------------------------------------------
+# terratest.yml falla si TERRATEST_PROJECT_ID es el proyecto de la landing zone
+# (GCP_TFVARS_JSON.common.project_id), sin mostrar ninguno de los dos, y exporta
+# TERRATEST_LANDING_ZONE_PROJECT_ID para la guarda de tests/helpers (RequireProjectEnv).
+tpc() { TERRATEST_PROJECT_ID="$1" TFVARS_JSON="$2" "$PY" scripts/terratest-project-check.py "${@:3}"; }
+lzjson='{"common": {"project_id": "bnt-lz-pruebas"}, "stages/1-base": {"project_id": "otro"}}'
+tpc bnt-lz-pruebas "$lzjson" >"$tmp/tpc-out.txt" 2>&1
+rc=$?
+[ "$rc" = 1 ] && ! grep -q 'bnt-lz-pruebas' "$tmp/tpc-out.txt"
+check "terratest-project-check: el mismo proyecto que common.project_id es error (1) y no muestra el ID" 0 $?
+tpc " BNT-LZ-Pruebas " "$lzjson" >/dev/null 2>&1
+check "terratest-project-check: compara sin mayúsculas ni espacios" 1 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-lz-pruebas "$lzjson" "$tmp/tpc-env.txt" >"$tmp/tpc-out.txt" 2>&1
+[ $? = 1 ] && [ ! -s "$tmp/tpc-env.txt" ] && grep -q '^::error::' "$tmp/tpc-out.txt"
+check "terratest-project-check: con archivo, ::error:: y no exporta nada" 0 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-terratest "$lzjson" "$tmp/tpc-env.txt" >/dev/null 2>&1
+[ $? = 0 ] && [ "$(cat "$tmp/tpc-env.txt")" = "TERRATEST_LANDING_ZONE_PROJECT_ID=bnt-lz-pruebas" ]
+check "terratest-project-check: otro proyecto pasa y exporta TERRATEST_LANDING_ZONE_PROJECT_ID (GITHUB_ENV)" 0 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-terratest "" "$tmp/tpc-env.txt" >"$tmp/tpc-out.txt" 2>&1
+rc1=$?
+tpc bnt-terratest 'no es json' >/dev/null 2>&1
+rc2=$?
+tpc bnt-terratest '{"stages/1-base": {"project_id": "bnt-terratest"}}' >/dev/null 2>&1
+rc3=$?
+[ "$rc1 $rc2 $rc3" = "0 0 0" ] && [ ! -s "$tmp/tpc-env.txt" ] && grep -q '^::notice::.*no se puede comprobar' "$tmp/tpc-out.txt"
+check "terratest-project-check: sin common.project_id que leer no falla y lo avisa" 0 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-terratest '{"common": {"project_id": "bnt-lz\nOTRA=1"}}' "$tmp/tpc-env.txt" >/dev/null 2>&1
+[ $? = 0 ] && [ ! -s "$tmp/tpc-env.txt" ]
+check "terratest-project-check: no exporta un valor que no tiene la forma de un ID de proyecto" 0 $?
+"$PY" -c '
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+i = t.find("python3 scripts/terratest-project-check.py \"${GITHUB_ENV}\"")
+j = t.find("go test -count=1 -json")
+step = t[t.rfind("- name:", 0, i):i] if i >= 0 else ""
+ok = 0 <= i < j and "TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}" in step
+go = open(sys.argv[2], encoding="utf-8").read()
+py = open(sys.argv[3], encoding="utf-8").read()
+m = re.search(r"EnvLandingZoneProjectID\s*=\s*\"([A-Z_]+)\"", go)
+ok = ok and m and ("EXPORT = \"%s\"" % m.group(1)) in py
+sys.exit(0 if ok else 1)
+' "$WF/terratest.yml" tests/helpers/env.go scripts/terratest-project-check.py
+check "terratest-project-check: terratest.yml lo corre antes de go test, con GCP_TFVARS_JSON, y exporta la variable que lee tests/helpers" 0 $?
 
 # --- go-test-report.sh ---------------------------------------------------------------------
 g="$DATA/go-test"
@@ -326,6 +675,28 @@ bash scripts/go-test-report.sh "$g/una-falla.json" 99 >/dev/null 2>&1
 check "go-test-report: una prueba fallida falla aunque no haya omitidas" 1 $?
 bash scripts/go-test-report.sh "$g/tres-omitidas.json" x >/dev/null 2>&1
 check "go-test-report: máximo inválido es error de uso" 2 $?
+# Sin organización (salida real de go test -json, 24 nov 2026: TestOrg y TestVPCSC omitidas con
+# la marca [sin-organizacion] y TestGKE por su compuerta): con TERRATEST_ORG_ID vacío, las dos
+# de organización no cuentan contra el máximo; con TERRATEST_ORG_ID definido, sí.
+TERRATEST_ORG_ID="" bash scripts/go-test-report.sh "$g/omitidas-sin-organizacion.json" 1 "$tmp/go-org.md" \
+  >"$tmp/go-org.txt" 2>&1
+check "go-test-report: sin TERRATEST_ORG_ID, TestOrg y TestVPCSC no cuentan (3 omitidas, máximo 1, pasa)" 0 $?
+TERRATEST_ORG_ID="" bash scripts/go-test-report.sh "$g/omitidas-sin-organizacion.json" 0 >/dev/null 2>&1
+check "go-test-report: sin TERRATEST_ORG_ID, la omisión de TestGKE sigue contando (máximo 0, falla)" 1 $?
+TERRATEST_ORG_ID="123456789012" bash scripts/go-test-report.sh "$g/omitidas-sin-organizacion.json" 2 >/dev/null 2>&1
+check "go-test-report: con TERRATEST_ORG_ID definido, la marca no exime (3 omitidas, máximo 2, falla)" 1 $?
+grep -q '2 sin organización que no cuentan' "$tmp/go-org.txt" &&
+  [ "$(grep -c '(sin organización: no cuenta)' "$tmp/go-org.md")" = 2 ] &&
+  grep -q '| 0 | 0 | 3 | 2 | 1 |' "$tmp/go-org.md"
+check "go-test-report: la salida y el resumen marcan las 2 omisiones sin organización" 0 $?
+TERRATEST_ORG_ID="" bash scripts/go-test-report.sh "$g/tres-omitidas.json" 2 >/dev/null 2>&1
+check "go-test-report: sin TERRATEST_ORG_ID, las omisiones sin marca cuentan igual (3, máximo 2, falla)" 1 $?
+go_marker="$(sed -n -E 's/^const OrgSkipMarker = "([^"]*)"$/\1/p' tests/helpers/env.go)"
+[ -n "$go_marker" ] && grep -qF "ORG_SKIP_MARKER=\"$go_marker\"" scripts/go-test-report.sh &&
+  [ "$(grep -l 'helpers.RequireOrganization(t, ' tests/integration/*_test.go | LC_ALL=C sort | tr '\n' ' ')" = \
+    "tests/integration/org_test.go tests/integration/vpc_sc_test.go " ] &&
+  grep -qF '      TERRATEST_ORG_ID: ${{ vars.TERRATEST_ORG_ID }}' "$WF/terratest.yml"
+check "go-test-report: la marca es la de helpers.OrgSkipMarker, la usan TestOrg y TestVPCSC, y terratest.yml le pasa TERRATEST_ORG_ID" 0 $?
 
 # --- module-tests.sh -----------------------------------------------------------------------
 got="$(bash scripts/module-tests.sh firewall 2>/dev/null)"
@@ -378,6 +749,22 @@ sys.exit(0 if a == b and any(c > 127 for c in a) else 1)
 check "cut-plan: recortar un recorte con texto no ASCII da los mismos bytes UTF-8" 0 $?
 "$PY" scripts/cut-plan.py "$f" 'no\.coincide' >/dev/null 2>&1
 check "cut-plan: una expresión sin coincidencias falla" 1 $?
+# Variables: conserva solo environment y prefix (policies/env_root_scope.rego reconoce con ellas
+# la raíz de entorno); nada más del plan, ni project_id ni state_bucket.
+"$PY" scripts/cut-plan.py scripts/testdata/destroy/plan-real-spoke-dev.json \
+  'module\.spoke\.google_compute_network\.this' >"$tmp/cut-env.json"
+"$PY" -c '
+import json, sys
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+ok = p.get("variables") == {"environment": {"value": "dev"}, "prefix": {"value": "bnt"}} and len(p["resource_changes"]) == 1
+sys.exit(0 if ok else 1)
+' "$tmp/cut-env.json"
+check "cut-plan: conserva variables.environment y variables.prefix, y ninguna otra variable" 0 $?
+"$PY" -c '
+import json, sys
+sys.exit(1 if "variables" in json.load(open(sys.argv[1], encoding="utf-8")) else 0)
+' "$tmp/cut.json"
+check "cut-plan: un plan sin esas variables no gana la sección variables" 0 $?
 
 # --- check-main-tip.sh ---------------------------------------------------------------------
 # Repositorio de "desarrollo" que publica en un remoto local; la ejecución corre en un clon (como
@@ -451,20 +838,93 @@ gitc "$r/dev" commit -q -m "merge que descarta C y D" && git -C "$r/dev" push -q
 check "check-main-tip: (preparación) el log de las rutas no lista el merge que descarta C y D" 0 $?
 tip_run "$r/run" "$sha_d"
 check "check-main-tip: un merge que descarta cambios de las rutas deja viejo el commit (diff de árboles)" 1 $?
+# Un merge que solo cambia documentación (gcp-datacenter/docs/ o un .md de gcp-datacenter/) no
+# deja vieja a la ejecución en curso: apply.yml no se dispara por él. Un .tf sí.
+sha_m="$(git -C "$r/dev" rev-parse HEAD)"
+tip_commit gcp-datacenter/docs/pipeline.md E >/dev/null
+tip_run "$r/run" "$sha_m"
+check "check-main-tip: un cambio en gcp-datacenter/docs/ no detiene la cadena" 0 $?
+tip_commit gcp-datacenter/stages/1-base/README.md F >/dev/null
+tip_commit gcp-datacenter/README.md G >/dev/null
+tip_run "$r/run" "$sha_m"
+check "check-main-tip: un README.md de una raíz o de gcp-datacenter/ no detiene la cadena" 0 $?
+tip_commit gcp-datacenter/stages/1-base/main.tf H >/dev/null
+tip_run "$r/run" "$sha_m"
+check "check-main-tip: después, un .tf sí deja viejo el commit (las exclusiones no tapan todo)" 1 $?
 # apply.yml se dispara con las mismas rutas que el script considera del despliegue: si no, un
-# commit que deja vieja a una ejecución no traería otra que la retome.
-"$PY" -c '
+# commit que deja vieja a una ejecución no traería otra que la retome. Se compara qué archivos
+# elige cada uno: los paths del push con la semántica de GitHub (docs.github.com, "Filter pattern
+# cheat sheet": * no cruza /, ** sí; con !, el último patrón que coincide decide) y DEPLOY_PATHS
+# con git ls-files en un repositorio con esos archivos.
+pr_="$tmp/paths-repo"
+git init -q "$pr_"
+for f in gcp-datacenter/stages/1-base/main.tf gcp-datacenter/stages/1-base/README.md \
+  gcp-datacenter/stages/1-base/terraform.tfvars.example gcp-datacenter/README.md \
+  gcp-datacenter/modules/kms/README.md gcp-datacenter/modules/kms/main.tf \
+  gcp-datacenter/modules/kms/docs/notas.md gcp-datacenter/modules/kms/docs/datos.json \
+  gcp-datacenter/docs/pipeline.md gcp-datacenter/docs/adr/0029-un-solo-proyecto.md \
+  gcp-datacenter/docs/diagramas/red.png gcp-datacenter/docsx/a.tf gcp-datacenter/stages/2-networks/docs.tf \
+  gcp-datacenter/scripts/root-tfvars.py gcp-datacenter/policies/required_labels.rego \
+  gcp-datacenter/tests/e2e/smoke_test.go gcp-datacenter/.terraform-docs.yml \
+  gcp-datacenter/notas.markdown .github/workflows/apply.yml .github/workflows/README.md \
+  .github/dependabot.yml README.md labs/x.tf docs/x.md; do
+  mkdir -p "$pr_/$(dirname "$f")"
+  echo x >"$pr_/$f"
+done
+gitc "$pr_" add -A
+deploy_paths="$(sed -n -E 's/.*DEPLOY_PATHS:-([^}]*)\}.*/\1/p' scripts/check-main-tip.sh)"
+read -r -a dp <<<"$deploy_paths"
+git -C "$pr_" ls-files -- "${dp[@]}" | LC_ALL=C sort >"$tmp/paths-git.txt"
+git -C "$pr_" ls-files | LC_ALL=C sort >"$tmp/paths-all.txt"
+"$PY" - "$WF/apply.yml" "$tmp/paths-all.txt" "$tmp/paths-git.txt" >"$tmp/paths.txt" 2>&1 <<'PYEOF'
 import re, sys
 wf = open(sys.argv[1], encoding="utf-8").read()
 push = wf[wf.index("  push:"):wf.index("  workflow_dispatch:")]
-trigger = {p.rstrip("*").rstrip("/") for p in re.findall(r"^\s*-\s*\"([^\"]+)\"", push, re.M)}
-sh = open(sys.argv[2], encoding="utf-8").read()
-deploy = set(re.search(r"DEPLOY_PATHS:-([^}]*)\}", sh).group(1).split())
-print("disparo %s, script %s" % (sorted(trigger), sorted(deploy)))
-sys.exit(0 if trigger == deploy else 1)
-' "$WF/apply.yml" scripts/check-main-tip.sh >"$tmp/paths.txt" 2>&1
+patterns = re.findall(r"^\s*-\s*\"([^\"]+)\"", push[push.index("paths:"):], re.M)
+def to_regex(p):
+    out, i = "", 0
+    while i < len(p):
+        if p.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif p[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        elif p[i] in "?+[]":
+            raise ValueError("patrón no soportado por esta prueba: %s" % p)
+        else:
+            out, i = out + re.escape(p[i]), i + 1
+    return re.compile(out + r"\Z")
+rules = [(p.startswith("!"), to_regex(p.lstrip("!"))) for p in patterns]
+def github(path):
+    hit = False
+    for negated, rx in rules:
+        if rx.match(path):
+            hit = not negated
+    return hit
+files = open(sys.argv[2], encoding="utf-8").read().split()
+gh = {f for f in files if github(f)}
+git = set(open(sys.argv[3], encoding="utf-8").read().split())
+must_in = {"gcp-datacenter/stages/1-base/main.tf", "gcp-datacenter/modules/kms/main.tf", ".github/workflows/apply.yml",
+           "gcp-datacenter/stages/2-networks/docs.tf", "gcp-datacenter/docsx/a.tf",
+           "gcp-datacenter/modules/kms/docs/datos.json", "gcp-datacenter/tests/e2e/smoke_test.go"}
+must_out = {"gcp-datacenter/README.md", "gcp-datacenter/stages/1-base/README.md", "gcp-datacenter/docs/pipeline.md",
+            "gcp-datacenter/docs/diagramas/red.png", "gcp-datacenter/modules/kms/docs/notas.md", "README.md", "labs/x.tf"}
+bad = []
+if gh != git:
+    bad.append("solo apply.yml: %s; solo check-main-tip: %s" % (sorted(gh - git), sorted(git - gh)))
+if not must_in <= gh:
+    bad.append("faltan del despliegue: %s" % sorted(must_in - gh))
+if gh & must_out:
+    bad.append("sobran en el despliegue: %s" % sorted(gh & must_out))
+print("; ".join(bad) if bad else "%d archivos del despliegue de %d" % (len(gh), len(files)))
+sys.exit(1 if bad else 0)
+PYEOF
 rc=$?
-check "check-main-tip: apply.yml se dispara con las rutas del despliegue ($(cat "$tmp/paths.txt"))" 0 "$rc"
+check "check-main-tip: apply.yml y DEPLOY_PATHS eligen los mismos archivos ($(cat "$tmp/paths.txt"))" 0 "$rc"
+# Ningún .tf lee un .md ni algo de docs/: si lo hiciera, excluirlos dejaría fuera un cambio que
+# sí cambia un plan.
+! grep -rEn --include='*.tf' '(file|templatefile|filebase64|fileset|filemd5|filesha256|filesha1)\([^)]*(\.md|docs/)' \
+  modules stages tests/fixtures >/dev/null 2>&1
+check "check-main-tip: ningún .tf lee un .md ni docs/ (las exclusiones de apply.yml no esconden cambios de un plan)" 0 $?
 n="$(grep -c 'scripts/check-main-tip.sh "${GITHUB_SHA}"' "$WF/_terraform-root.yml")"
 check "check-main-tip: _terraform-root.yml lo llama en plan y antes del apply (2)" 2 "$n"
 # Orden en el trabajo apply: la comprobación va después de volver a planear y antes del apply.
@@ -745,6 +1205,53 @@ check "destroy-orphans: --project inválido es error" 2 $?
 "$PY" scripts/destroy-orphans.py --env Dev --prefix bnt --project example-landing-zone \
   --project-number 111111111111 --assets "$d/assets-huerfanos.json" >/dev/null 2>&1
 check "destroy-orphans: --env inválido es error" 2 $?
+# Restos de GKE (ADR 0029 §8: el nombre "contiene" <prefix>-<env>-). assets-gke.json parte del
+# listado de la revisión (firewall gke-bnt-dev-*, NEG k8s1-*-app-dev-*, disco pvc-* solo con
+# goog-gke-volume, bnt-dev-leftover) y agrega: discos pvc-* con el namespace en la descripción o
+# con la etiqueta del clúster, un firewall k8s-fw-* de un Service de app-dev, un NEG en la red
+# del spoke de dev, una ruta de GCP en esa red, un disco ya borrado y restos de qa y prod. Los
+# formatos de Cloud Asset son HYPOTHESIS (VERIFICAR-EN-APPLY en destroy-orphans.py).
+do_ --assets "$d/assets-gke.json" --summary "$tmp/orphans-gke.md" >"$tmp/do-gke.txt" 2>&1
+check "destroy-orphans: restos de GKE de dev sin estado son huérfanos (1)" 1 $?
+grep '^HUERFANO ' "$tmp/do-gke.txt" >"$tmp/huerfanos-gke.txt"
+if diff -u "$d/huerfanos-gke-esperados.txt" "$tmp/huerfanos-gke.txt"; then
+  echo "OK    destroy-orphans: exactamente los 7 restos de dev (nombre que contiene bnt-dev-, namespace en el nombre o la descripción, etiqueta del clúster, red del spoke)"
+else
+  echo "FALLA destroy-orphans: la lista de restos de GKE de dev no coincide"
+  fails=$((fails + 1))
+fi
+[ "$(grep -c '^AVISO-GKE ' "$tmp/do-gke.txt")" = 1 ] &&
+  grep -q '^AVISO-GKE compute.googleapis.com/Disk .*/pvc-0f1e2d3c-' "$tmp/do-gke.txt"
+check "destroy-orphans: un disco pvc-* que solo trae goog-gke-volume es aviso (sin entorno), no huérfano" 0 $?
+! grep -E '^(ESPERADO|HUERFANO|AVISO-GKE) ' "$tmp/do-gke.txt" | grep -qE 'default-route|pvc-aaaaaaaa|bnt-qa-|app-qa-|app-prod-|pvc-12121212'
+check "destroy-orphans: rutas de GCP en el spoke, restos borrados y restos de qa o prod no cuentan para dev" 0 $?
+grep -q '| Del entorno por |' "$tmp/orphans-gke.md" && grep -q 'red del spoke' "$tmp/orphans-gke.md" &&
+  grep -q 'no se pueden atribuir a ningún entorno' "$tmp/orphans-gke.md"
+check "destroy-orphans: el resumen dice por qué cada resto es del entorno y lista los avisos de GKE" 0 $?
+"$PY" scripts/destroy-orphans.py --env qa --prefix bnt --project example-landing-zone \
+  --project-number 111111111111 --assets "$d/assets-gke.json" >"$tmp/do-gke-qa.txt" 2>&1
+[ $? = 1 ] && [ "$(grep -c '^HUERFANO ' "$tmp/do-gke-qa.txt")" = 2 ] &&
+  [ "$(grep -cE '^HUERFANO .*(gke-bnt-qa-app-gke-|k8s1-0f0f0f0f-app-qa-)' "$tmp/do-gke-qa.txt")" = 2 ]
+check "destroy-orphans: con --env qa solo cuenta el firewall y el NEG de qa" 0 $?
+"$PY" -c '
+import json, sys
+a = json.load(open(sys.argv[1], encoding="utf-8"))
+keep = [x for x in a if x["assetType"].endswith("/Project") or "pvc-0f1e2d3c" in x["name"]]
+json.dump(keep, open(sys.argv[2], "w", encoding="utf-8"))
+' "$d/assets-gke.json" "$tmp/a-solo-aviso.json"
+do_ --assets "$tmp/a-solo-aviso.json" >"$tmp/do-aviso.txt" 2>&1
+[ $? = 0 ] && grep -q '^AVISO-GKE ' "$tmp/do-aviso.txt"
+check "destroy-orphans: solo avisos de GKE sin entorno sale con 0 (los lista)" 0 $?
+# La regla que bloquea (destroy-plan-check.py) sigue estricta: un nombre que contiene
+# bnt-dev- sin empezar con él (gke-bnt-dev-*) se detiene; con bnt-dev- al inicio pasa.
+for n in gke-bnt-dev-app-gke-1a2b3c4d-all bnt-dev-net-fw-extra; do
+  printf '{"variables": {"prefix": {"value": "bnt"}, "environment": {"value": "dev"}}, "resource_changes": [{"address": "google_compute_firewall.x", "mode": "managed", "type": "google_compute_firewall", "provider_name": "registry.terraform.io/hashicorp/google", "change": {"actions": ["delete"], "before": {"name": "%s", "network": "projects/example-landing-zone/global/networks/default"}}}]}' \
+    "$n" >"$tmp/pc-contiene-$n.json"
+done
+pc "$tmp/pc-contiene-gke-bnt-dev-app-gke-1a2b3c4d-all.json" --env dev >/dev/null 2>&1
+check "destroy-plan-check: un nombre que contiene bnt-dev- sin empezar con él se detiene (regla estricta)" 1 $?
+pc "$tmp/pc-contiene-bnt-dev-net-fw-extra.json" --env dev >/dev/null 2>&1
+check "destroy-plan-check: el mismo recurso con bnt-dev- al inicio pasa" 0 $?
 
 # Estructura de destroy.yml y del modo destroy de _terraform-root.yml.
 "$PY" -c '
@@ -818,6 +1325,41 @@ sys.exit(1 if bad else 0)
 rc=$?
 check "destroy.yml: solo manual, dev/qa, incluir_red falso por defecto, concurrencia de apply.yml, 3-workloads → [spoke] → huérfanos del proyecto, guardias y SHA $(cat "$tmp/destroy-wf.txt")" 0 "$rc"
 
+# Tipos que existen una vez por proyecto: PROJECT_SINGLETONS de destroy-plan-check.py y los de
+# policies/env_root_scope.rego (conjunto env_root_singleton_types más las familias de
+# env_root_singleton) tienen que coincidir. El rego agrega google_project, que
+# destroy-plan-check.py trata aparte. Se lee el rego como texto, sin evaluarlo.
+"$PY" - scripts/destroy-plan-check.py policies/env_root_scope.rego >"$tmp/singletons.txt" 2>&1 <<'PYEOF'
+import ast, re, sys
+py = open(sys.argv[1], encoding="utf-8").read()
+rego = open(sys.argv[2], encoding="utf-8").read()
+m = re.search(r"^PROJECT_SINGLETONS = (\{.*?\})\n", py, re.S | re.M)
+singletons = ast.literal_eval(m.group(1)) if m else set()
+m = re.search(r"^env_root_singleton_types := \{(.*?)\}", rego, re.S | re.M)
+rego_set = set(re.findall(r'"([a-z0-9_]+)"', m.group(1))) if m else set()
+prefixes = re.findall(r'^env_root_singleton\(type\) if startswith\(type, "([a-z0-9_]+)"\)', rego, re.M)
+patterns = [re.compile(p) for p in re.findall(r"^env_root_singleton\(type\) if regex\.match\(`([^`]+)`, type\)", rego, re.M)]
+def in_rego(t):
+    return t in rego_set or any(t.startswith(p) for p in prefixes) or any(p.search(t) for p in patterns)
+bad = []
+if not singletons or not rego_set or not prefixes or not patterns:
+    bad.append("no se pudo leer la lista (PROJECT_SINGLETONS %d, rego %d, familias %d+%d)"
+               % (len(singletons), len(rego_set), len(prefixes), len(patterns)))
+only_py = sorted(t for t in singletons if not in_rego(t))
+only_rego = sorted(t for t in rego_set - {"google_project"} if t not in singletons)
+if only_py:
+    bad.append("solo en PROJECT_SINGLETONS: %s" % only_py)
+if only_rego:
+    bad.append("solo en env_root_scope.rego: %s" % only_rego)
+for fam in prefixes + [p.pattern for p in patterns]:
+    if not any(t.startswith(fam) if fam in prefixes else re.search(fam, t) for t in singletons):
+        bad.append("la familia %s del rego no cubre ningún tipo de PROJECT_SINGLETONS" % fam)
+print("; ".join(bad) if bad else "%d tipos, %d por familia" % (len(singletons), sum(1 for t in singletons if t not in rego_set)))
+sys.exit(1 if bad else 0)
+PYEOF
+rc=$?
+check "destroy-plan-check: PROJECT_SINGLETONS coincide con los tipos únicos de env_root_scope.rego ($(cat "$tmp/singletons.txt"))" 0 "$rc"
+
 # Conftest sobre los planes de destrucción (las políticas no deben rechazar un plan sin `after`).
 conftest_cmd="${CONFTEST_CMD:-$(command -v conftest 2>/dev/null || true)}"
 [ -z "$conftest_cmd" ] && [ -x "$HOME/go/bin/conftest" ] && conftest_cmd="$HOME/go/bin/conftest"
@@ -826,6 +1368,39 @@ if [ -n "$conftest_cmd" ]; then
   "$conftest_cmd" test "$d/plan-real-spoke-dev.json" "$d/plan-real-workloads-dev.json" \
     "$d/plan-real-protegido.json" --policy policies --no-color >/dev/null 2>&1
   check "conftest: las políticas aceptan los planes de destrucción reales" 0 $?
+  # Un recorte de cut-plan.py de una raíz de entorno lleva environment y prefix, así que
+  # env_root_scope lo revisa: la VPC real del spoke (pasada a creación) pasa, y un tipo único del
+  # proyecto agregado al mismo recorte se rechaza solo por env_root_scope. Sin las variables, la
+  # regla no lo ve.
+  "$PY" - "$tmp/cut-env.json" "$tmp" <<'PYEOF'
+import copy, json, os, sys
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+rc = p["resource_changes"][0]
+rc["change"] = dict(rc["change"], actions=["create"], after=rc["change"]["before"], before=None,
+                    after_unknown={}, before_sensitive=False)
+def write(name, plan):
+    with open(os.path.join(sys.argv[2], name), "w", encoding="utf-8") as out:
+        json.dump(plan, out)
+write("env-pasa.json", p)
+bad = copy.deepcopy(p)
+bad["resource_changes"].append({"address": "google_project_service.extra", "mode": "managed",
+                                "type": "google_project_service", "name": "extra",
+                                "change": {"actions": ["create"], "before": None,
+                                           "after": {"service": "aiplatform.googleapis.com"}, "after_unknown": {}}})
+write("env-falla.json", bad)
+no_vars = copy.deepcopy(bad)
+no_vars.pop("variables")
+write("env-sin-variables.json", no_vars)
+PYEOF
+  "$conftest_cmd" test "$tmp/env-pasa.json" --policy policies --no-color >"$tmp/ct1.txt" 2>&1
+  rc1=$?
+  "$conftest_cmd" test "$tmp/env-falla.json" --policy policies --no-color >"$tmp/ct2.txt" 2>&1
+  rc2=$?
+  "$conftest_cmd" test "$tmp/env-sin-variables.json" --policy policies --no-color >"$tmp/ct3.txt" 2>&1
+  rc3=$?
+  [ "$rc1" = 0 ] && [ "$rc2" != 0 ] && grep -q '\[env_root_scope\].*google_project_service' "$tmp/ct2.txt" &&
+    [ "$(grep -c '^FAIL' "$tmp/ct2.txt")" = 1 ] && ! grep -q 'env_root_scope' "$tmp/ct3.txt"
+  check "conftest: un recorte con environment y prefix activa env_root_scope (pasa la VPC real, se rechaza un tipo único; sin variables no se revisa)" 0 $?
 else
   echo "INFO  conftest no está en el PATH: no se prueba Conftest sobre los planes de destrucción"
 fi

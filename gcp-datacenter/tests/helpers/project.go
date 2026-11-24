@@ -2,6 +2,8 @@ package helpers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gruntwork-io/terratest/modules/terraform"
@@ -27,11 +29,31 @@ func ProjectParent(t testing.TB) (folderNumber, orgNumber string) {
 	return "", OrgNumber(env[EnvOrgID])
 }
 
-// RequireProjectEnv omite la prueba temprano (antes de copiar archivos) si no hay con qué
-// obtener un proyecto de prueba: TERRATEST_PROJECT_ID o, con TEST_EPHEMERAL_PROJECTS=true, la
-// cuenta de facturación y una carpeta u organización.
+// LandingZoneConflict devuelve un error si el proyecto de pruebas es el de la landing zone
+// (sin distinguir mayúsculas ni espacios). Si falta uno de los dos no hay con qué comparar y
+// devuelve nil. El mensaje no lleva los IDs.
+func LandingZoneConflict(testProject, landingZoneProject string) error {
+	tp := strings.ToLower(strings.TrimSpace(testProject))
+	lz := strings.ToLower(strings.TrimSpace(landingZoneProject))
+	if tp == "" || lz == "" || tp != lz {
+		return nil
+	}
+	return fmt.Errorf("%s es el proyecto de la landing zone (%s): las pruebas crean y destruyen recursos ahí "+
+		"y drift.yml los vería como no administrados; usar un proyecto aparte (ver tests/README.md)",
+		EnvProjectID, EnvLandingZoneProjectID)
+}
+
+// RequireProjectEnv detiene la prueba con un error si TERRATEST_PROJECT_ID es el proyecto de la
+// landing zone (TERRATEST_LANDING_ZONE_PROJECT_ID, cuando está definido; también con proyectos
+// efímeros, porque TERRATEST_PROJECT_ID sigue siendo el proyecto de cuota). Después omite la
+// prueba temprano (antes de copiar archivos) si no hay con qué obtener un proyecto de prueba:
+// TERRATEST_PROJECT_ID o, con TEST_EPHEMERAL_PROJECTS=true, la cuenta de facturación y una
+// carpeta u organización.
 func RequireProjectEnv(t testing.TB) {
 	t.Helper()
+	if err := LandingZoneConflict(Getenv(EnvProjectID, ""), Getenv(EnvLandingZoneProjectID, "")); err != nil {
+		t.Fatal(err)
+	}
 	if !IsTrue(EnvEphemeralProjects) {
 		RequireEnv(t, EnvProjectID)
 		return
@@ -61,7 +83,7 @@ func NewTestProject(t *testing.T, run Run, apis []string) TestProject {
 	ephemeral := IsTrue(EnvEphemeralProjects)
 	vars := map[string]any{
 		"apis":   apis,
-		"labels": RequiredLabels("dev", run),
+		"labels": RequiredLabels(TestEnvLabel, run),
 	}
 	if ephemeral {
 		folder, org := ProjectParent(t)

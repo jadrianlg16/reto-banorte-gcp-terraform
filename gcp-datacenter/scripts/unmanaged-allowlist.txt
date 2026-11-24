@@ -33,3 +33,12 @@
 ^compute\.googleapis\.com/(ForwardingRule|BackendService|HealthCheck|TargetPool|NetworkEndpointGroup|UrlMap|TargetHttpProxy|TargetHttpsProxy) .*/(k8s[0-9]?-[a-z0-9-]+|a[0-9a-f]{31})( |$)  # balanceadores y NEG que crea GKE para Services e Ingress
 ^container\.googleapis\.com/NodePool .*/nodePools/default-pool( |$)  # pool por defecto que GKE crea y Terraform elimina (remove_default_node_pool) mientras el índice se actualiza
 ^cloudbilling\.googleapis\.com/ProjectBillingInfo  # facturación del proyecto: atributo de google_project, no un recurso aparte
+
+# Imágenes de contenedor: las publica CI o una persona a propósito (runbook 02), no Terraform.
+# Dentro de un repositorio que administra 1-base ya salen como hijas del repositorio (regla 2 del
+# script); esta regla cubre el caso de que Cloud Asset las nombre de otra forma que el id del
+# repositorio en el estado (HIPÓTESIS: formato de nombre de DockerImage sin comprobar en el
+# proyecto real). Solo cubre la imagen, nunca el repositorio: un repositorio creado a mano (por
+# ejemplo cloud-run-source-deploy, que crea `gcloud run deploy --source`) sigue saliendo como no
+# administrado.
+^artifactregistry\.googleapis\.com/DockerImage projects/[0-9]+/locations/[a-z0-9-]+/repositories/[a-z0-9-]+/dockerImages/[^ /]+( |$)  # imágenes publicadas por CI o por una persona (runbook 02); el repositorio no se permite

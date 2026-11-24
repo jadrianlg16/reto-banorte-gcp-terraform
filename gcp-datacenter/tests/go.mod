@@ -5,7 +5,9 @@ go 1.26.0
 require (
 	cloud.google.com/go/storage v1.62.1
 	github.com/gruntwork-io/terratest v1.0.1
+	github.com/hashicorp/hcl/v2 v2.22.0
 	github.com/stretchr/testify v1.12.1
+	github.com/zclconf/go-cty v1.15.0
 )
 
 require (
@@ -91,7 +93,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-safetemp v1.0.0 // indirect
 	github.com/hashicorp/go-version v1.7.0 // indirect
-	github.com/hashicorp/hcl/v2 v2.22.0 // indirect
 	github.com/hashicorp/terraform-json v0.23.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -119,7 +120,6 @@ require (
 	github.com/ulikunitz/xz v0.5.10 // indirect
 	github.com/urfave/cli v1.22.16 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/zclconf/go-cty v1.15.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect

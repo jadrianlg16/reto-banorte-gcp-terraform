@@ -1,6 +1,8 @@
 # Detección diaria de drift (CONTRATO §9.3, ADR 0029). Ver docs/pipeline.md.
 #
-# Por cada raíz de stages/ salvo 0-bootstrap (scripts/affected-roots.sh --all):
+# Por cada raíz de stages/ salvo 0-bootstrap (scripts/affected-roots.sh --all) y salvo las de los
+# entornos apagados con la variable de repositorio GCP_DISABLED_ENVS (dev y qa; ver apply.yml y
+# scripts/disabled-envs.py):
 # terraform plan -detailed-exitcode -lock=false con la cuenta de lectura
 # (GCP_AUDIT_SERVICE_ACCOUNT, salida read_service_account de 0-bootstrap; Workload Identity
 # Federation, sin llaves). Las cuentas que escriben solo aceptan tokens de su entorno de GitHub y
@@ -13,7 +15,8 @@
 # así que no bloquea ni espera a un apply en curso.
 #
 # La incidencia lleva solo las direcciones de los recursos y la línea "Plan:", no el plan
-# completo: las incidencias de un repositorio público las ve cualquiera.
+# completo: el repositorio es privado, pero las incidencias las ve cualquiera con acceso de
+# lectura, y el plan completo puede traer valores de configuración que no hace falta repartir.
 #
 # Recursos no administrados (objetivo "cero recursos manuales", verificado con Cloud Asset
 # Inventory): lista con Cloud Asset los recursos del proyecto (salida project_id de
@@ -57,9 +60,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Sin las raíces de los entornos de GCP_DISABLED_ENVS (ver apply.yml); con prod u otro
+      # nombre que no se puede apagar, el trabajo falla con un mensaje.
       - id: roots
-        name: Listar raíces (sin 0-bootstrap)
-        run: bash scripts/affected-roots.sh --all | tee -a "${GITHUB_OUTPUT}"
+        name: Listar raíces (sin 0-bootstrap ni entornos apagados)
+        env:
+          GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}
+        run: |
+          bash scripts/affected-roots.sh --all > "${RUNNER_TEMP}/roots.txt"
+          python3 scripts/disabled-envs.py filter "${GITHUB_OUTPUT}" < "${RUNNER_TEMP}/roots.txt"
+          grep '^roots=' "${GITHUB_OUTPUT}"
 
   plan:
     name: drift ${{ matrix.root }}
@@ -99,7 +109,8 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
 
-      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1) o
+      # si un valor resuelto es de los ejemplos (marcadores en scripts/root-tfvars.py).
       - name: Variables de la raíz
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}

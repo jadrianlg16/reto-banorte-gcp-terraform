@@ -20,11 +20,39 @@ Uso:
     --summary  agrega un resumen en Markdown (para $GITHUB_STEP_SUMMARY).
     --report-only  sale con 0 aunque haya huérfanos.
 
-Un recurso es DEL ENTORNO si tiene la etiqueta `env` igual a ENTORNO o si su nombre, su
-displayName o su correo (cuentas de servicio) llevan `<prefix>-<env>-` (misma regla que
-scripts/destroy-plan-check.py: el ID del proyecto no cuenta). VPC, subredes, routers, políticas
-de firewall y cuentas de servicio no llevan etiquetas: se reconocen por el nombre. Lo demás del
-proyecto (compartido u de otros entornos) se cuenta y no se revisa; el proyecto mismo tampoco.
+Un recurso es DEL ENTORNO (ADR 0029 §8: "contiene `<prefix>-<env>-`") si cumple alguna de:
+  1. la etiqueta `env` es ENTORNO;
+  2. su nombre, su displayName o su correo (cuentas de servicio) CONTIENEN `<prefix>-<env>-` en
+     algún segmento de la ruta (el ID del proyecto no cuenta). Así entran los restos que GKE
+     nombra con el clúster (`<prefix>-<env>-<app>-gke[-dr]`, ADR 0029 §4): firewalls
+     `gke-<clúster>-<hash>-*` y VM, discos y grupos de los nodos `gke-<clúster>-<pool>-*`;
+  3. el valor de alguna otra etiqueta contiene `<prefix>-<env>-` (la del nombre del clúster que
+     GKE pone a sus recursos, `goog-k8s-cluster-name`);
+  4. es un recurso que parece de GKE (ver abajo) y la red o la subred que trae Cloud Asset
+     (`network`, `subnetwork`... dentro de `additionalAttributes` o de
+     `versionedResources[].resource`) es del spoke del entorno. Solo para GKE: las rutas y reglas
+     que GCP crea en un spoke que se conserva también están en su red y no son huérfanos;
+  5. la descripción en JSON que GKE pone a sus recursos nombra un namespace que termina en
+     `-<env>` (ADR 0029 §9: el namespace es `<app>-<env>`): discos `pvc-*` del controlador de
+     PD (`kubernetes.io/created-for/pvc/namespace`), NEG (`namespace`) y firewalls de los
+     Services (`kubernetes.io/service-name` = `<namespace>/<servicio>`);
+  6. es un recurso que GKE nombra `k8s<n>-<uid de 8>-<namespace>-<servicio>-...` (NEG,
+     reglas de reenvío, servicios de backend, health checks) y el resto del nombre lleva
+     `-<env>-` (el namespace `<app>-<env>`).
+La regla de destroy-plan-check.py, que BLOQUEA, sigue estricta (empieza con `<prefix>-<env>-`);
+esta, que busca restos para avisar, es más amplia.
+
+VPC, subredes, routers, políticas de firewall y cuentas de servicio no llevan etiquetas: se
+reconocen por el nombre. Lo demás del proyecto (compartido u de otros entornos) se cuenta y no se
+revisa; el proyecto mismo tampoco.
+
+RESTOS DE GKE SIN ENTORNO (aviso, no falla): un recurso que parece de GKE (etiqueta `goog-gke-*`
+o `goog-k8s-*`, nombre `gke-*`, `k8s*-*`, `pvc-<uuid>` o `a<32 hex>`, descripción de Kubernetes)
+y que no se puede atribuir a ningún entorno (ni a este ni a dev, qa, prod o common). Por ejemplo,
+un disco `pvc-*` que solo trae la etiqueta `goog-gke-volume`: puede ser de este entorno o de un
+clúster que sigue vivo en otro. Se listan para revisarlos a mano
+(`gcloud compute disks describe`, campo `users` y descripción); no hacen fallar el trabajo,
+porque los de otros entornos aparecerían en cada destroy.
 
 De lo que es del entorno, es ESPERADO (se lista, no falla):
   1. lo que conserva 1-base (ADR 0029 §8, lista KEEP_TYPES): llaveros, llaves y versiones de
@@ -46,6 +74,11 @@ que scripts/unmanaged-resources.py).
 HYPOTHESIS (sin el proyecto real): que Cloud Asset devuelva `labels` y, para las cuentas de
 servicio, `additionalAttributes.email`, y que liste el proyecto mismo con
 --scope=projects/<ID>. VERIFICAR-EN-APPLY en el primer destroy de dev (pendiente 85).
+VERIFICAR-EN-APPLY (restos de GKE, sin el proyecto real ni la documentación de cada campo):
+qué trae Cloud Asset para discos, NEG y firewalls que deja GKE (`description`, `labels`,
+`network` en `additionalAttributes`); que los nombres `gke-*` y `k8s1-*` lleven el clúster y el
+namespace sin recortar; y que el controlador de PD escriba el namespace en la descripción.
+Los formatos de los datos de prueba (scripts/testdata/destroy/assets-gke.json) son HYPOTHESIS.
 
 Solo biblioteca estándar; Python 3.8 o posterior.
 """
@@ -87,29 +120,124 @@ KEEP_TYPES = {
 }
 
 
+# Entornos a los que se puede atribuir un recurso: un resto de GKE que es de alguno de estos (y
+# no del que se destruye) no es "sin entorno".
+KNOWN_ENVS = ("bootstrap", "common", "dev", "qa", "prod")
+# Llaves con la red o la subred de un recurso dentro de additionalAttributes o
+# versionedResources[].resource (HYPOTHESIS: qué tipos las traen).
+NETWORK_KEYS = {"network", "networks", "subnetwork", "subnetworks", "networkuri", "subnetworkuri"}
+# Nombres que da GKE: nodos y firewalls del clúster (gke-), NEG y balanceadores de Services e
+# Ingress (k8s-, k8s1-, k8s2-), discos de PersistentVolumeClaim (pvc-<uuid>) y reglas de
+# reenvío de un Service LoadBalancer (a<32 hex>).
+GKE_NAME = re.compile(r"^(gke-|k8s[0-9]?-|pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|a[0-9a-f]{31}$)")
+# NEG y balanceadores de GKE: k8s<n>-<uid de 8>-<namespace>-<servicio>-<puerto>-<hash>.
+K8S_NAMESPACED = re.compile(r"^k8s[0-9]?-[0-9a-f]{8}-(.+)$")
+
+
 def state_of(asset):
     return str(asset.get("state") or "").upper()
 
 
-def of_environment(asset, env, marker):
-    """True si el recurso es del entorno: etiqueta env o nombre con <prefix>-<env>-."""
-    labels = asset.get("labels") if isinstance(asset.get("labels"), dict) else {}
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _last_segment(name):
+    return name.rstrip("/").rsplit("/", 1)[-1] if isinstance(name, str) else ""
+
+
+def contains_marker(value, marker):
+    """True si algún segmento de la ruta o del correo (sin el ID del proyecto) contiene marker."""
+    return isinstance(value, str) and any(marker in s for s in names.segments(value))
+
+
+def _network_refs(value):
+    """Cadenas bajo llaves de red o subred (NETWORK_KEYS), en dicts y listas anidados."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if str(k).lower() in NETWORK_KEYS:
+                for item in (v if isinstance(v, list) else [v]):
+                    if isinstance(item, str):
+                        yield item
+            else:
+                yield from _network_refs(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _network_refs(v)
+
+
+def _description_json(asset):
+    try:
+        value = json.loads(asset.get("description") or "")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _namespaces(description):
+    """Namespaces de Kubernetes que nombra la descripción en JSON de un recurso de GKE."""
+    out = []
+    for k, v in description.items():
+        if not isinstance(v, str):
+            continue
+        if k.lower().endswith("namespace"):  # namespace, kubernetes.io/created-for/pvc/namespace
+            out.append(v)
+        elif k == "kubernetes.io/service-name" and "/" in v:  # <namespace>/<servicio>
+            out.append(v.split("/", 1)[0])
+    return out
+
+
+def env_reason(asset, env, prefix):
+    """Por qué el recurso es del entorno env (texto corto), o None si no lo es."""
+    marker = "%s-%s-" % (prefix, env)
+    labels = _dict(asset.get("labels"))
     if labels.get("env") == env:
+        return "etiqueta env"
+    extra = _dict(asset.get("additionalAttributes"))
+    if any(contains_marker(v, marker) for v in (asset.get("name"), asset.get("displayName"), extra.get("email"))):
+        return "nombre"
+    for key in sorted(labels):
+        if key != "env" and isinstance(labels[key], str) and marker in labels[key]:
+            return "etiqueta %s" % key
+    # La red solo cuenta para lo que crea GKE: las rutas y reglas que GCP crea en un spoke que se
+    # conserva (incluir_red = false) también están en esa red y no son huérfanos.
+    versioned = [_dict(v).get("resource") for v in asset.get("versionedResources") or [] if isinstance(v, dict)]
+    if looks_like_gke(asset) and any(contains_marker(ref, marker) for ref in _network_refs([extra, versioned])):
+        return "red del spoke"
+    description = _description_json(asset)
+    if any(ns.endswith("-" + env) for ns in _namespaces(description)):
+        return "namespace de GKE en la descripción"
+    if any(isinstance(v, str) and marker in v for v in description.values()):
+        return "descripción de GKE"
+    m = K8S_NAMESPACED.match(_last_segment(asset.get("name")))
+    if m and ("-%s-" % env) in m.group(1):
+        return "namespace de GKE en el nombre"
+    return None
+
+
+def looks_like_gke(asset):
+    """True si el recurso parece creado por GKE (etiquetas, nombre o descripción)."""
+    if any(str(k).startswith(("goog-gke-", "goog-k8s-")) for k in _dict(asset.get("labels"))):
         return True
-    email = (asset.get("additionalAttributes") or {}).get("email") if isinstance(
-        asset.get("additionalAttributes"), dict) else None
-    return any(names.env_named(v, marker) for v in (asset.get("name"), asset.get("displayName"), email))
+    if GKE_NAME.match(_last_segment(asset.get("name"))):
+        return True
+    return any(str(k).startswith("kubernetes.io/") or k == "cluster-uid" for k in _description_json(asset))
 
 
 def classify(assets, env, prefix, project_number, managed, parents, mig_patterns, aliases):
-    marker = "%s-%s-" % (prefix, env)
-    expected, orphans, others = [], [], 0
+    """(esperados, huérfanos, restos de GKE sin entorno, otros)."""
+    expected, orphans, gke_unknown, others = [], [], [], 0
     for a in assets:
         atype = a.get("assetType", "")
-        if atype == unmanaged.PROJECT_ASSET_TYPE or not of_environment(a, env, marker):
-            others += 1
+        why = None if atype == unmanaged.PROJECT_ASSET_TYPE else env_reason(a, env, prefix)
+        if not why:
+            if (atype != unmanaged.PROJECT_ASSET_TYPE and state_of(a) not in GONE_STATES and looks_like_gke(a)
+                    and not any(env_reason(a, other, prefix) for other in KNOWN_ENVS if other != env)):
+                gke_unknown.append({"assetType": atype, "name": a["name"], "state": state_of(a)})
+            else:
+                others += 1
             continue
-        entry = {"assetType": atype, "name": a["name"], "state": state_of(a)}
+        entry = {"assetType": atype, "name": a["name"], "state": state_of(a), "why": why}
         canon = unmanaged.canonical(unmanaged.normalize(a["name"]), aliases)
         cls = unmanaged.managed_class(canon, atype, managed, parents, mig_patterns)
         if entry["state"] in GONE_STATES:
@@ -125,7 +253,7 @@ def classify(assets, env, prefix, project_number, managed, parents, mig_patterns
             orphans.append(entry)
             continue
         expected.append(entry)
-    return expected, orphans, others
+    return expected, orphans, gke_unknown, others
 
 
 def main(argv=None):
@@ -165,25 +293,37 @@ def main(argv=None):
         sys.stderr.write("ERROR: %s: %s\n" % (args.assets, error))
         return 2
 
-    expected, orphans, others = classify(assets, args.env, args.prefix, args.project_number,
-                                         managed, parents, mig_patterns, aliases)
-    print("recursos en el proyecto %s: %d (del entorno %s: %d; otros: %d)"
-          % (args.project, len(assets), args.env, len(expected) + len(orphans), others))
+    expected, orphans, gke_unknown, others = classify(assets, args.env, args.prefix, args.project_number,
+                                                      managed, parents, mig_patterns, aliases)
+    key = lambda e: (e["assetType"], e["name"])  # noqa: E731
+    print("recursos en el proyecto %s: %d (del entorno %s: %d; restos de GKE sin entorno: %d; otros: %d)"
+          % (args.project, len(assets), args.env, len(expected) + len(orphans), len(gke_unknown), others))
     print("  esperados: %d" % len(expected))
     print("  HUÉRFANOS: %d" % len(orphans))
-    for e in sorted(expected, key=lambda e: (e["assetType"], e["name"])):
+    print("  restos de GKE sin entorno (aviso, revisar a mano): %d" % len(gke_unknown))
+    for e in sorted(expected, key=key):
         print("ESPERADO %s %s (%s)" % (e["assetType"], e["name"], e["reason"]))
-    for e in sorted(orphans, key=lambda e: (e["assetType"], e["name"])):
+    for e in sorted(orphans, key=key):
         print("HUERFANO %s %s%s" % (e["assetType"], e["name"], " [%s]" % e["state"] if e["state"] else ""))
+    for e in sorted(gke_unknown, key=key):
+        print("AVISO-GKE %s %s%s" % (e["assetType"], e["name"], " [%s]" % e["state"] if e["state"] else ""))
 
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as out:
             out.write("- Recursos del entorno `%s` en el proyecto `%s`: %d (esperados %d, **huérfanos %d**); "
-                      "otros recursos del proyecto: %d\n\n"
-                      % (args.env, args.project, len(expected) + len(orphans), len(expected), len(orphans), others))
+                      "restos de GKE sin entorno: %d; otros recursos del proyecto: %d\n\n"
+                      % (args.env, args.project, len(expected) + len(orphans), len(expected), len(orphans),
+                         len(gke_unknown), others))
             if orphans:
-                out.write("| Huérfano | Nombre | Estado |\n|---|---|---|\n")
-                for e in sorted(orphans, key=lambda e: (e["assetType"], e["name"])):
+                out.write("| Huérfano | Nombre | Estado | Del entorno por |\n|---|---|---|---|\n")
+                for e in sorted(orphans, key=key):
+                    out.write("| `%s` | `%s` | %s | %s |\n" % (e["assetType"], e["name"], e["state"] or "—", e["why"]))
+                out.write("\n")
+            if gke_unknown:
+                out.write("Restos de GKE que no se pueden atribuir a ningún entorno (pueden ser de este o de un "
+                          "clúster vivo de otro; no hacen fallar el trabajo, revisarlos a mano):\n\n"
+                          "| Aviso | Nombre | Estado |\n|---|---|---|\n")
+                for e in sorted(gke_unknown, key=key):
                     out.write("| `%s` | `%s` | %s |\n" % (e["assetType"], e["name"], e["state"] or "—"))
                 out.write("\n")
             if expected:

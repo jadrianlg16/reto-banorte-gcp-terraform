@@ -18,18 +18,23 @@
 #     (scripts/module-tests.sh). La etiqueta no fija versiones: las raíces usan rutas relativas.
 #   - Omitidas: scripts/go-test-report.sh lista en el resumen cada prueba omitida con su
 #     motivo y hace fallar el trabajo si hay más omitidas que TERRATEST_MAX_SKIPS (0 si no se
-#     define). Para aceptar omisiones hay que subir ese número a propósito.
+#     define). Para aceptar omisiones hay que subir ese número a propósito. No cuentan, con
+#     TERRATEST_ORG_ID vacío, las pruebas que solo valen con organización (TestOrg, TestVPCSC):
+#     se omiten con la marca [sin-organizacion] y el resumen las muestra aparte.
 #
 # Variables de repositorio de las pruebas reales (los nombres de entorno que reciben las
 # pruebas de Go son los mismos):
 #   TERRATEST_SERVICE_ACCOUNT  correo de la cuenta de servicio de pruebas (no es de una etapa).
-#   TERRATEST_PROJECT_ID       proyecto único de pruebas, donde corren todas por defecto
-#                              (conviene uno aparte del de la landing zone).
+#   TERRATEST_PROJECT_ID       proyecto único de pruebas, donde corren todas por defecto. Tiene
+#                              que ser otro que el de la landing zone: si es igual a
+#                              GCP_TFVARS_JSON.common.project_id, el trabajo falla antes de
+#                              correr pruebas (scripts/terratest-project-check.py).
 #   TEST_EPHEMERAL_PROJECTS    "true": un proyecto efímero por prueba (opcional).
 #   TERRATEST_BILLING_ACCOUNT  cuenta de facturación de los proyectos efímeros (solo con
 #                              TEST_EPHEMERAL_PROJECTS).
 #   TERRATEST_ORG_ID           ID numérico de la organización (proyectos efímeros sin carpeta y
-#                              pruebas de organización; opcional).
+#                              pruebas de organización; opcional). Vacía: TestOrg y TestVPCSC
+#                              se omiten sin contar contra TERRATEST_MAX_SKIPS.
 #   TERRATEST_FOLDER_ID        carpeta donde se crean los proyectos efímeros (opcional).
 #   TERRATEST_MAX_SKIPS        máximo de pruebas omitidas aceptado (por defecto 0).
 #   TEST_ALLOW_EXPENSIVE, TEST_ALLOW_ORG, TEST_DIRECTORY_CUSTOMER_ID, TEST_ACCESS_POLICY_ID,
@@ -160,6 +165,15 @@ jobs:
             echo "::error::Faltan variables de repositorio:${missing} (ver docs/pipeline.md)."
             exit 1
           fi
+
+      # Falla si TERRATEST_PROJECT_ID es el proyecto de la landing zone
+      # (GCP_TFVARS_JSON.common.project_id), sin imprimir ninguno de los dos, y deja ese proyecto
+      # en TERRATEST_LANDING_ZONE_PROJECT_ID para que cada prueba lo vuelva a comprobar
+      # (tests/helpers, RequireProjectEnv).
+      - name: El proyecto de pruebas no es el de la landing zone
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: python3 scripts/terratest-project-check.py "${GITHUB_ENV}"
 
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:

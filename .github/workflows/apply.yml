@@ -7,6 +7,19 @@
 #   qa:     2-networks/envs/qa → 3-workloads/envs/qa, después de la prueba de humo de dev
 #   prod:   2-networks/envs/prod → 3-workloads/envs/prod, después de qa  entorno `prod`
 #
+# Entornos apagados: variable de repositorio GCP_DISABLED_ENVS, opcional. Nombres separados por
+# comas, por ejemplo "dev,qa" (vacía o sin definir: ninguno). Las raíces de esos entornos no se
+# planean ni se aplican, y drift.yml tampoco las planea. Sirve para dejar apagado un entorno
+# destruido con destroy.yml, sin que el siguiente push a main lo vuelva a crear. Solo dev y qa:
+# con prod (o cualquier otro nombre) el trabajo gate falla con un mensaje y no se aplica nada.
+# Lo valida y lo traduce scripts/disabled-envs.py (salidas dev y qa de gate: "true" si el
+# entorno se despliega). Con un entorno apagado, el siguiente sigue sin esperarlo:
+#   - dev apagado: qa empieza después del hub (no hay prueba de humo de dev que esperar).
+#   - qa apagado: prod empieza después de la prueba de humo de dev.
+#   - dev y qa apagados: prod empieza después del hub.
+# Un trabajo omitido solo cuenta como "listo" si su entorno está apagado: si dev está encendido y
+# su prueba de humo falla o se omite porque falló una raíz de dev, qa y prod no corren.
+#
 # Cada raíz llama a _terraform-root.yml: un trabajo `plan` sin entorno, con la cuenta de lectura
 # (GCP_AUDIT_SERVICE_ACCOUNT) y sin candado (plan, Conftest y resumen del plan), y un trabajo
 # `apply` en el entorno, con la cuenta de la raíz, solo si el plan tiene cambios. Las reglas de
@@ -18,8 +31,9 @@
 # 2-networks, 2-networks/<env> y 3-workloads/<env>. Cada cuenta de entorno solo acepta tokens
 # de su entorno de GitHub, y tf-base y tf-net solo de `common` (ADR 0029 §3).
 #
-# Los spokes (2-networks/envs/<env>) quedan en serie por el encadenado entre entornos: GCP no
-# admite dos operaciones de peering a la vez sobre la VPC hub.
+# Los spokes (2-networks/envs/<env>) quedan en serie por el encadenado entre entornos, también
+# con entornos apagados (cada spoke sigue dependiendo del trabajo del entorno anterior, aunque se
+# omita): GCP no admite dos operaciones de peering a la vez sobre la VPC hub.
 #
 # 0-bootstrap no está aquí: la aplica una persona, una sola vez y a mano (ADR 0029 §2).
 #
@@ -40,10 +54,15 @@ on:
     branches: [main]
     # Las mismas rutas que scripts/check-main-tip.sh considera "del despliegue": un commit que
     # deja vieja a una ejecución en curso siempre trae otra que la retoma (docs/pipeline.md
-    # §1.2, "Ejecuciones viejas").
+    # §1.2, "Ejecuciones viejas"). Sin la documentación: gcp-datacenter/docs/ y los .md de
+    # gcp-datacenter/ (README de módulos y etapas que regenera terraform-docs); ningún .tf los
+    # lee. Las exclusiones van con "!" al final de la lista (GitHub no admite paths y
+    # paths-ignore juntos en el mismo evento; el último patrón que coincide decide).
     paths:
       - "gcp-datacenter/**"
       - ".github/workflows/**"
+      - "!gcp-datacenter/docs/**"
+      - "!gcp-datacenter/**.md"
   workflow_dispatch:
     inputs:
       omitir_prueba_de_humo:
@@ -67,6 +86,9 @@ jobs:
   gate:
     name: GCP habilitado
     runs-on: ubuntu-latest
+    outputs:
+      dev: ${{ steps.envs.outputs.dev }}
+      qa: ${{ steps.envs.outputs.qa }}
     steps:
       - name: Estado de GCP_ENABLED y de la rama
         env:
@@ -80,6 +102,16 @@ jobs:
           else
             echo "GCP_ENABLED=true en main: se aplican las etapas 1 a 3."
           fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Se valida siempre, también sin GCP: un valor inválido falla ahora y no en el primer apply.
+      - id: envs
+        name: Entornos apagados (GCP_DISABLED_ENVS)
+        working-directory: gcp-datacenter
+        env:
+          GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}
+        run: python3 scripts/disabled-envs.py outputs "${GITHUB_OUTPUT}"
 
   # --- Raíces comunes (entorno protegido `common`, con revisores) ------------------------
 
@@ -109,12 +141,12 @@ jobs:
       stage: 2-networks
       environment: common
 
-  # --- dev (entorno `dev`, sin revisores) -----------------------------------------------
+  # --- dev (entorno `dev`, sin revisores; se omite si GCP_DISABLED_ENVS lo trae) ---------
 
   dev-networks:
     name: dev / 2-networks
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: networks-hub
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.dev == 'true'
+    needs: [gate, networks-hub]
     permissions:
       contents: read
       id-token: write
@@ -126,8 +158,8 @@ jobs:
 
   dev-workloads:
     name: dev / 3-workloads
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: dev-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.dev == 'true'
+    needs: [gate, dev-networks]
     permissions:
       contents: read
       id-token: write
@@ -144,8 +176,8 @@ jobs:
   # Solo se omite a pedido, en una ejecución manual con omitir_prueba_de_humo = true.
   dev-smoke:
     name: dev / prueba de humo
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: dev-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.dev == 'true'
+    needs: [gate, dev-workloads]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -230,12 +262,17 @@ jobs:
           bash ../scripts/go-test-report.sh "${RUNNER_TEMP}/smoke.json" 0 "${GITHUB_STEP_SUMMARY}" || code=1
           exit "${code}"
 
-  # --- qa (después de la prueba de humo de dev) -----------------------------------------
+  # --- qa (después de la prueba de humo de dev, o del hub si dev está apagado) -----------
+  # !cancelled() deja evaluar la condición aunque dev-smoke se haya omitido; las demás
+  # comprobaciones exigen el éxito de cada trabajo previo, salvo dev-smoke omitido con dev apagado.
 
   qa-networks:
     name: qa / 2-networks
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: dev-smoke
+    if: >-
+      ${{ !cancelled() && vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+      && needs.gate.outputs.qa == 'true' && needs.networks-hub.result == 'success'
+      && (needs.dev-smoke.result == 'success' || (needs.dev-smoke.result == 'skipped' && needs.gate.outputs.dev != 'true')) }}
+    needs: [gate, networks-hub, dev-smoke]
     permissions:
       contents: read
       id-token: write
@@ -247,8 +284,8 @@ jobs:
 
   qa-workloads:
     name: qa / 3-workloads
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: qa-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.qa == 'true'
+    needs: [gate, qa-networks]
     permissions:
       contents: read
       id-token: write
@@ -259,11 +296,17 @@ jobs:
       environment: qa
 
   # --- prod (después de qa; entorno protegido `prod`, con revisores) --------------------
+  # Nunca se apaga. Espera a qa y a la prueba de humo de dev; cada una cuenta como lista si
+  # terminó con éxito o si su entorno está apagado.
 
   prod-networks:
     name: prod / 2-networks
-    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    needs: qa-workloads
+    if: >-
+      ${{ !cancelled() && vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+      && needs.networks-hub.result == 'success'
+      && (needs.dev-smoke.result == 'success' || (needs.dev-smoke.result == 'skipped' && needs.gate.outputs.dev != 'true'))
+      && (needs.qa-workloads.result == 'success' || (needs.qa-workloads.result == 'skipped' && needs.gate.outputs.qa != 'true')) }}
+    needs: [gate, networks-hub, dev-smoke, qa-workloads]
     permissions:
       contents: read
       id-token: write

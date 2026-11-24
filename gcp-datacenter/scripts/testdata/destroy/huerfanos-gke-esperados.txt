@@ -1,0 +1,7 @@
+HUERFANO compute.googleapis.com/Disk //compute.googleapis.com/projects/example-landing-zone/zones/us-central1-b/disks/pvc-11111111-2222-3333-4444-555555555555
+HUERFANO compute.googleapis.com/Disk //compute.googleapis.com/projects/example-landing-zone/zones/us-central1-c/disks/pvc-66666666-7777-8888-9999-000000000000
+HUERFANO compute.googleapis.com/Firewall //compute.googleapis.com/projects/example-landing-zone/global/firewalls/bnt-dev-leftover
+HUERFANO compute.googleapis.com/Firewall //compute.googleapis.com/projects/example-landing-zone/global/firewalls/gke-bnt-dev-app-gke-1a2b3c4d-all
+HUERFANO compute.googleapis.com/Firewall //compute.googleapis.com/projects/example-landing-zone/global/firewalls/k8s-fw-a0123456789abcdef0123456789abcde
+HUERFANO compute.googleapis.com/NetworkEndpointGroup //compute.googleapis.com/projects/example-landing-zone/zones/us-central1-a/networkEndpointGroups/k8s1-1a2b3c4d-app-dev-app-80-5e6f7a8b
+HUERFANO compute.googleapis.com/NetworkEndpointGroup //compute.googleapis.com/projects/example-landing-zone/zones/us-central1-b/networkEndpointGroups/k8s1-9f8e7d6c-web-80-0a1b2c3d

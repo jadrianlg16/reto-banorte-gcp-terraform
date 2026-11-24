@@ -22,9 +22,12 @@
 #     cambia hasta que esa persona la aplica.
 #   - Un archivo de stages/ dentro de una raíz afecta a la raíz más profunda que lo contiene:
 #     un cambio en stages/2-networks/envs/dev afecta solo al spoke dev, no al hub.
-#   - Un archivo de stages/ fuera de toda raíz (por ejemplo stages/3-workloads/README.md o
-#     código común en stages/3-workloads/comun/) afecta a todas las raíces que cuelgan del
-#     directorio más cercano que tenga raíces debajo (las tres de stages/3-workloads/envs).
+#   - Un archivo .md no afecta a ninguna raíz, esté donde esté (README de módulos y etapas que
+#     regenera terraform-docs, docs/): ningún .tf lee archivos con file() ni templatefile(), así
+#     que no cambian ningún plan. Va en línea con apply.yml, que no se dispara por ellos.
+#   - Un archivo de stages/ fuera de toda raíz (por ejemplo código común en
+#     stages/3-workloads/comun/) afecta a todas las raíces que cuelgan del directorio más cercano
+#     que tenga raíces debajo (las tres de stages/3-workloads/envs).
 #   - Un directorio local que una raíz usa como módulo (source = "../…" o "./…", fuera de
 #     modules/) la afecta, también de forma transitiva: un cambio ahí planea esa raíz aunque el
 #     directorio esté dentro de otra raíz.
@@ -140,6 +143,7 @@ if [ "$all" -eq 0 ]; then
 
   for f in ${CHANGED[@]+"${CHANGED[@]}"}; do
     case "$f" in
+      *.md) continue ;; # documentación: ningún .tf la lee (ver el encabezado)
       modules/* | policies/*)
         all=1
         break

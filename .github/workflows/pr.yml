@@ -2,7 +2,15 @@
 #
 # Sin GCP (siempre): scripts/check.sh con Terraform 1.9.8 (fmt, validate, tflint, checkov) y
 # 1.16.5 (además terraform test); scripts/policy-check.sh (conftest verify y planes de ejemplo
-# de policies/); scripts/selftest.sh (scripts de los flujos); terraform-docs al día.
+# de policies/); scripts/selftest.sh (scripts de los flujos); terraform-docs al día; go vet y
+# go test de tests/ (las pruebas que tocan GCP se omiten solas).
+#
+# Corre con cualquier cambio, también solo de documentación: las comprobaciones obligatorias
+# tienen que reportarse siempre (un flujo que no se dispara deja el PR esperando), y
+# scripts/docs.sh --check y selftest.sh (que lee docs/pipeline.md) revisan la documentación. Por
+# eso aquí no hay filtro de rutas en el disparo; el filtro equivalente está en los planes: solo
+# corren para las raíces afectadas, y ni docs/ ni un .md (README de módulos y etapas) afectan
+# ninguna (scripts/affected-roots.sh), igual que apply.yml no se dispara por ellos.
 #
 # Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada
 # (scripts/affected-roots.sh), con la cuenta de lectura y sin candado (ADR 0029 §3), Conftest
@@ -11,7 +19,7 @@
 # Comprobaciones obligatorias de la protección de main (nombres estables, docs/pipeline.md §4):
 #   estático (terraform 1.9.8), estático (terraform 1.16.5),
 #   conftest (pruebas y planes de ejemplo), scripts (autopruebas), terraform-docs al día,
-#   plan-gate.
+#   go (vet y pruebas sin GCP), plan-gate.
 # Los trabajos de plan tienen un nombre por raíz y no se pueden exigir uno por uno: plan-gate
 # resume su resultado (falla si alguno falló o se canceló).
 # Autenticación por Workload Identity Federation; sin llaves. Variables de repositorio:
@@ -31,7 +39,11 @@
 #                                   ...}. Para cada raíz se combinan "common" y la llave de la
 #                                   raíz (scripts/root-tfvars.py). "common" debe traer
 #                                   project_id, el proyecto único (ADR 0029 §1): sin él, el plan
-#                                   de una raíz que lo declara falla.
+#                                   de una raíz que lo declara falla. También falla si un valor
+#                                   resuelto (del JSON o del terraform.tfvars.example) lleva un
+#                                   marcador de los ejemplos: example.com, example-...,
+#                                   REEMPLAZAR, <...> o un ID de solo ceros; el mensaje nombra las
+#                                   variables que faltan, sin mostrar valores.
 # Secreto opcional: INFRACOST_API_KEY (sin él se omite el costo).
 
 name: pr
@@ -166,6 +178,33 @@ jobs:
       - name: scripts/docs.sh --check
         run: bash scripts/docs.sh --check
 
+  # Pruebas de Go sin GCP: go vet y go test de todos los paquetes de tests/. Este trabajo no
+  # tiene id-token ni variables de GCP: las pruebas de integración, la de extremo a extremo y la
+  # de humo se omiten solas (t.Skip por la variable o la compuerta que falta) y corren las que no
+  # necesitan GCP: config.example.json contra los variables.tf de cada raíz (variables
+  # obligatorias y tipos), la validación de binary_authorization_allowlist_patterns, el orden de
+  # las raíces y la evaluación de conectividad. Tarda segundos (8 s el 24 nov 2026 en Windows,
+  # sin la descarga de módulos).
+  go:
+    name: go (vet y pruebas sin GCP)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gcp-datacenter/tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: gcp-datacenter/tests/go.mod
+          cache-dependency-path: gcp-datacenter/tests/go.sum
+
+      - name: go vet ./...
+        run: go vet ./...
+
+      - name: go test ./... (sin GCP)
+        run: go test -count=1 ./...
+
   # ---------------------------------------------------------------------------------------
   # Trabajos con GCP: se omiten mientras GCP_ENABLED no sea "true".
 
@@ -242,7 +281,8 @@ jobs:
           tar -xzf "${file}" conftest
           sudo install -m 0755 conftest /usr/local/bin/conftest
 
-      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1) o
+      # si un valor resuelto es de los ejemplos (marcadores en scripts/root-tfvars.py).
       - name: Variables del plan
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}

@@ -51,7 +51,12 @@ Cada prueba de integración:
 
 Los nombres son únicos por corrida: `prefix` = `t` + cinco caracteres de `random.UniqueID()` en
 minúsculas, y todo recurso etiquetable lleva las cinco etiquetas obligatorias más
-`terratest_run=<id>`. Así varias pruebas comparten el proyecto único sin chocar.
+`terratest_run=<id>`. Así varias pruebas comparten el proyecto único sin chocar. La etiqueta
+`env` vale `test` (`helpers.TestEnvLabel`), que no es ningún entorno de la landing zone: un resto
+de prueba no se confunde con un recurso de dev en `scripts/destroy-orphans.py` ni en una búsqueda
+por `env=dev`. `policies/required_labels.rego` solo exige que la llave exista y los módulos solo
+validan las llaves y `managed_by`; la variable `environment` de cada fixture sigue en `dev`
+(`vpc-sc`, en `common`), porque los módulos sí validan su valor.
 VERIFICAR-EN-APPLY: que las cuotas del proyecto (redes, routers, IP por región) alcancen para las
 pruebas en paralelo (`go test -parallel`, por defecto el número de CPU).
 
@@ -64,11 +69,12 @@ vive en el código.
 
 | Variable | Uso | Quién la necesita |
 |---|---|---|
-| `TERRATEST_PROJECT_ID` | Proyecto único de pruebas, donde corren todas las de integración por defecto (también cuota y llamadas sin proyecto propio) | Todas, salvo con `TEST_EPHEMERAL_PROJECTS=true` |
+| `TERRATEST_PROJECT_ID` | Proyecto único de pruebas, donde corren todas las de integración por defecto (también cuota y llamadas sin proyecto propio). Tiene que ser otro que el de la landing zone | Todas, salvo con `TEST_EPHEMERAL_PROJECTS=true` |
+| `TERRATEST_LANDING_ZONE_PROJECT_ID` | Proyecto de la landing zone. Si está definida e igual a `TERRATEST_PROJECT_ID`, cada prueba de integración se detiene con un error (`helpers.RequireProjectEnv`). En CI la exporta `terratest.yml` desde `GCP_TFVARS_JSON.common.project_id`; en local, exportarla a mano | Opcional (guarda) |
 | `TEST_EPHEMERAL_PROJECTS` | `true`: un proyecto efímero por prueba en vez del proyecto único (necesita las tres de abajo) | Opcional |
 | `TERRATEST_BILLING_ACCOUNT` | Cuenta de facturación de los proyectos efímeros | Solo con `TEST_EPHEMERAL_PROJECTS=true` |
 | `TERRATEST_FOLDER_ID` | Carpeta (`folders/<n>` o `<n>`) de los proyectos efímeros. Opcional: sin ella se usa la organización | Proyectos efímeros |
-| `TERRATEST_ORG_ID` | Número de la organización. Sin ella se omiten las pruebas que solo valen con organización | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
+| `TERRATEST_ORG_ID` | Número de la organización. Sin ella se omiten las pruebas que solo valen con organización (`helpers.RequireOrganization`, con la marca `[sin-organizacion]` en el motivo; esas omisiones no cuentan contra `TERRATEST_MAX_SKIPS`) | Proyectos efímeros sin carpeta; `TestOrg`, `TestVPCSC` |
 | `GOOGLE_CLOUD_PROJECT` | Proyecto por defecto de `gcloud` y del proveedor | Recomendado |
 | `TEST_REGION` / `TEST_DR_REGION` | Regiones (por defecto `us-central1` / `us-east4`). Deben estar en los mapas de códigos cortos de los módulos | Opcional |
 | `TEST_DIRECTORY_CUSTOMER_ID` | Cliente de Cloud Identity (`C…`). Opcional: con ella `TestOrg` también prueba `iam.allowedPolicyMemberDomains` | `TestOrg` |
@@ -159,14 +165,21 @@ ningún shell: llama a `terraform` y `gcloud` directamente (en Windows, `gcloud.
 
 - **compile** (siempre): `go vet ./...` y `go test -count=1 -run XXX ./...`. Compila los binarios de
   prueba sin ejecutar ninguna.
-- **integration** (solo si la variable de repositorio `GCP_ENABLED` es `true`): autentica con WIF y
+- **integration** (solo si la variable de repositorio `GCP_ENABLED` es `true`): antes de todo,
+  `scripts/terratest-project-check.py` falla si `TERRATEST_PROJECT_ID` es
+  `GCP_TFVARS_JSON.common.project_id` (sin imprimir ninguno de los dos) y exporta
+  `TERRATEST_LANDING_ZONE_PROJECT_ID` para la guarda de cada prueba. Después autentica con WIF y
   corre `go test -count=1 -json -timeout 170m` sobre todos los paquetes salvo `e2e`; con una
   etiqueta `modules/<módulo>/vX.Y.Z`, solo las pruebas de ese módulo
   (`scripts/module-tests.sh`). Las compuertas y datos (`TEST_ALLOW_EXPENSIVE`, `TEST_ALLOW_ORG` y
   las `TEST_*` específicas) llegan de variables de repositorio; sin ellas, esas pruebas se
   omiten. `scripts/go-test-report.sh` lista en el resumen cada prueba omitida con su motivo y
   hace fallar el trabajo si hay más omitidas que `TERRATEST_MAX_SKIPS` (0 por defecto): una
-  omisión no pasa en silencio.
+  omisión no pasa en silencio. Excepción: con `TERRATEST_ORG_ID` vacío, `TestOrg` y `TestVPCSC`
+  se omiten con la marca `[sin-organizacion]` (`helpers.OrgSkipMarker`) y no cuentan, porque
+  sin organización no hay cómo correrlas; se listan igual, marcadas "sin organización: no
+  cuenta". Con `TERRATEST_ORG_ID` definido cuentan como cualquier otra (por ejemplo, si falta
+  `TEST_ALLOW_ORG`).
 - La prueba de extremo a extremo no corre en CI: se lanza a mano.
 - `TestDevSmoke` corre en `apply.yml` (trabajo `dev / prueba de humo`), no aquí, con
   `TEST_SMOKE=true`, `TEST_E2E_STATE_BUCKET` y la cuenta de lectura `GCP_AUDIT_SERVICE_ACCOUNT`
@@ -230,9 +243,17 @@ Ya no hace falta `TERRATEST_ORG_ID`: el proyecto y su número salen de las salid
 
 - **Proyecto único.** `common.project_id` es el proyecto que creó una persona (ADR 0029 §1); las
   llaves de `stages` son las raíces del ADR 0029 §2 (`0-bootstrap`, `1-base`, `2-networks`,
-  `2-networks/envs/dev`, `3-workloads/envs/dev`). `TestConfigExampleRoots` (sin GCP) rechaza
-  una llave de otra raíz. Los nombres de las variables siguen los `variables.tf` de cada raíz; una
-  variable que la raíz no declara solo produce una advertencia de Terraform (`-var-file`).
+  `2-networks/envs/dev`, `3-workloads/envs/dev`). `TestConfigExampleRoots` (sin GCP) lee con el
+  analizador de HCL los bloques `variable` de los `*.tf` de cada raíz y, con las mismas
+  variables que arma la prueba (common, la raíz y lo que inyecta: `state_bucket`,
+  `deletion_protection` de las cargas de dev y `labels`), exige: solo raíces del ADR 0029 §2 y
+  todas ellas; todas las variables sin `default`; que cada valor quepa en el tipo de su variable
+  con la conversión de Terraform (un objeto no entra en `set` o `list`, un arreglo no entra en
+  `map` u `object`, ni un texto en `number`; también lo de adentro), y que la llave de una raíz
+  no traiga variables que la raíz no declara. Una variable de `common` que una raíz no declara
+  solo produce una advertencia de Terraform (`-var-file`). Si una raíz agrega una variable
+  obligatoria, la prueba falla hasta agregarla al ejemplo. `TestJSONFitsType` prueba la
+  comparación de tipos con casos buenos y malos.
 - **Imagen de Cloud Run y Binary Authorization.** `1-base` crea la única política de Binary
   Authorization del proyecto, que solo admite los repositorios de Artifact Registry del proyecto
   y `binary_authorization_allowlist_patterns` (ADR 0029 §4). La imagen de muestra

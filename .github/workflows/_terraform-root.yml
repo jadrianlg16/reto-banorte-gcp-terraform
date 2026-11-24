@@ -166,7 +166,8 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
 
-      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1) o
+      # si un valor resuelto es de los ejemplos (marcadores en scripts/root-tfvars.py).
       - name: Variables de la raíz
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}

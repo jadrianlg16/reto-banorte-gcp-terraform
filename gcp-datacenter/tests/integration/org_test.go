@@ -36,6 +36,7 @@ const domainConstraint = "iam.allowedPolicyMemberDomains"
 // No corre en paralelo: las políticas valen para todo el proyecto mientras dura la prueba
 // (ubicaciones, IP externas, VM blindadas) y en el proyecto único afectarían a las demás.
 func TestOrg(t *testing.T) {
+	helpers.RequireOrganization(t, "TestOrg")
 	helpers.RequireOrgScope(t, "TestOrg")
 	helpers.RequireEnv(t, helpers.EnvOrgID)
 	run, project := serialModuleTest(t, "org", "orgpolicy.googleapis.com")

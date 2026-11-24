@@ -25,12 +25,15 @@
 # destroy que falló a medias.
 #
 # Al final, con la cuenta de lectura (GCP_AUDIT_SERVICE_ACCOUNT), Cloud Asset Inventory lista el
-# proyecto y scripts/destroy-orphans.py falla si queda algo del entorno (etiqueta env o nombre
-# con <prefix>-<env>-) que no conserve 1-base ni administre todavía un estado.
+# proyecto y scripts/destroy-orphans.py falla si queda algo del entorno (etiqueta env, nombre que
+# contiene <prefix>-<env>- o restos de GKE asociados por red, clúster o namespace) que no
+# conserve 1-base ni administre todavía un estado. Los restos de GKE sin entorno reconocible
+# salen como aviso en el resumen, sin hacer fallar el trabajo.
 #
 # Comparte el grupo de concurrencia de apply.yml: nunca corren a la vez. El siguiente apply.yml
-# (push a main o manual) vuelve a crear lo destruido. Para que no lo recree: GCP_ENABLED a otro
-# valor después del destroy.
+# (push a main o manual) vuelve a crear lo destruido. Para que no lo recree: agregar el entorno a
+# la variable de repositorio GCP_DISABLED_ENVS (por ejemplo "dev" o "dev,qa"; ver apply.yml)
+# antes o después del destroy, o GCP_ENABLED a otro valor para no aplicar nada.
 
 name: destroy
 
