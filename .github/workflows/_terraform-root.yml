@@ -13,7 +13,9 @@
 # Dos trabajos:
 #   plan   sin entorno de GitHub: WIF con la cuenta de LECTURA (GCP_AUDIT_SERVICE_ACCOUNT, salida
 #          read_service_account de 0-bootstrap) y `-lock=false`: esa cuenta no puede escribir
-#          el candado del estado (ADR 0029 §3). Plan guardado, Conftest sobre el plan y
+#          el candado del estado (ADR 0029 §3). VERIFICAR-EN-APPLY: que esa cuenta pueda leer
+#          (refrescar) cada recurso de cada raíz, también secretos, llaves e IAM; un permiso
+#          que falte hace fallar el plan, no lo debilita. Plan guardado, Conftest sobre el plan y
 #          resumen del plan (acciones por dirección y la línea "Plan:") en el resumen del
 #          trabajo, que se ve en la página de la ejecución mientras se espera la aprobación.
 #          Calcula la huella del plan (ver abajo).
