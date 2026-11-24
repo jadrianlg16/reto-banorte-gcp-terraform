@@ -1017,7 +1017,7 @@ run "llaves_con_la_forma_anterior_por_ubicacion" {
           primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
           dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
         } } }
-        notification_channel_ids      = {}
+        notification_channel_ids = {}
       }
     }
   }
@@ -1072,7 +1072,7 @@ run "repositorio_serializado_como_json" {
           primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
           dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
         } } }
-        notification_channel_ids      = {}
+        notification_channel_ids = {}
       }
     }
   }
@@ -1390,7 +1390,7 @@ run "rechaza_estado_sin_llave_de_dr" {
           primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
           dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
         } } }
-        notification_channel_ids      = {}
+        notification_channel_ids = {}
       }
     }
   }
@@ -1475,7 +1475,7 @@ run "rechaza_repositorio_de_otro_proyecto" {
           primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-prod-app-gke"
           dr      = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-east4/clusters/bnt-prod-app-gke-dr"
         } } }
-        notification_channel_ids      = {}
+        notification_channel_ids = {}
       }
     }
   }
@@ -1739,8 +1739,8 @@ run "rechaza_apagado_sin_la_cuenta_de_1_base" {
         gke_workload_identity_members = { dev = { app = {
           primary = "principalSet://iam.googleapis.com/projects/111111111111/locations/global/workloadIdentityPools/example-lz.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-lz/locations/us-central1/clusters/bnt-dev-app-gke"
         } } }
-        off_hours_role_id             = "projects/example-lz/roles/bntOffHoursScheduler"
-        notification_channel_ids      = {}
+        off_hours_role_id        = "projects/example-lz/roles/bntOffHoursScheduler"
+        notification_channel_ids = {}
       }
     }
   }
