@@ -1,5 +1,10 @@
 # Contrato de construcción: Datacenter en GCP con Terraform
 
+> **Desde el 24 nov 2026 todo va en un solo proyecto de GCP** (pedido de Banorte, junta del 23
+> nov). El [ADR 0029](adr/0029-un-solo-proyecto.md) manda sobre §2, §3, §6 y §7 de este
+> documento hasta que se reescriban; donde choquen, gana el ADR 0029. El diseño de varios
+> proyectos queda en la rama `archivo/multiproyecto`.
+
 Fuente única para quien construya o revise este repositorio (personas o agentes). Si algo de
 aquí contradice la especificación de Banorte, gana la especificación, salvo las desviaciones
 listadas en §2, que quedan registradas como ADR.

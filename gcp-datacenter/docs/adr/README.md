@@ -37,6 +37,7 @@ se cita solo por nombre de sección.
 | [0026](0026-api-de-google-por-el-vip-restringido-en-todos-los-entornos.md) | API de Google por el VIP restringido | Aclaración | Zonas de `googleapis.com`, `gcr.io`, `pkg.dev` y `run.app` hacia el VIP de `google_apis_vip` (`restricted` en los tres entornos). |
 | [0027](0027-desviaciones-aceptadas-del-cis.md) | Desviaciones aceptadas del CIS | Desviación del CIS | Once recomendaciones del CIS v5.0 abiertas por decisión (1.6, 2.1, 2.3, 2.4, 3.8, 3.9, 3.10 en dev y qa, 4.7, 4.11, 4.12, 6.9), con su riesgo y lo que las cierra; novena métrica de firewall y límite de la política jerárquica. |
 | [0028](0028-apagado-fuera-de-horario-de-dev-y-qa.md) | Apagado fuera de horario de dev y qa | Aclaración | `off_hours_shutdown` (rechazado en prod): Cloud SQL y pools de GKE con trabajos de Cloud Scheduler, MIG con programa de escalado; sin deriva por `ignore_changes` y `postcondition`; cuenta y rol mínimos creados por la etapa 4. |
+| [0029](0029-un-solo-proyecto.md) | Toda la landing zone en un solo proyecto de GCP | Desviación (pedido del cliente) | Cuatro etapas (`0-bootstrap`, `1-base`, `2-networks`, `3-workloads`); hub y tres spokes como VPC del mismo proyecto; organización opcional; una cuenta del pipeline por raíz y entorno ligada al entorno de GitHub, más `tf-read`; regla de recursos únicos; destroy sin borrar proyectos. Manda sobre §2, §3, §6 y §7 del contrato. |
 
 ## Formato
 

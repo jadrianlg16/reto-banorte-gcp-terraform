@@ -1,137 +1,117 @@
 # Plan de rediseño: todo en un solo proyecto de GCP
 
-**Estado:** propuesta. Es un plan, no se ha construido nada. Se escribió el 24 nov 2026.
+**Estado:** versión 2, del 24 nov 2026. Ya incluye la revisión independiente con Fable 5.2 del
+mismo día. El diseño detallado está en el
+[ADR 0029](adr/0029-un-solo-proyecto.md), que es lo que siguen los constructores.
 
 **Origen:** en la junta del 23 nov 2026, Banorte confirmó que todo el despliegue va dentro de
 **un solo proyecto de GCP**.
 
 **Decisiones del equipo (24 nov 2026):**
 
-- No se sabe si el proyecto estará dentro de una organización. El diseño tiene que funcionar sin
-  organización y aprovecharla si existe.
-- Se mantienen los tres entornos: dev, qa y prod.
-- El diseño de varios proyectos se conserva en la rama `archivo/multiproyecto` (commit
-  `d22d164`, ya en GitHub). El rediseño se trabaja en la rama `feat/un-proyecto`.
+- No se sabe si habrá organización. El diseño funciona sin ella y la aprovecha si existe.
+- Se mantienen dev, qa y prod.
+- El diseño de varios proyectos se conserva en la rama `archivo/multiproyecto` (commit `d22d164`,
+  ya en GitHub). El rediseño se trabaja en la rama `feat/un-proyecto`.
 
 ## 1. Qué cambia y por qué
 
-El diseño actual reparte la landing zone en unos diez proyectos, con carpetas, Shared VPC y
-controles de organización. En un solo proyecto, estas piezas no se pueden usar o pierden sentido:
-
 | Pieza actual | En un proyecto | Fuente |
 |---|---|---|
-| Carpetas `bootstrap`, `common`, `dev`, `qa` y `prod` | No existen; los entornos se separan dentro del proyecto | — |
-| Shared VPC (host por entorno y proyectos de servicio) | **No se puede.** Necesita organización, y el host y el servicio deben ser proyectos distintos | [Shared VPC](https://docs.cloud.google.com/vpc/docs/shared-vpc) |
-| Política de firewall jerárquica | **No se puede sin organización ni carpetas.** Se reemplaza por una política de firewall de red (global o regional) por VPC; que funcione en un proyecto suelto es HYPOTHESIS | [Firewall policies](https://docs.cloud.google.com/firewall/docs/firewall-policies-overview) |
-| Sink agregado de la organización | Se reemplaza por un sink de proyecto con exclusiones | [Sinks agregados](https://docs.cloud.google.com/logging/docs/export/aggregated_sinks), [sinks de proyecto](https://docs.cloud.google.com/logging/docs/export/configure_export_v2) |
-| Nueve políticas de organización | Solo si hay organización, aplicadas al proyecto. Que sin organización no se puedan usar es HYPOTHESIS | [Organization policy](https://docs.cloud.google.com/resource-manager/docs/organization-policy/overview) |
-| Perímetro de VPC Service Controls | Solo con organización, y rodearía todo el proyecto, sin separar entornos. Que haga falta la organización es HYPOTHESIS (la página no lo dice explícitamente) | [VPC-SC](https://docs.cloud.google.com/vpc-service-controls/docs/overview) |
-| SCC a nivel organización y mapa CIS de toda la organización | Se activa en el proyecto (Standard o Premium); el cumplimiento solo se ve para ese proyecto | [Activar SCC](https://docs.cloud.google.com/security-command-center/docs/activate-scc-overview), [compliance](https://docs.cloud.google.com/security-command-center/docs/compliance-management) |
-| Presupuesto por proyecto o carpeta | Un presupuesto para el proyecto. Un presupuesto de proyecto no se puede filtrar por etiquetas | [Budgets](https://docs.cloud.google.com/billing/docs/how-to/budgets) |
-| Aislamiento de IAM por proyecto | IAM condicional por prefijo de nombre (Compute lo admite en instancias, discos, firewall y balanceadores) y por etiquetas. Es más débil que un proyecto aparte; queda como riesgo en un ADR | [Condiciones de IAM](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes) |
+| Carpetas | No existen | — |
+| Shared VPC | **No se puede.** Necesita organización, y el host y el servicio deben ser proyectos distintos | [Shared VPC](https://docs.cloud.google.com/vpc/docs/shared-vpc) |
+| Política de firewall jerárquica | **No se puede sin organización ni carpetas.** Se reemplaza por una política de firewall de red por VPC | [Firewall policies](https://docs.cloud.google.com/firewall/docs/firewall-policies-overview) |
+| Sink agregado de la organización | Sink de proyecto con exclusiones | [Sinks](https://docs.cloud.google.com/logging/docs/export/configure_export_v2) |
+| Políticas de organización y VPC-SC | Solo con organización, y el perímetro rodea todo el proyecto. Sin organización: HYPOTHESIS que no se pueden usar (las páginas no lo dicen) | [Org policy](https://docs.cloud.google.com/resource-manager/docs/organization-policy/overview), [VPC-SC](https://docs.cloud.google.com/vpc-service-controls/docs/overview) |
+| SCC de la organización | Activación en el proyecto (Standard o Premium); el cumplimiento solo cubre ese proyecto. Que funcione sin organización es HYPOTHESIS | [Activar SCC](https://docs.cloud.google.com/security-command-center/docs/activate-scc-overview) |
+| Registros de acceso a datos solo en prod | La configuración de auditoría es única por proyecto: vale para los tres entornos | ADR 0029 §7 |
+| Presupuesto | Un presupuesto del proyecto, que crea una persona en `0-bootstrap`. Las etiquetas solo filtran presupuestos de cuenta de facturación | [Budgets](https://docs.cloud.google.com/billing/docs/how-to/budgets) |
+| Aislamiento de IAM por proyecto | Una cuenta del pipeline por entorno ligada al entorno de GitHub, y condiciones por nombre en Storage, KMS y Secret Manager. El resto queda como riesgo aceptado | ADR 0029 §3 y §9 |
+| Destroy borrando el proyecto | Destroy recurso por recurso; huérfanos por la etiqueta `env` y por el prefijo `<prefix>-<env>-` | ADR 0029 §8 |
 
-Lo que **sí funciona en un proyecto**, según la documentación oficial:
+Lo que **sí funciona en un proyecto**, según la documentación oficial: peering entre VPC del mismo
+proyecto, una conexión de PSA por VPC, roles personalizados de proyecto, políticas de denegación
+atadas al proyecto, contactos esenciales en el proyecto y Cloud Asset con alcance de proyecto. Los
+enlaces están en el ADR 0029.
 
-- Peering entre VPC del mismo proyecto ([VPC peering](https://docs.cloud.google.com/vpc/docs/vpc-peering)).
-- Varias VPC, cada una con su propia conexión de Private Service Access para Cloud SQL
-  ([PSA](https://docs.cloud.google.com/vpc/docs/configure-private-services-access)).
-- Roles personalizados a nivel proyecto ([custom roles](https://docs.cloud.google.com/iam/docs/creating-custom-roles)).
-- Políticas de denegación de IAM en el proyecto ([deny](https://docs.cloud.google.com/iam/docs/deny-overview)).
-  Que no exijan organización es una inferencia, no está escrito.
-- Contactos esenciales en el proyecto ([essential contacts](https://docs.cloud.google.com/resource-manager/docs/managing-notification-contacts)).
-- Cloud Asset Inventory con alcance de proyecto ([asset search](https://docs.cloud.google.com/asset-inventory/docs/searching-resources)).
+## 2. Arquitectura
 
-**Cuotas.** Todos los entornos comparten las cuotas del proyecto: número de redes, peerings por
-red, CPU e IP. La documentación no da números por defecto
-([cuotas de VPC](https://docs.cloud.google.com/vpc/docs/quota)): hay que revisarlos en la consola
-antes del despliegue. El diseño propuesto usa cinco VPC.
+- **Un hub y tres spokes** como VPC del mismo proyecto, unidas por peering. Además `onprem-sim`
+  con HA VPN, como hoy.
+- **Cuatro etapas:** `0-bootstrap` (a mano), `1-base`, `2-networks` (hub y spokes) y
+  `3-workloads` (por entorno). La tabla de raíces, prefijos, cuentas e interfaces está en el
+  ADR 0029 §2.
 
-## 2. Arquitectura propuesta
+Lo que cambió por la revisión independiente:
 
-**Recomendación: un hub y tres spokes como VPC independientes dentro del mismo proyecto.** Así se
-conserva la historia de hub-and-spoke y el aislamiento de red entre entornos.
-
-```
-Proyecto <prefix>-landing-zone  (creado por una persona; con o sin organización)
-├── VPC hub          HA VPN a onprem-sim (y a DR), DNS, política de firewall de red
-├── VPC dev  ─┐
-├── VPC qa   ─┼─ peering con el hub (sin peering entre spokes); NAT y PSA por spoke
-├── VPC prod ─┘
-├── VPC onprem-sim   on-premises simulado (ADR 0006)
-└── Recursos de cada entorno con nombre <prefix>-<env>-..., etiqueta environment=<env>
-    y cuentas de servicio propias
-```
-
-**Alternativa descartada: una sola VPC con una subred por entorno.** Es más simple, pero pierde el
-hub-and-spoke, el aislamiento de red y el ruteo hacia on-premises por entorno.
-
-### Etapas: de 6 a 4
-
-| Nueva etapa | Junta | Contenido |
+| Hallazgo | Gravedad | Cómo se resuelve |
 |---|---|---|
-| `0-bootstrap` (manual, una vez) | 0 | APIs, bucket de estado con CMEK, cuentas del pipeline, WIF y roles personalizados de proyecto. La política de denegación sale de la carpeta y se ata al proyecto |
-| `1-base` | 1 y 2 | Sink de logs y su bucket, `audit-alerts` una sola vez, contactos esenciales, presupuesto y notificación de SCC. También KMS y Secret Manager por entorno, IAM de personas con condiciones, la política de Binary Authorization (una por proyecto) y, solo si hay organización, las políticas de organización en el proyecto y VPC-SC opcional |
-| `2-networks` y `2-networks/envs/{dev,qa,prod}` | 3 | Hub, VPN, DNS y `onprem-sim`; spokes sin Shared VPC |
-| `3-workloads/envs/{dev,qa,prod}` | 4 y 5 | Cuentas de ejecución, Artifact Registry y las cargas de cada entorno |
-
-**Regla nueva:** las raíces de entorno no administran nada que sea único por proyecto (APIs,
-metadatos de OS Login, política de Binary Authorization, configuración de auditoría,
-contactos). Hoy cada raíz `4-projects/envs/*` declara su propia política de Binary
-Authorization y `project-factory` habilita APIs y metadatos por proyecto. En un solo proyecto,
-eso choca, y un destroy de dev podría apagar las APIs de prod. Todo eso pasa a `1-base`.
+| El estado, el pipeline y las cargas quedan en el mismo proyecto; `storage.admin` de la etapa 5 alcanzaría el bucket de estado | Alto | Ninguna cuenta con `storage.admin` sin condición. Política de denegación con una etiqueta sobre el bucket de estado (HYPOTHESIS que funcione sin organización). ADR 0029 §3 y §5 |
+| "Una cuenta por etapa" no separa entornos | Alto | Nueve cuentas: una por raíz y entorno, ligadas por WIF al entorno de GitHub, más `tf-read` de solo lectura para los `plan`. ADR 0029 §3 |
+| La regla de recursos únicos no bastaba | Alto | Regla ampliada. Fuera de las raíces de entorno quedan los permisos de proyecto para principales compartidos, el rol del apagado, los repositorios y la política de Binary Authorization, y la cuenta de Compute por defecto. Además, namespace de GKE `<app>-<env>` (Workload Identity comparte el pool del proyecto). ADR 0029 §4 y §9 |
+| Sin borrar proyectos no hay "empezar de cero" | Alto | El destroy de un entorno quita sus cargas, y el spoke solo con `incluir_red`. Lo persistente del entorno vive en `1-base`. Huérfanos por la etiqueta `env` y el prefijo. ADR 0029 §8 |
+| El calendario no era creíble | Alto | Calendario nuevo (§3): rebanada vertical primero y grabación de una ejecución ensayada, no de la primera |
+| La etiqueta es `env`, no `environment` | Medio | Corregido en todo el plan |
+| La red `default` y la cuenta de Compute por defecto en un proyecto creado a mano | Medio | Borrar `default` en el runbook 01. `DEPRIVILEGE` de la cuenta por defecto en `1-base` |
+| Registros de acceso a datos: todo o nada | Medio | Decidido en el ADR 0029 §7; el costo se recalcula |
+| Fuentes mal marcadas (SCC sin organización, presupuestos) | Medio | Corregidas en la tabla de §1 |
+| Cuotas compartidas | Medio | Revisarlas el primer día con la cuenta, antes de `0-bootstrap` |
+| `tests/` faltaba en el impacto | Medio | Agregado (tabla siguiente) |
 
 ### Impacto en el código
 
-El inventario se sacó de `grep` sobre `stages/` y `modules/` el 24 nov 2026.
+El inventario se sacó con `grep` el 24 nov 2026; los conteos de líneas los confirmó la revisión.
 
 | Parte | Qué pasa |
 |---|---|
-| 19 módulos (`kms`, `secrets`, `audit-alerts`, `network-hub`, `network-spoke`, `hybrid-connectivity`, `dns`, `load-balancer`, `cloud-armor`, `gke`, `compute-mig`, `cloud-run`, `cloud-sql`, `memorystore`, `filestore`, `storage`, `backup-dr`, `observability`, `off-hours-shutdown`) | Se reusan. Sus variables no dependen de organización, carpetas ni host de Shared VPC. Falta revisar que ningún nombre choque entre entornos en el mismo proyecto (HYPOTHESIS: la mayoría ya usa `<prefix>-<env>`) |
-| `org`, `iam`, `log-export`, `firewall`, `project-factory`, `vpc-sc` | Cambian. Pasan de organización o carpeta a proyecto, y de política jerárquica a política de red. `project-factory` se reduce a la configuración del proyecto único; `vpc-sc` queda opcional |
-| `folders` | Se retira (queda en `archivo/multiproyecto`) |
-| Etapas | Se reescriben las raíces. El mayor volumen está en `4-projects` (3,639 líneas `.tf`) y `5-workloads` (5,319), que se juntan en `3-workloads` |
-| Reglas de Conftest | Las 7 reglas no dependen de la organización; se quedan |
-| Pipeline | `apply.yml` con 4 etapas. `destroy.yml` destruye las raíces del entorno y busca huérfanos por la etiqueta `environment=<env>` dentro del proyecto, no por carpeta. `drift.yml` busca recursos no administrados en el proyecto. Cambian `destroy-orphans.py`, `unmanaged-resources.py` y `selftest.sh` |
-| Documentación | ADR 0029 "Un solo proyecto" reemplaza total o parcialmente a los ADR que suponen varios proyectos o carpetas: 0003 (VPC host de Shared VPC), 0005 (proyecto de servicio), 0009 (perímetro en dos etapas), 0011 (orden 0 a 5), 0014 (raíces de red), 0018 y 0023 (etapa 1 y política de denegación sobre la carpeta `bootstrap`), 0024 (Artifact Registry y Binary Authorization por proyecto) y 0027 (desviaciones del CIS). También se actualizan el contrato, el README, los cuatro diagramas, el runbook 01, `pipeline.md`, el mapa CIS (lo de organización pasa a "No aplica sin organización" o "Manual"), los costos, la guía del colaborador (mucho más corta: ya no hay que crear una organización) y `pendientes-apply.md` |
-
-**Ventaja para el calendario:** sin organización, cualquier integrante con una cuenta de Google y
-facturación puede crear el proyecto y desplegar. Desaparece el día de dominio y Cloud Identity
-que pedía la guía.
+| 19 módulos (`kms`, `secrets`, `audit-alerts`, `network-hub`, `network-spoke`, `hybrid-connectivity`, `dns`, `load-balancer`, `cloud-armor`, `gke`, `compute-mig`, `cloud-run`, `cloud-sql`, `memorystore`, `filestore`, `storage`, `backup-dr`, `observability`, `off-hours-shutdown`) | Se reusan. La revisión confirmó que los de red ya nombran con `<prefix>-<env>` |
+| `org`, `iam`, `log-export`, `firewall`, `project-factory`, `vpc-sc` | Cambian de organización o carpeta a proyecto. El firewall pasa de política jerárquica a política de red |
+| `folders` | Se retira |
+| Etapas | Se reescriben las raíces. Las tres raíces de entorno de `4-projects` y `5-workloads` son copias (1,213 y 1,773 líneas cada una), así que el trabajo real es cerca de un tercio de las 8,958 líneas |
+| Pipeline | `apply.yml` (39 referencias a la estructura vieja), `destroy.yml` (26), `drift.yml` (12), `_terraform-root.yml`, `pr.yml`, `affected-roots.sh` y `CODEOWNERS` |
+| Scripts | `selftest.sh` (44 referencias), `destroy-orphans.py`, `destroy-plan-check.py` y `unmanaged-resources.py` |
+| `tests/` | 7,805 líneas en Go; 15 archivos con referencias a proyectos o carpetas |
+| Reglas de Conftest | Las 7 se quedan |
+| Documentación | El contrato (§2, §3, §6 y §7), el README, los cuatro diagramas, el runbook 01, `pipeline.md`, el mapa CIS, los costos, la guía del colaborador y `pendientes-apply.md`. ADR afectados: tabla final del ADR 0029 |
 
 ## 3. Plan de trabajo
 
-Las fechas son una propuesta. La entrega final del equipo es el 3 dic 2026 (confirmar en Canvas),
-y antes hay que desplegar y grabar.
+La entrega final es el 3 dic 2026 (confirmar en Canvas). Nada de GCP se puede probar hasta que
+alguien del equipo tenga el proyecto.
 
-| Paso | Cuándo | Qué | Quién | Listo cuando |
-|---|---|---|---|---|
-| R0 | 24 nov | ADR 0029 y sección nueva del contrato: etapas, interfaces entre etapas, nombres y la regla de recursos únicos | Claude (gestor) | Revisado por el equipo |
-| R1 | 25 a 27 nov | Construcción en paralelo, un constructor Opus por bloque, cada uno en su rama: (a) `0-bootstrap` y `1-base`; (b) `2-networks`; (c) `3-workloads` (juntar 4 y 5); (d) pipeline, scripts y pruebas | Constructores | `check.sh`, `policy-check.sh`, `selftest.sh` y `docs.sh --check` en verde en cada rama |
-| R2 | 27 nov | Integrar, suite completa con Terraform 1.16.5 y 1.9.8, revisión independiente, documentación y diagramas | Claude y revisor | Suite en verde y hallazgos corregidos |
-| R3 | 28 a 29 nov | Despliegue real en el proyecto único (dev y luego qa y prod mínimos) y grabación del video ([plan de la presentación](plan-presentacion-final.md)) | Quien tenga la cuenta, con Claude Code | `apply.yml` en verde, evidencias y video en bruto |
-| R4 | 30 nov a 1 dic | Ajustes por lo que falle en GCP; presentación y documentos de la Fase 4 | Equipo y Claude | Documentos y presentación con datos reales |
-| R5 | 2 dic | Ensayo con tiempos | Equipo | Presentación ensayada |
+| Paso | Cuándo | Qué | Listo cuando |
+|---|---|---|---|
+| R0 | 24 nov | ADR 0029 y nota en el contrato | Hecho |
+| R1 | 24 a 25 nov | Construcción en paralelo, un constructor Opus por bloque y cada uno en su rama: (a) `0-bootstrap` y `1-base` con sus módulos; (b) `2-networks` con `firewall` y `network-spoke`; (c) `3-workloads`; (d) pipeline, scripts y `tests/` | Cada bloque con `check.sh` y sus pruebas en verde |
+| R2 | 25 a 26 nov | Integrar, suite completa con 1.16.5 y 1.9.8, revisión independiente y correcciones | Suite en verde y hallazgos corregidos |
+| R3 | 26 a 27 nov | Documentación, diagramas con íconos oficiales, guía nueva del colaborador, mapa CIS y costos | `docs.sh --check` en verde y enlaces sin romper |
+| R4 | Cuando haya proyecto (ideal 27 a 28 nov) | **Rebanada vertical real:** `0-bootstrap`, `1-base`, hub, spoke dev y Cloud Run con Cloud SQL. Se corrige lo que falle | Primer `apply.yml` en verde |
+| R5 | 28 a 29 nov | Desplegar el resto en modo mínimo y **ensayar la grabación**; grabar una ejecución ya probada | Video en bruto ([plan de la presentación](plan-presentacion-final.md)) |
+| R6 | 30 nov a 1 dic | Presentación y documentos de la Fase 4 con datos reales | Archivos listos |
+| R7 | 2 dic | Ensayo con tiempos | Presentación ensayada |
+
+**Si no alcanza el tiempo, se recorta en este orden** (propuesta de la revisión):
+
+1. DR y la segunda región, VPC-SC y políticas de organización: se quedan solo en código.
+2. qa desplegado.
+3. GKE, MIG, Filestore, Memorystore y Backup and DR. El video queda con Cloud Run, Cloud SQL, la
+   VPN y el pipeline.
+4. La búsqueda de recursos no administrados de `drift.yml` y la pata 1.9.8.
+5. La escena del destroy en el video.
+
+No se recortan la rebanada vertical real ni el ensayo de grabación.
 
 **Costo del despliegue de prueba.** La estimación actual del despliegue mínimo es de 20 a 22 USD
-por día con los tres entornos, u 8 a 9 USD solo con dev
-([`estimacion-de-costos.md`](estimacion-de-costos.md)). En un solo proyecto los recursos son casi
-los mismos, así que debería quedar parecido (HYPOTHESIS: se recalcula en R2).
+por día con los tres entornos ([`estimacion-de-costos.md`](estimacion-de-costos.md)). En R3 se
+recalcula con los registros de acceso a datos en los tres entornos.
 
 ## 4. Riesgos
 
 | Riesgo | Mitigación |
 |---|---|
-| No alcanza el tiempo para reescribir y desplegar antes del 3 dic | Si R2 se atrasa, desplegar solo dev y prod para el video y dejar qa en código |
-| Una cuenta del pipeline con roles de proyecto puede tocar todos los entornos | Una cuenta por etapa, condiciones de IAM por prefijo donde se admitan y revisión del plan en cada PR; riesgo escrito en el ADR 0029 |
-| El destroy de dev borra algo compartido | Regla de recursos únicos en `1-base`, `disable_on_destroy = false` en las APIs y `destroy-plan-check.py` ampliado para rechazar recursos sin `environment=dev` |
-| Cuotas del proyecto | Revisarlas en la consola antes de R3; pedir aumentos el primer día |
-| Prueba gratuita sin aumentos de cuota | Usar una cuenta de facturación de pago (la guía ya lo recomienda) |
-
-## 5. Pendiente de decidir
-
-1. Quién crea el proyecto y pone la facturación, y en qué fechas puede desplegar y grabar.
-2. Si hay una organización disponible. Cambia solo `1-base` (políticas de organización y
-   VPC-SC opcional).
-3. Si se hace una ronda de revisión independiente antes del despliegue. Cuesta tokens, pero las
-   cinco rondas anteriores encontraron errores que las pruebas no veían.
-4. Nombre del proyecto y prefijo (hoy `bnt`).
+| Nadie tiene el proyecto a tiempo | Sin organización, cualquier integrante lo crea en minutos con su cuenta y facturación de pago |
+| El primer apply de la historia del repositorio encuentra muchas fallas (130 marcadores `VERIFICAR-EN-APPLY`) | Rebanada vertical primero (R4) y recortes (§3) |
+| Una cuenta de dev puede tocar Compute, GKE, Cloud Run o Cloud SQL de prod | Riesgo aceptado (ADR 0029 §9): la cuenta solo la obtiene el entorno `dev` de GitHub y los cambios pasan por PR |
+| El destroy de un entorno borra algo compartido | Regla de recursos únicos y `destroy-plan-check.py` que rechaza nombres sin `<prefix>-<env>-` |
+| Cuotas del proyecto | Revisarlas el primer día; pedir aumentos de inmediato |
+| Prueba gratuita sin aumentos de cuota | Cuenta de facturación de pago |
