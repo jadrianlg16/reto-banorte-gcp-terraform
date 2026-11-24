@@ -89,7 +89,7 @@ output "internal_lb_dns_records" {
 }
 
 output "gke_workload_identity_member" {
-  description = "Miembro serviceAccount:<proyecto>.svc.id.goog[<application>-<environment>/<cuenta>] que actúa como la cuenta workload (ADR 0029 §9). Lo enlaza 1-base (gke_workload_identity_bindings); null sin enable_gke o mientras 1-base no lo enlace."
+  description = "Mapa clúster (primary y, en los dr_environments de 1-base, dr) → principalSet de Workload Identity Federation for GKE de todos los pods del clúster <prefix>-<environment>-<application>-gke[-dr], que actúa como la cuenta workload (ADR 0029 §9). Lo enlaza 1-base (gke_workload_identity_bindings); null sin enable_gke o mientras 1-base no lo enlace."
   value       = var.enable_gke ? local.gke_workload_identity_member : null
 }
 

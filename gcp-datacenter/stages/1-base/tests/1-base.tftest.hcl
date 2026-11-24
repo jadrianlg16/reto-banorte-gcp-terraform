@@ -214,6 +214,22 @@ run "plan_con_valores_de_ejemplo" {
     ])
     error_message = "Cloud SQL por IAM solo para workload, run y mig, limitado a las instancias de su entorno."
   }
+  # Hallazgo N4: el rol del apagado solo sobre la instancia y los clústeres de su entorno.
+  assert {
+    condition = alltrue([
+      module.iam.conditions["runtime|dev/app/scheduler|projects/example-project-id/roles/bntOffHoursScheduler"].expression == join(" && ", [
+        "(resource.type != \"sqladmin.googleapis.com/Instance\" || resource.name.startsWith(\"projects/example-project-id/instances/bnt-dev-data-\"))",
+        join(" || ", [
+          "(resource.type != \"container.googleapis.com/Cluster\"",
+          "resource.name.startsWith(\"projects/example-project-id/locations/us-central1/clusters/bnt-dev-\")",
+          "resource.name.startsWith(\"projects/example-project-id/locations/us-east4/clusters/bnt-dev-\"))",
+        ]),
+      ]),
+      strcontains(module.iam.conditions["runtime|qa/app/scheduler|projects/example-project-id/roles/bntOffHoursScheduler"].expression, "/instances/bnt-qa-data-"),
+      !strcontains(module.iam.conditions["runtime|qa/app/scheduler|projects/example-project-id/roles/bntOffHoursScheduler"].expression, "bnt-dev-"),
+    ])
+    error_message = "La cuenta del apagado de cada entorno solo puede parchear su instancia de Cloud SQL y cambiar sus clústeres de GKE."
+  }
   assert {
     condition = alltrue([
       toset(keys(google_secret_manager_secret_iam_member.runtime)) == toset([
@@ -544,26 +560,39 @@ run "sin_prod_no_hay_reglas_de_cluster" {
   }
 }
 
-# Después del primer clúster de GKE: la cuenta de Kubernetes <app>-<env>/<cuenta> actúa como
-# workload, y cada entorno con su namespace.
+# Después del primer clúster de GKE: los pods del clúster de cada entorno y aplicación actúan
+# como su cuenta workload (hallazgo N1 de la segunda revisión: principalSet del clúster, no un
+# namespace que vale en cualquier clúster del proyecto).
 run "con_enlace_de_workload_identity" {
   command = plan
 
   variables {
     gke_workload_identity_bindings = true
-    gke_workload_ksa_name          = "api"
     applications                   = ["app", "pagos"]
     off_hours_environments         = ["dev"]
   }
 
   assert {
     condition = alltrue([
-      length(google_service_account_iam_member.workload_identity) == 6,
-      google_service_account_iam_member.workload_identity["prod/pagos"].member == "serviceAccount:example-project-id.svc.id.goog[pagos-prod/api]",
-      google_service_account_iam_member.workload_identity["prod/pagos"].role == "roles/iam.workloadIdentityUser",
-      output.gke_workload_identity_members["dev"]["app"] == "serviceAccount:example-project-id.svc.id.goog[app-dev/api]",
+      # 3 entornos × 2 aplicaciones (clúster primario) más prod × 2 (clúster de DR, dr_environments).
+      length(google_service_account_iam_member.workload_identity) == 8,
+      google_service_account_iam_member.workload_identity["prod/pagos/primary"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/example-project-id.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-project-id/locations/us-central1/clusters/bnt-prod-pagos-gke",
+      google_service_account_iam_member.workload_identity["prod/pagos/dr"].member == "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/example-project-id.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-project-id/locations/us-east4/clusters/bnt-prod-pagos-gke-dr",
+      google_service_account_iam_member.workload_identity["prod/pagos/primary"].role == "roles/iam.workloadIdentityUser",
+      !contains(keys(google_service_account_iam_member.workload_identity), "dev/app/dr"),
+      output.gke_workload_identity_members["dev"]["app"] == {
+        primary = "principalSet://iam.googleapis.com/projects/222222222222/locations/global/workloadIdentityPools/example-project-id.svc.id.goog/kubernetes.cluster/https://container.googleapis.com/v1/projects/example-project-id/locations/us-central1/clusters/bnt-dev-app-gke"
+      },
+      toset(keys(output.gke_workload_identity_members["prod"]["pagos"])) == toset(["primary", "dr"]),
     ])
-    error_message = "Con gke_workload_identity_bindings, un enlace por entorno y aplicación con el namespace <app>-<env>."
+    error_message = "Con gke_workload_identity_bindings, un enlace por clúster de cada entorno y aplicación (el de DR solo en dr_environments) con el principalSet kubernetes.cluster/…"
+  }
+  # Ningún enlace por namespace o cuenta de Kubernetes: valdría desde cualquier clúster del proyecto.
+  assert {
+    condition = alltrue([for m in google_service_account_iam_member.workload_identity :
+      startswith(m.member, "principalSet://") && strcontains(m.member, "/kubernetes.cluster/") && !strcontains(m.member, ".svc.id.goog[")
+    ])
+    error_message = "El enlace de Workload Identity es siempre el principalSet de un clúster."
   }
   assert {
     condition = alltrue([

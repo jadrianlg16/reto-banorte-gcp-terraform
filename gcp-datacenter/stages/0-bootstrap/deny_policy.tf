@@ -1,5 +1,6 @@
 # Protección del estado y de la etapa 0 (ADR 0029 §5): etiqueta <prefix>-proteccion = etapa-0
-# y política de denegación del proyecto contra las nueve cuentas del pipeline.
+# y política de denegación del proyecto contra las nueve cuentas del pipeline, más una regla para
+# todos los principales: nadie crea llaves de cuentas de servicio (hallazgo N4).
 #
 # Sin carpeta, la denegación va en el proyecto y distingue lo protegido por etiqueta: las
 # condiciones de una política de denegación solo reconocen funciones de etiquetas.
@@ -76,16 +77,26 @@ locals {
     "secretmanager.googleapis.com/versions.access",
   ]
 
-  # En todo el proyecto: WIF, roles personalizados, llaves de cuentas, borrar el proyecto y
-  # obtener tokens o firmas de cualquier cuenta de servicio. Ninguna cuenta del pipeline los
-  # necesita: adjuntar una cuenta de ejecución a un nodo, una VM, un servicio de Cloud Run o un
-  # trabajo de Cloud Scheduler pide actAs (que no se niega aquí), no un token. Así una cuenta que
-  # se diera serviceAccountTokenCreator sobre una cuenta de ejecución (tf-base administra su IAM)
-  # no podría actuar como ella fuera de Terraform. La toma de las cuentas del pipeline por WIF no
-  # se ve afectada: quien pide su token es la identidad federada, no la cuenta. Todos figuran en
-  # la lista de permisos admitidos en políticas de denegación (actualizada el 2026-11-18).
+  # En todo el proyecto: WIF, roles personalizados, llaves de cuentas, borrar el proyecto,
+  # obtener tokens o firmas de cualquier cuenta de servicio y cambiar qué servicios están
+  # habilitados. Ninguna cuenta del pipeline los necesita: adjuntar una cuenta de ejecución a un
+  # nodo, una VM, un servicio de Cloud Run o un trabajo de Cloud Scheduler pide actAs (que no se
+  # niega aquí), no un token. Así una cuenta que se diera serviceAccountTokenCreator sobre una
+  # cuenta de ejecución (tf-base administra su IAM) no podría actuar como ella fuera de
+  # Terraform. La toma de las cuentas del pipeline por WIF no se ve afectada: quien pide su token
+  # es la identidad federada, no la cuenta.
+  #
+  # Servicios (hallazgo N2): solo 0-bootstrap habilita APIs (google_project_service, ADR 0029
+  # §2) y la aplica una persona, que no está en esta regla. Se niegan habilitar, deshabilitar y
+  # cambiar la política de consumidor del proyecto (qué servicios están habilitados); no se niega
+  # serviceusage.services.use, que las nueve cuentas usan como proyecto de cuota
+  # (serviceUsageConsumer). Todos figuran en la lista de permisos admitidos en políticas de
+  # denegación (https://cloud.google.com/iam/docs/deny-permissions-support, actualizada el
+  # 2026-11-18).
   # VERIFICAR-EN-APPLY: que crear un trabajo de Cloud Scheduler con oauth_token de la cuenta sched
-  # y un clúster de GKE con la cuenta gke-nodes funcione con esta regla (solo piden actAs).
+  # y un clúster de GKE con la cuenta gke-nodes funcione con esta regla (solo piden actAs), y que
+  # ningún apply de 1-base, 2-networks o 3-workloads pida habilitar un servicio (un error
+  # serviceusage.services.enable denegado indica una API que falta en 0-bootstrap).
   untagged_denied_permissions = [
     "iam.googleapis.com/serviceAccounts.getAccessToken",
     "iam.googleapis.com/serviceAccounts.getOpenIdToken",
@@ -103,6 +114,27 @@ locals {
     "iam.googleapis.com/roles.delete",
     "iam.googleapis.com/serviceAccountKeys.create",
     "cloudresourcemanager.googleapis.com/projects.delete",
+    "serviceusage.googleapis.com/consumerpolicy.update",
+    "serviceusage.googleapis.com/services.enable",
+    "serviceusage.googleapis.com/services.disable",
+  ]
+
+  # Llaves de cuentas de servicio para todos (hallazgo N4): sin organización no existe la política
+  # iam.disableServiceAccountKeyCreation, y tf-base administra el IAM de las cuentas de ejecución
+  # (podría dar serviceAccountKeyAdmin sobre una a otro principal). Ningún flujo del proyecto usa
+  # llaves JSON (ADR 0007: WIF). Forma de la documentación ("Deny policies", caso
+  # "Centralizing administrative privileges"): principalSet://goog/public:all con excepciones.
+  #
+  # Sin excepción: 0-bootstrap no tiene una variable que identifique a la persona o al grupo que
+  # la administra (la aplica quien tiene owner e iam.denyAdmin, runbook 01). Esa persona puede
+  # quitar o cambiar la regla con iam.denyAdmin (los permisos iam.denypolicies.* no se pueden
+  # negar) si alguna vez necesita una llave.
+  # VERIFICAR-EN-APPLY: que gcloud iam service-accounts keys create sobre una cuenta de ejecución
+  # falle para la persona y para tf-base, y que ningún agente de servicio de las APIs del proyecto
+  # cree llaves administradas por el usuario (la documentación pide no negar permisos a los
+  # agentes de servicio; public:all los incluye: HYPOTHESIS).
+  key_denied_permissions = [
+    "iam.googleapis.com/serviceAccountKeys.create",
   ]
 }
 
@@ -173,7 +205,7 @@ resource "google_iam_deny_policy" "pipeline" {
 
   parent       = urlencode("cloudresourcemanager.googleapis.com/projects/${var.project_id}")
   name         = "${var.prefix}-${local.environment}-sec-deny-pipeline"
-  display_name = "Protege el estado y la etapa 0 de las cuentas del pipeline"
+  display_name = "Protege el estado y la etapa 0 de las cuentas del pipeline; sin llaves de cuentas"
 
   dynamic "rules" {
     for_each = google_tags_tag_key.protection
@@ -192,7 +224,7 @@ resource "google_iam_deny_policy" "pipeline" {
   }
 
   rules {
-    description = "Las cuentas del pipeline no pueden cambiar WIF ni roles personalizados, crear llaves, pedir tokens o firmas de cuentas de servicio ni borrar el proyecto."
+    description = "Las cuentas del pipeline no pueden cambiar WIF, roles personalizados ni los servicios habilitados, crear llaves, pedir tokens o firmas de cuentas de servicio ni borrar el proyecto."
     deny_rule {
       denied_principals  = local.denied_principals
       denied_permissions = local.untagged_denied_permissions
@@ -204,6 +236,14 @@ resource "google_iam_deny_policy" "pipeline" {
     deny_rule {
       denied_principals  = local.secret_value_denied_principals
       denied_permissions = local.secret_value_denied_permissions
+    }
+  }
+
+  rules {
+    description = "Nadie crea llaves de cuentas de servicio en el proyecto (el pipeline usa WIF)."
+    deny_rule {
+      denied_principals  = ["principalSet://goog/public:all"]
+      denied_permissions = local.key_denied_permissions
     }
   }
 

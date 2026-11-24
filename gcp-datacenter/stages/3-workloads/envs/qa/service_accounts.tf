@@ -20,19 +20,25 @@ locals {
   # off_hours_shutdown.enabled.
   scheduler_service_account = local.off_hours_enabled ? local.runtime_service_accounts["scheduler"] : null
 
-  # Miembro de Workload Identity enlazado a la cuenta workload por 1-base
-  # (serviceAccount:<proyecto>.svc.id.goog[<application>-<environment>/<cuenta>]), o null
-  # mientras gke_workload_identity_bindings de 1-base sea false.
+  # Miembros de Workload Identity enlazados a la cuenta workload por 1-base, por clúster (llaves
+  # primary y, en los dr_environments de 1-base, dr): principalSet de todos los pods del clúster
+  # <prefix>-<environment>-<application>-gke[-dr]
+  # (…/kubernetes.cluster/https://container.googleapis.com/v1/projects/<proyecto>/locations/<ubicación>/clusters/<nombre>).
+  # null mientras gke_workload_identity_bindings de 1-base sea false. 1-base enlaza el clúster y
+  # no una cuenta de Kubernetes (hallazgo N1): cualquier pod de ese clúster actúa como workload.
   gke_workload_identity_member = try(local.base.gke_workload_identity_members[var.environment][var.application], null)
 }
 
-# Aviso (no error): con GKE y sin el enlace de Workload Identity los pods no obtienen el token de
-# la cuenta workload. El pool <proyecto>.svc.id.goog lo crea GKE con el primer clúster, así que
-# el orden es: apply de esta raíz con enable_gke, gke_workload_identity_bindings = true en 1-base
-# y apply de 1-base.
+# Aviso (no error): con GKE y sin el enlace de Workload Identity de cada clúster activo
+# (local.compute_regions) los pods no obtienen el token de la cuenta workload. El pool
+# <proyecto>.svc.id.goog lo crea GKE con el primer clúster, así que el orden es: apply de esta raíz
+# con enable_gke, gke_workload_identity_bindings = true en 1-base y apply de 1-base. Con dr_active,
+# el entorno debe estar en dr_environments de 1-base para que exista el enlace del clúster dr.
 check "workload_identity_enlazada" {
   assert {
-    condition     = !var.enable_gke || local.gke_workload_identity_member != null
-    error_message = "enable_gke sin enlace de Workload Identity: los pods de <application>-<environment> no pueden actuar como la cuenta workload. Después del primer clúster, ponga gke_workload_identity_bindings = true en 1-base y aplíquela."
+    condition = !var.enable_gke || alltrue([
+      for k in keys(local.compute_regions) : try(local.gke_workload_identity_member[k], null) != null
+    ])
+    error_message = "enable_gke sin enlace de Workload Identity en algún clúster activo: sus pods no pueden actuar como la cuenta workload. Después del primer clúster, ponga gke_workload_identity_bindings = true en 1-base (y el entorno en dr_environments para el clúster dr) y aplíquela."
   }
 }

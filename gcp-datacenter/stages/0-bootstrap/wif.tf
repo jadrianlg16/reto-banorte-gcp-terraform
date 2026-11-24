@@ -13,34 +13,52 @@
 # https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows.
 
 locals {
-  # Despliegue (hallazgo 3 de R1): las cuentas que escriben solo aceptan tokens de un trabajo
-  #   - de una ejecución de main (ref = refs/heads/main; en un flujo reutilizable, ref es la del
-  #     flujo que llama, según GitHub),
-  #   - cuyo flujo reutilizable es un archivo de .github/workflows/ de este mismo repositorio
-  #     (job_workflow_ref = <dueño>/<repo>/.github/workflows/<archivo>@<ref>), y
-  #   - con entorno de GitHub.
+  # Despliegue (hallazgo 3 de R1 y N3 de la segunda revisión): las cuentas que escriben solo
+  # aceptan tokens de un trabajo que cumpla las cuatro condiciones:
+  #   - es de una ejecución de main: ref = refs/heads/main (en un flujo reutilizable, ref y
+  #     event_name describen al flujo que llama, según GitHub);
+  #   - lo define exactamente _terraform-root.yml de este repositorio en main:
+  #     job_workflow_ref = <dueño>/<repo>/.github/workflows/_terraform-root.yml@refs/heads/main
+  #     (formato <dueño>/<repo>/.github/workflows/<archivo>@<ref> de "Using OpenID Connect with
+  #     reusable workflows"). Otro archivo de flujo, o el mismo archivo en otra rama o etiqueta
+  #     (uses: …/_terraform-root.yml@<rama>), no cumple;
+  #   - lo disparó uno de los eventos de los flujos que escriben: push (apply.yml) o
+  #     workflow_dispatch (apply.yml y destroy.yml), los únicos en sus bloques on:. Así un flujo
+  #     nuevo con pull_request_target, workflow_run o issue_comment, cuyo ref también es la rama
+  #     por defecto ("Events that trigger workflows"), no obtiene una cuenta que escribe;
+  #   - tiene entorno de GitHub.
   # Cumplido todo, attribute.deploy es el entorno (common, dev, qa o prod); si no, 'none', que
-  # ninguna cuenta acepta. Así un flujo de otra rama o un flujo reutilizable de otro repositorio no
-  # obtiene una cuenta que escribe aunque use su entorno de GitHub; la regla "Deployment branches:
-  # main" de cada entorno de GitHub queda como segunda barrera.
+  # ninguna cuenta acepta. La regla "Deployment branches: main" de cada entorno de GitHub queda
+  # como segunda barrera. Si apply.yml o destroy.yml cambian de eventos, esta lista se cambia con
+  # ellos (y se vuelve a aplicar esta etapa).
   #
-  # Todos los trabajos que escriben son el trabajo apply de _terraform-root.yml, que apply.yml y
-  # destroy.yml llaman como flujo reutilizable, así que su token trae job_workflow_ref (GitHub solo
-  # lo documenta para flujos reutilizables). Un trabajo que no es de un flujo reutilizable queda
-  # en 'none'.
+  # Los trabajos que escriben son el trabajo apply de _terraform-root.yml, que apply.yml y
+  # destroy.yml llaman como flujo reutilizable. Si un trabajo que no es de un flujo reutilizable
+  # trae job_workflow_ref (GitHub solo lo documenta para flujos reutilizables), su valor nombra
+  # otro archivo y la igualdad no se cumple.
   #
   # El nombre se compara tal cual (con mayúsculas y minúsculas) contra github_repository, que tiene
   # que coincidir con la afirmación repository. Si el repositorio se renombra, attribute.deploy
-  # queda en 'none' (falla cerrado) hasta volver a aplicar esta etapa con el nombre nuevo. La
-  # validación de github_repository no admite comillas, así que el nombre no altera la expresión.
-  # VERIFICAR-EN-APPLY: el valor de job_workflow_ref en el trabajo apply de _terraform-root.yml
-  # llamado con uses: ./.github/workflows/... (se espera
-  # <dueño>/<repo>/.github/workflows/_terraform-root.yml@refs/heads/main).
+  # queda en 'none' (falla cerrado) hasta volver a aplicar esta etapa con el nombre nuevo. Lo
+  # mismo si se renombra _terraform-root.yml. La validación de github_repository no admite
+  # comillas, así que el nombre no altera la expresión, que cabe de sobra en los 2048 caracteres
+  # (prueba en tests/0-bootstrap.tftest.hcl).
+  # VERIFICAR-EN-APPLY: el valor de job_workflow_ref y de event_name en el trabajo apply de
+  # _terraform-root.yml llamado con uses: ./.github/workflows/... desde apply.yml (push y
+  # workflow_dispatch) y desde destroy.yml (se espera
+  # <dueño>/<repo>/.github/workflows/_terraform-root.yml@refs/heads/main: GitHub no documenta el
+  # ref de una llamada con ruta local; si fuera el SHA, attribute.deploy queda en 'none' y el
+  # apply falla en la autenticación).
+  wif_deploy_workflow = "${var.github_repository}/.github/workflows/_terraform-root.yml@refs/heads/main"
+  wif_deploy_events   = ["push", "workflow_dispatch"]
+
   wif_deploy = join(" ", [
     "('environment' in assertion",
     "&& assertion.ref == 'refs/heads/main'",
     "&& 'job_workflow_ref' in assertion",
-    "&& assertion.job_workflow_ref.startsWith('${var.github_repository}/.github/workflows/'))",
+    "&& assertion.job_workflow_ref == '${local.wif_deploy_workflow}'",
+    "&& 'event_name' in assertion",
+    "&& (${join(" || ", [for e in local.wif_deploy_events : "assertion.event_name == '${e}'"])}))",
     "? assertion.environment : 'none'",
   ])
 }

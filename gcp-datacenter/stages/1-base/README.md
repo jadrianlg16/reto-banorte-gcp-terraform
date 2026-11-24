@@ -31,16 +31,24 @@ roles de proyecto (hallazgos 2 y 4 de la revisión de seguridad del ADR 0029).
 | Cuenta | Roles en el proyecto | Permisos sobre recursos del entorno |
 |---|---|---|
 | `gke-nodes` | `autoscaling.metricsWriter`, `logging.logWriter`, `monitoring.metricWriter`, `monitoring.viewer`, `stackdriver.resourceMetadata.writer` | `artifactregistry.reader` sobre el repositorio del entorno y la aplicación |
-| `workload` | `cloudtrace.agent`, `logging.logWriter`, `monitoring.metricWriter`; `cloudsql.client` e `instanceUser` limitados a `<prefix>-<env>-data-*` | `secretmanager.secretAccessor` sobre cada secreto del entorno; `iam.workloadIdentityUser` para `<app>-<env>`/`gke_workload_ksa_name` (con `gke_workload_identity_bindings`) |
+| `workload` | `cloudtrace.agent`, `logging.logWriter`, `monitoring.metricWriter`; `cloudsql.client` e `instanceUser` limitados a `<prefix>-<env>-data-*` | `secretmanager.secretAccessor` sobre cada secreto del entorno; `iam.workloadIdentityUser` para todos los pods del clúster `<prefix>-<env>-<app>-gke` (y `-gke-dr` en `dr_environments`), con `gke_workload_identity_bindings` |
 | `mig` | `logging.logWriter`, `monitoring.metricWriter`; Cloud SQL como `workload` | `artifactregistry.reader` sobre el repositorio del entorno y la aplicación |
 | `run` | `cloudtrace.agent`, `logging.logWriter`, `monitoring.metricWriter`; Cloud SQL como `workload` | `secretmanager.secretAccessor` sobre cada secreto del entorno |
-| `sched` (solo `off_hours_environments`) | el rol `<prefix>OffHoursScheduler`, sin condición | — |
+| `sched` (solo `off_hours_environments`) | el rol `<prefix>OffHoursScheduler`, limitado a la instancia `<prefix>-<env>-data-*` y a los clústeres `<prefix>-<env>-*` | — |
 
 La cuenta de cargas del entorno (`<prefix>-tf-wl-<env>`) recibe `iam.serviceAccountUser` sobre
 `gke-nodes`, `mig`, `run` y `sched` de su entorno, nunca en el proyecto. El enlace de Workload
 Identity necesita el pool `<proyecto>.svc.id.goog`, que GKE crea con el primer clúster del
 proyecto: `gke_workload_identity_bindings` queda en `false` hasta el primer apply de
 `3-workloads` con `enable_gke` y después se pone en `true`.
+
+El enlace usa el principalSet de Workload Identity Federation for GKE de todos los pods de un
+clúster (`…/kubernetes.cluster/https://container.googleapis.com/v1/projects/<proyecto>/locations/<ubicación>/clusters/<clúster>`)
+y no `serviceAccount:<proyecto>.svc.id.goog[<ns>/<cuenta>]`, que vale desde cualquier clúster del
+proyecto (hallazgo N1 de la segunda revisión de seguridad). La documentación no tiene un
+identificador que combine clúster, namespace y cuenta de Kubernetes: cualquier pod del clúster
+con una cuenta de Kubernetes anotada con la cuenta `workload` la obtiene. Cada clúster es de un
+solo entorno y una sola aplicación.
 
 ## Llaves por entorno
 
@@ -107,7 +115,7 @@ de esta etapa no tiene `roles/orgpolicy.policyAdmin` ni roles sobre la política
 | `kms_key_ids` | entorno → `<uso>` (primaria), `<uso>_dr`, `<uso>_us` → ID | `3-workloads` |
 | `artifact_registry_repositories` | entorno → aplicación → `<ubicación>-docker.pkg.dev/<proyecto>/<repositorio>` | `3-workloads` |
 | `runtime_service_accounts` | entorno → aplicación → uso (`gke_nodes`, `workload`, `mig`, `run`, `scheduler`) → correo | `3-workloads` |
-| `gke_workload_identity_members` | entorno → aplicación → `serviceAccount:<proyecto>.svc.id.goog[<app>-<env>/<cuenta>]` o null | `3-workloads` |
+| `gke_workload_identity_members` | entorno → aplicación → clúster (`primary`, `dr`) → principalSet `…/kubernetes.cluster/…/clusters/<prefix>-<env>-<app>-gke[-dr]`, o null | `3-workloads` |
 | `notification_channel_ids` | `{ security = <canal>, operations = <canal> }` (`operations` solo con `operations_alert_email`) | `3-workloads` (solo `operations`) |
 | `secret_ids` | entorno → nombre → ID | informativa |
 | `off_hours_role_id` | ID completo del rol personalizado del apagado (lo crea 0-bootstrap) | informativa |
@@ -137,8 +145,9 @@ activa a mano en el proyecto antes de poner `enable_scc_notification = true`.
 forma de su tabla de interfaces. Comprueba la configuración de auditoría, el sink de proyecto y
 su exclusión, los llaveros y sus agentes, los repositorios, su IAM y la política de Binary
 Authorization, los roles de grupos y agentes, las cuentas de ejecución y sus permisos (roles,
-condición de Cloud SQL, secretos, repositorio, `serviceAccountUser` de las cuentas de cargas y
-el enlace de Workload Identity con y sin `gke_workload_identity_bindings`), los llaveros y los
+condición de Cloud SQL y la del rol del apagado, secretos, repositorio, `serviceAccountUser` de
+las cuentas de cargas y el enlace de Workload Identity por clúster con y sin
+`gke_workload_identity_bindings`), los llaveros y los
 nombres exactos de `kms_key_ids` (solo las llaves usadas; DR según `dr_environments`, también
 con qa), que no haya roles de organización, el canal de operaciones, la cuenta de la VM DNS de
 `onprem-sim` (sin ella por defecto; con `onprem_dns_vm_enabled`, solo `logWriter` y

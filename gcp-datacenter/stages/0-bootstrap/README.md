@@ -57,14 +57,22 @@ se declara en una raíz de entorno (ADR 0029 §4). Todas las cuentas tienen adem
 | `tf-base` | `cloudkms.admin` (salvo el llavero del estado), `TfSecretContainerAdmin`, `artifactregistry.admin`, `binaryauthorization.policyEditor`, `logging.configWriter`, `monitoring.alertPolicyEditor`, `monitoring.notificationChannelEditor`, `essentialcontacts.admin`, `pubsub.admin`, `securitycenter.notificationConfigEditor`, `storage.admin` (buckets `<prefix>-common-`), `TfServiceAccountManager` (cuentas de ejecución de los entornos), `projectIamAdmin` en dos concesiones delegadas (roles de lectura de personas; roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado). Ningún rol de organización ni de la política de acceso (`org.tf` los usa la persona de esta etapa) |
 | `tf-net` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin`; con `onprem_dns_vm = true`, además `compute.instanceAdmin.v1` sin condición para la VM DNS de `onprem-sim` (riesgo aceptado mientras esté activo: el hub podría cambiar las VM de los entornos). `1-base` le da `iam.serviceAccountUser` solo sobre la cuenta de esa VM |
 | `tf-net-<env>` | los de `tf-net`, más `TfNetworkTagManager` (claves y valores de etiquetas y su IAM, sin ligarlas) y `servicenetworking.networksAdmin` |
-| `tf-wl-<env>` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` (buckets `<prefix>-<env>-`); `cloudscheduler.admin` solo en dev y qa (ADR 0028). Sin roles de IAM ni de etiquetas en el proyecto: `1-base` le da `iam.serviceAccountUser` sobre cada cuenta de ejecución de su entorno que adjunta, y su spoke, `tagUser` sobre los valores `lb_backend` e `iap_ssh` |
+| `tf-wl-<env>` | `backupdr.admin` (bóvedas `<prefix>-<env>-`), `certificatemanager.editor`, `cloudsql.admin` (instancias `<prefix>-<env>-data-`), `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.clusterAdmin` (clústeres `<prefix>-<env>-` de `primary_region` y `dr_region`), `file.editor`, `gkebackup.admin`, `monitoring.alertPolicyEditor`, `monitoring.dashboardEditor`, `monitoring.notificationChannelEditor`, `monitoring.servicesEditor`, `monitoring.uptimeCheckConfigEditor`, `redis.admin`, `run.admin`, `storage.admin` (buckets `<prefix>-<env>-`); `cloudscheduler.admin` solo en dev y qa (ADR 0028). Sin roles de IAM ni de etiquetas en el proyecto: `1-base` le da `iam.serviceAccountUser` sobre cada cuenta de ejecución de su entorno que adjunta, y su spoke, `tagUser` sobre los valores `lb_backend` e `iap_ssh` |
 | `tf-read` | `viewer`, `iam.securityReviewer`, `cloudasset.viewer`, `networkmanagement.admin` y `storage.objectViewer` sobre el bucket de estado |
 
 Que cada lista alcance para aplicar su raíz es HYPOTHESIS hasta el primer apply. Ninguna cuenta
 tiene `storage.admin` ni `projectIamAdmin` sin condición, ni `iam.serviceAccountAdmin`,
 `iam.roleAdmin` o `serviceusage.serviceUsageAdmin` (las APIs y los agentes los crea esta
-etapa). Compute, GKE, Cloud Run, Cloud SQL, Memorystore y Filestore van sin condición: una cuenta
-de dev puede tocar recursos de prod de esos servicios (riesgo aceptado, ADR 0029 §3 y §9).
+etapa). `cloudsql.admin`, `container.clusterAdmin` y `backupdr.admin` llevan una condición por
+nombre de recurso con la forma `resource.type != <tipo> || resource.name.startsWith(<prefijo del
+entorno>)`, porque Cloud SQL (`Instance`, `BackupRun`), GKE (`Cluster`) y Backup and DR
+(`BackupVaults`) figuran en "Resource attributes for IAM Conditions"; los demás tipos de esos
+roles (y crear un clúster, que GKE comprueba en el proyecto) quedan sin límite. Compute, Cloud
+Run, Memorystore, Filestore, Backup for GKE y Monitoring no figuran en esa página y van sin
+condición: una cuenta de dev puede tocar recursos de prod de esos servicios (riesgo aceptado,
+ADR 0029 §3 y §9). `container.clusterAdmin` (y no `container.admin`) no trae permisos sobre
+objetos de Kubernetes (pods, secretos, tokens de cuentas de Kubernetes); Monitoring va con roles
+finos en lugar de `monitoring.editor`, que trae permisos `serviceusage.*`.
 
 `projectIamAdmin` de `tf-base` es una concesión delegada:
 `api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([...])`, en dos
@@ -98,9 +106,17 @@ protegido con una etiqueta, porque las condiciones de denegación solo reconocen
 - Regla 2, sin condición: crear, cambiar o borrar pools y proveedores de WIF y roles
   personalizados, crear llaves de cuentas de servicio, pedir tokens o firmas de cualquier cuenta
   de servicio (`getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, `signJwt`;
-  `actAs` no, porque adjuntar las cuentas de ejecución lo necesita) y borrar el proyecto.
+  `actAs` no, porque adjuntar las cuentas de ejecución lo necesita), habilitar o deshabilitar
+  servicios (`serviceusage.googleapis.com/services.enable`, `services.disable`,
+  `consumerpolicy.update`; solo esta etapa habilita APIs) y borrar el proyecto. No niega
+  `services.use`, que las nueve cuentas usan como proyecto de cuota.
 - Regla 3, sin condición: leer valores de secretos (`versions.access`). Se niega a todas las
   cuentas del pipeline salvo `tf-net`, que lee la clave compartida de la VPN del hub.
+- Regla 4, sin condición y para `principalSet://goog/public:all`: crear llaves de cuentas de
+  servicio (`iam.googleapis.com/serviceAccountKeys.create`). Sin organización no existe la
+  política `iam.disableServiceAccountKeyCreation`, y el pipeline usa WIF. No tiene excepción
+  porque ninguna variable identifica a quien administra esta etapa; esa persona puede quitar la
+  regla con `roles/iam.denyAdmin`.
 - Las reglas 1 y 2 se niegan a las nueve cuentas. Nada niega los objetos del estado, el proyecto
   de cuota ni `projects.setIamPolicy` (la concesión delegada lo necesita).
 
@@ -108,8 +124,8 @@ Límites: `iam.serviceAccounts.createTagBinding`/`deleteTagBinding` y
 `cloudkms.keyRings.deleteTagBinding` no se pueden negar. Por eso `tf-base` usa
 `TfServiceAccountManager` en lugar de `iam.serviceAccountAdmin` y no tiene `tagUser`.
 Si las etiquetas no funcionan en el proyecto (HYPOTHESIS sin organización),
-`enable_protection_tags = false` deja solo la regla 2 y la protección queda en los roles
-condicionados. `enable_deny_policy = false` quita la política (quien aplica necesita
+`enable_protection_tags = false` quita la regla 1 (quedan las reglas 2, 3 y 4) y la protección
+de lo etiquetado queda en los roles condicionados. `enable_deny_policy = false` quita la política (quien aplica necesita
 `roles/iam.denyAdmin`).
 
 ## Workload Identity Federation
@@ -123,17 +139,23 @@ nombres se pueden volver a registrar; los IDs no se reutilizan
 (`gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'`).
 
 `attribute.deploy` vale el entorno de GitHub del trabajo (`common`, `dev`, `qa` o `prod`) solo si
-el token trae `ref == refs/heads/main`, un `job_workflow_ref` que empieza con
-`<github_repository>/.github/workflows/` y la afirmación `environment`; si no, vale `none`. Las
-afirmaciones que pueden faltar se leen solo después de comprobar que están, para que el mapeo no
-falle en los trabajos sin entorno. Dentro del repositorio:
+el token trae la afirmación `environment`, `ref == refs/heads/main`,
+`job_workflow_ref == <github_repository>/.github/workflows/_terraform-root.yml@refs/heads/main`
+(el único flujo que aplica) y `event_name` igual a `push` o `workflow_dispatch` (los eventos de
+`apply.yml` y `destroy.yml`); si no, vale `none`. Un `pull_request`, un `workflow_run`, otro
+flujo del repositorio o `_terraform-root.yml` desde otra rama no obtienen cuentas de escritura.
+Las afirmaciones que pueden faltar se leen solo después de comprobar que están, para que el
+mapeo no falle en los trabajos sin entorno. Que GitHub ponga en `job_workflow_ref` la rama
+(`@refs/heads/main`) y no un SHA cuando el flujo reutilizable se llama con ruta local
+(`uses: ./.github/workflows/...`) no está documentado (VERIFICAR-EN-APPLY): si fuera otro valor,
+el apply fallaría al tomar la cuenta, sin abrir permisos. Dentro del repositorio:
 
 - `tf-base` y `tf-net`: `principalSet://…/attribute.deploy/common`;
 - `tf-net-<env>` y `tf-wl-<env>`: `principalSet://…/attribute.deploy/<env>`;
 - `tf-read`: `principalSet://…/attribute.repository_id/<github_repository_id>`.
 
-Un trabajo sin entorno de GitHub, de otra rama o de un flujo reutilizable de otro repositorio
-solo obtiene `tf-read`. Todos los trabajos que escriben son el trabajo `apply` de
+Un trabajo sin entorno de GitHub, de otra rama, de otro evento o de cualquier flujo que no sea
+`_terraform-root.yml` en `main` solo obtiene `tf-read`. Todos los trabajos que escriben son el trabajo `apply` de
 `_terraform-root.yml`, que `apply.yml` y `destroy.yml` llaman desde `main`.
 `github_repository` tiene que coincidir exactamente con la afirmación `repository` (mayúsculas
 incluidas); si el repositorio se renombra, las cuentas que escriben dejan de aceptar tokens hasta
@@ -188,9 +210,13 @@ que no se apagan), los agentes de servicio, OS Login, `DEPRIVILEGE`, el presupue
 el bucket y su llave, las ocho llaves de `stage_service_accounts` y los nombres de las cuentas,
 que no haya roles básicos ni `serviceAccountAdmin` y que `storage.admin`, `projectIamAdmin` y
 `cloudkms.admin` siempre lleven condición, las condiciones exactas por entorno, la tabla de
-estado, el `principalSet` de cada cuenta y la expresión exacta de `attribute.deploy`, los cuatro
-roles personalizados, la etiqueta y sus
-enlaces y las tres reglas de la denegación; que ninguna cuenta del pipeline tenga un rol de
+estado, el `principalSet` de cada cuenta y la expresión exacta de `attribute.deploy` (sin
+prefijos de `job_workflow_ref` ni eventos de PR), los roles de `tf-wl-<env>`
+(`roles_de_cargas_por_entorno`: `container.clusterAdmin` y Monitoring fino en lugar de
+`container.admin` y `monitoring.editor`, y las condiciones exactas de Cloud SQL, GKE y Backup and
+DR de cada entorno), los cuatro roles personalizados, la etiqueta y sus enlaces y las cuatro
+reglas de la denegación (los permisos de Service Usage de la regla 2, sin `services.use`, y las
+llaves para `public:all`); que ninguna cuenta del pipeline tenga un rol de
 proyecto que ligue o quite etiquetas (`ningun_rol_del_pipeline_liga_etiquetas`: `tagUser`,
 `tagAdmin`, roles con `*TagBinding` o `tagValueBindings`, y `cloudkms.admin` y `storage.admin`
 solo con una condición que deja fuera el llavero y el bucket del estado); las variantes sin
