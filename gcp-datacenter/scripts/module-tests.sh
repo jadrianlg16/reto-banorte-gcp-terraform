@@ -3,7 +3,7 @@
 #
 # Uso: scripts/module-tests.sh <módulo>
 #   Imprime "^(TestA|TestB)$" con las funciones Test* que aplican tests/fixtures/<módulo> o una
-#   variante tests/fixtures/<módulo>-<algo> (p. ej. firewall-hierarchical). Sale con 1 si el
+#   variante tests/fixtures/<módulo>-<algo> (p. ej. <módulo>-dr). Sale con 1 si el
 #   módulo no existe en modules/ o si ninguna prueba lo usa.
 #
 # Lo usa terratest.yml con las etiquetas modules/<módulo>/vX.Y.Z: la etiqueta de un módulo

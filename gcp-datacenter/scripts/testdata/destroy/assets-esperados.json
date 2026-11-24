@@ -1,58 +1,17 @@
 [
-  {
-    "name": "//cloudresourcemanager.googleapis.com/folders/222222222222",
-    "assetType": "cloudresourcemanager.googleapis.com/Folder",
-    "displayName": "dev",
-    "state": "ACTIVE"
-  },
-  {
-    "name": "//cloudresourcemanager.googleapis.com/projects/111111111101",
-    "assetType": "cloudresourcemanager.googleapis.com/Project",
-    "project": "projects/111111111101",
-    "displayName": "bnt-dev-net-spoke",
-    "state": "DELETE_REQUESTED",
-    "folders": ["folders/222222222222"],
-    "additionalAttributes": {"projectId": "bnt-dev-net-spoke"}
-  },
-  {
-    "name": "//cloudresourcemanager.googleapis.com/projects/111111111102",
-    "assetType": "cloudresourcemanager.googleapis.com/Project",
-    "project": "projects/111111111102",
-    "displayName": "bnt-dev-app",
-    "state": "DELETE_IN_PROGRESS",
-    "folders": ["folders/222222222222"],
-    "additionalAttributes": {"projectId": "bnt-dev-app"}
-  },
-  {
-    "name": "//serviceusage.googleapis.com/projects/111111111102/services/compute.googleapis.com",
-    "assetType": "serviceusage.googleapis.com/Service",
-    "project": "projects/111111111102",
-    "displayName": "compute.googleapis.com",
-    "state": "ENABLED"
-  },
-  {
-    "name": "//storage.googleapis.com/bnt-dev-data-app-usc1",
-    "assetType": "storage.googleapis.com/Bucket",
-    "project": "projects/111111111102",
-    "displayName": "bnt-dev-data-app-usc1"
-  },
-  {
-    "name": "//compute.googleapis.com/projects/bnt-dev-net-spoke/global/networks/bnt-dev-net-vpc",
-    "assetType": "compute.googleapis.com/Network",
-    "displayName": "bnt-dev-net-vpc"
-  },
-  {
-    "name": "//compute.googleapis.com/projects/bnt-dev-app/zones/us-central1-a/disks/bnt-dev-app-mig-abcd",
-    "assetType": "compute.googleapis.com/Disk",
-    "project": "projects/111111111102",
-    "displayName": "bnt-dev-app-mig-abcd",
-    "state": "DELETED"
-  },
-  {
-    "name": "//cloudkms.googleapis.com/projects/bnt-otro/locations/us-central1/keyRings/manual/cryptoKeys/k/cryptoKeyVersions/1",
-    "assetType": "cloudkms.googleapis.com/CryptoKeyVersion",
-    "project": "projects/111111111199",
-    "displayName": "1",
-    "state": "DESTROYED"
-  }
+  {"name": "//cloudresourcemanager.googleapis.com/projects/111111111111", "assetType": "cloudresourcemanager.googleapis.com/Project", "project": "projects/111111111111", "displayName": "example-landing-zone", "state": "ACTIVE"},
+  {"name": "//storage.googleapis.com/bnt-bootstrap-ops-tfstate", "assetType": "storage.googleapis.com/Bucket", "project": "projects/111111111111", "displayName": "bnt-bootstrap-ops-tfstate", "labels": {"env": "common"}},
+  {"name": "//compute.googleapis.com/projects/example-landing-zone/global/networks/bnt-common-net-hub", "assetType": "compute.googleapis.com/Network", "project": "projects/111111111111", "displayName": "bnt-common-net-hub"},
+  {"name": "//storage.googleapis.com/bnt-qa-data-app-usc1", "assetType": "storage.googleapis.com/Bucket", "project": "projects/111111111111", "displayName": "bnt-qa-data-app-usc1", "labels": {"env": "qa"}},
+  {"name": "//iam.googleapis.com/projects/example-landing-zone/serviceAccounts/111111111111-compute@developer.gserviceaccount.com", "assetType": "iam.googleapis.com/ServiceAccount", "project": "projects/111111111111", "displayName": "Compute Engine default service account", "additionalAttributes": {"email": "111111111111-compute@developer.gserviceaccount.com"}},
+  {"name": "//cloudkms.googleapis.com/projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1", "assetType": "cloudkms.googleapis.com/KeyRing", "project": "projects/111111111111", "displayName": "bnt-dev-kr-usc1"},
+  {"name": "//cloudkms.googleapis.com/projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1/cryptoKeys/bnt-dev-sql-usc1", "assetType": "cloudkms.googleapis.com/CryptoKey", "project": "projects/111111111111", "displayName": "bnt-dev-sql-usc1", "labels": {"env": "dev"}},
+  {"name": "//cloudkms.googleapis.com/projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1/cryptoKeys/bnt-dev-sql-usc1/cryptoKeyVersions/1", "assetType": "cloudkms.googleapis.com/CryptoKeyVersion", "project": "projects/111111111111", "state": "ENABLED"},
+  {"name": "//secretmanager.googleapis.com/projects/111111111111/secrets/bnt-dev-app-api-token", "assetType": "secretmanager.googleapis.com/Secret", "project": "projects/111111111111", "displayName": "bnt-dev-app-api-token", "labels": {"env": "dev"}},
+  {"name": "//secretmanager.googleapis.com/projects/111111111111/secrets/bnt-dev-app-api-token/versions/1", "assetType": "secretmanager.googleapis.com/SecretVersion", "project": "projects/111111111111", "state": "ENABLED"},
+  {"name": "//artifactregistry.googleapis.com/projects/example-landing-zone/locations/us/repositories/bnt-dev-app", "assetType": "artifactregistry.googleapis.com/Repository", "project": "projects/111111111111", "displayName": "bnt-dev-app", "labels": {"env": "dev"}},
+  {"name": "//artifactregistry.googleapis.com/projects/example-landing-zone/locations/us/repositories/bnt-dev-app/dockerImages/api@sha256:0000000000000000000000000000000000000000000000000000000000000000", "assetType": "artifactregistry.googleapis.com/DockerImage", "project": "projects/111111111111", "displayName": "api@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+  {"name": "//compute.googleapis.com/projects/example-landing-zone/global/networks/bnt-dev-net-spoke", "assetType": "compute.googleapis.com/Network", "project": "projects/111111111111", "displayName": "bnt-dev-net-spoke"},
+  {"name": "//compute.googleapis.com/projects/example-landing-zone/regions/us-central1/subnetworks/bnt-dev-net-app-usc1", "assetType": "compute.googleapis.com/Subnetwork", "project": "projects/111111111111", "displayName": "bnt-dev-net-app-usc1"},
+  {"name": "//sqladmin.googleapis.com/projects/example-landing-zone/instances/bnt-dev-data-sql-usc1", "assetType": "sqladmin.googleapis.com/Instance", "project": "projects/111111111111", "displayName": "bnt-dev-data-sql-usc1", "labels": {"env": "dev"}, "state": "DELETE_IN_PROGRESS"}
 ]

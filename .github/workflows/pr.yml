@@ -4,8 +4,9 @@
 # 1.16.5 (además terraform test); scripts/policy-check.sh (conftest verify y planes de ejemplo
 # de policies/); scripts/selftest.sh (scripts de los flujos); terraform-docs al día.
 #
-# Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada,
-# Conftest sobre el plan y un comentario en el PR con el resumen y el costo (Infracost).
+# Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada
+# (scripts/affected-roots.sh), con la cuenta de lectura y sin candado (ADR 0029 §3), Conftest
+# sobre el plan y un comentario en el PR con el resumen y el costo (Infracost).
 #
 # Comprobaciones obligatorias de la protección de main (nombres estables, docs/pipeline.md §4):
 #   estático (terraform 1.9.8), estático (terraform 1.16.5),
@@ -17,12 +18,20 @@
 #   GCP_ENABLED                     "true" para activar los trabajos que tocan GCP.
 #   GCP_WORKLOAD_IDENTITY_PROVIDER  nombre completo del proveedor (salida
 #                                   workload_identity_provider de 0-bootstrap).
-#   GCP_STAGE_SERVICE_ACCOUNTS      JSON etapa -> correo (salida stage_service_accounts de
-#                                   0-bootstrap), por ejemplo {"1-org": "...", ...}.
+#   GCP_AUDIT_SERVICE_ACCOUNT       cuenta de lectura tf-read (salida read_service_account de
+#                                   0-bootstrap): la usan los plan de este flujo, de apply.yml y
+#                                   de drift.yml, la prueba de humo y la búsqueda de huérfanos.
+#   GCP_STAGE_SERVICE_ACCOUNTS      JSON raíz -> correo de la cuenta que aplica (salida
+#                                   stage_service_accounts de 0-bootstrap), con las llaves
+#                                   1-base, 2-networks, 2-networks/<env> y 3-workloads/<env>.
+#                                   La usan solo los apply de apply.yml y destroy.yml.
 #   GCP_STATE_BUCKET                bucket de estado (salida state_bucket de 0-bootstrap).
 #   GCP_TFVARS_JSON                 JSON con los valores de las variables para el plan:
-#                                   {"common": {...}, "stages/1-org": {...}, ...}. Para cada
-#                                   raíz se combinan "common" y la llave de la raíz.
+#                                   {"common": {"project_id": "...", ...}, "stages/1-base": {...},
+#                                   ...}. Para cada raíz se combinan "common" y la llave de la
+#                                   raíz (scripts/root-tfvars.py). "common" debe traer
+#                                   project_id, el proyecto único (ADR 0029 §1): sin él, el plan
+#                                   de una raíz que lo declara falla.
 # Secreto opcional: INFRACOST_API_KEY (sin él se omite el costo).
 
 name: pr
@@ -200,16 +209,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "${GCP_AUDIT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Falta la variable de repositorio GCP_AUDIT_SERVICE_ACCOUNT (salida read_service_account de 0-bootstrap): los plan corren con la cuenta de lectura (docs/pipeline.md §2)."
+            exit 1
+          fi
+
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: Autenticar con Workload Identity Federation
+      # Cuenta de lectura (tf-read): las cuentas que escriben solo aceptan tokens de su entorno
+      # de GitHub y este trabajo no tiene entorno (ADR 0029 §3).
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ fromJSON(vars.GCP_STAGE_SERVICE_ACCOUNTS)[matrix.stage] }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
 
       - name: Instalar conftest
         working-directory: ${{ runner.temp }}
@@ -222,17 +242,11 @@ jobs:
           tar -xzf "${file}" conftest
           sudo install -m 0755 conftest /usr/local/bin/conftest
 
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1).
       - name: Variables del plan
         env:
           TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
-        run: |
-          cd "${ROOT}"
-          if [ -f terraform.tfvars.example ]; then
-            cp terraform.tfvars.example terraform.tfvars
-          fi
-          # Los *.auto.tfvars.json se cargan después de terraform.tfvars y lo sobrescriben.
-          printf '%s' "${TFVARS_JSON:-"{}"}" |
-            jq --arg r "${ROOT}" '(.common // {}) + (.[$r] // {})' > zz-ci.auto.tfvars.json
+        run: python3 scripts/root-tfvars.py "${ROOT}"
 
       - name: terraform init
         env:
@@ -244,7 +258,8 @@ jobs:
       - name: terraform plan
         run: |
           cd "${ROOT}"
-          terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
+          # -lock=false: la cuenta de lectura no puede escribir el candado del estado.
+          terraform plan -input=false -no-color -lock=false -out=tfplan
           terraform show -json tfplan > plan.json
           terraform show -no-color tfplan > plan.txt
 

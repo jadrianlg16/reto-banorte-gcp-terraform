@@ -1,0 +1,28 @@
+{
+  "version": 4,
+  "terraform_version": "1.16.5",
+  "serial": 3,
+  "lineage": "00000000-0000-4000-8000-000000000000",
+  "outputs": {
+    "project_id": {"value": "example-landing-zone", "type": "string"},
+    "project_number": {"value": "111111111111", "type": "string"}
+  },
+  "resources": [
+    {
+      "mode": "managed", "type": "google_storage_bucket", "name": "state", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [{"schema_version": 3, "attributes": {"id": "bnt-bootstrap-ops-tfstate", "name": "bnt-bootstrap-ops-tfstate", "project": "example-landing-zone", "self_link": "https://www.googleapis.com/storage/v1/b/bnt-bootstrap-ops-tfstate"}}]
+    },
+    {
+      "mode": "managed", "type": "google_project_service", "name": "this", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [
+        {"index_key": "compute.googleapis.com", "schema_version": 0, "attributes": {"id": "example-landing-zone/compute.googleapis.com", "project": "example-landing-zone", "service": "compute.googleapis.com"}},
+        {"index_key": "run.googleapis.com", "schema_version": 0, "attributes": {"id": "example-landing-zone/run.googleapis.com", "project": "example-landing-zone", "service": "run.googleapis.com"}}
+      ]
+    },
+    {
+      "mode": "managed", "type": "google_service_account", "name": "pipeline", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [{"index_key": "read", "schema_version": 0, "attributes": {"id": "projects/example-landing-zone/serviceAccounts/bnt-tf-read@example-landing-zone.iam.gserviceaccount.com", "email": "bnt-tf-read@example-landing-zone.iam.gserviceaccount.com", "unique_id": "100000000000000000001", "project": "example-landing-zone"}}]
+    }
+  ],
+  "check_results": null
+}

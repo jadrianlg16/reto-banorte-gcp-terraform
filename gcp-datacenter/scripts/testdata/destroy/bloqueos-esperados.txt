@@ -1,6 +1,14 @@
+BLOQUEO google_binary_authorization_policy.this
+BLOQUEO google_project.this
+BLOQUEO google_project.this
+BLOQUEO google_project_iam_audit_config.all
+BLOQUEO google_project_service.compute
 BLOQUEO module.cloud_sql.google_sql_database_instance.this
 BLOQUEO module.cloud_sql.google_sql_database_instance.this
-BLOQUEO module.filestore["this"].google_filestore_instance.this
+BLOQUEO module.filestore["primary"].google_filestore_instance.this
 BLOQUEO module.gke["primary"].google_container_cluster.this
-BLOQUEO module.network.module.project.google_project.this
-BLOQUEO module.projects.module.project["app"].google_project.this
+BLOQUEO module.hub.google_compute_network.this
+BLOQUEO module.hub_firewall.google_compute_network_firewall_policy_rule.hub
+BLOQUEO module.observability.google_monitoring_dashboard.baseline
+BLOQUEO module.otro.google_tags_tag_value.huerfano
+BLOQUEO module.storage.google_storage_bucket.this

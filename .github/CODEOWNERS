@@ -8,12 +8,12 @@
 #
 # Gana la última línea que coincide, así que la regla general va primero.
 
-# Plataforma: todo lo que no tenga dueño más específico abajo (el resto de etapas y módulos,
-# las pruebas de Go y la documentación).
+# Plataforma: todo lo que no tenga dueño más específico abajo (3-workloads, el resto de los
+# módulos, las pruebas de Go y la documentación).
 *                                                   @PENDIENTE-plataforma
 
-# Red: etapa 3 (hub y spokes) y módulos de red.
-/gcp-datacenter/stages/3-networks/                  @PENDIENTE-red
+# Red: 2-networks (hub y spokes, ADR 0029 §2) y módulos de red.
+/gcp-datacenter/stages/2-networks/                  @PENDIENTE-red
 /gcp-datacenter/modules/network-hub/                @PENDIENTE-red
 /gcp-datacenter/modules/network-spoke/              @PENDIENTE-red
 /gcp-datacenter/modules/firewall/                   @PENDIENTE-red
@@ -22,9 +22,9 @@
 /gcp-datacenter/modules/load-balancer/              @PENDIENTE-red
 /gcp-datacenter/modules/cloud-armor/                @PENDIENTE-red
 
-# Seguridad: etapas 1 y 2, políticas de Conftest y módulos de seguridad.
-/gcp-datacenter/stages/1-org/                       @PENDIENTE-seguridad
-/gcp-datacenter/stages/2-security/                  @PENDIENTE-seguridad
+# Seguridad: 1-base (auditoría, llaves, secretos, Binary Authorization e IAM de personas, ADR
+# 0029 §4), políticas de Conftest y módulos de seguridad. 3-workloads queda en plataforma (*).
+/gcp-datacenter/stages/1-base/                      @PENDIENTE-seguridad
 /gcp-datacenter/policies/                           @PENDIENTE-seguridad
 /gcp-datacenter/modules/org/                        @PENDIENTE-seguridad
 /gcp-datacenter/modules/iam/                        @PENDIENTE-seguridad

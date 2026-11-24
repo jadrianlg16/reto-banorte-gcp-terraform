@@ -8,7 +8,9 @@
 #       exactamente el nombre del entorno y <ref> es refs/heads/main.
 #   scripts/destroy-guard.sh raiz <entorno> <raíz>
 #       Una raíz que _terraform-root.yml va a destruir: <entorno> es dev o qa y <raíz> es
-#       stages/{3-networks,4-projects,5-workloads}/envs/<entorno>, exactamente.
+#       stages/3-workloads/envs/<entorno> o stages/2-networks/envs/<entorno>, exactamente
+#       (ADR 0029 §8). 0-bootstrap, 1-base y el hub no tienen destroy: guardan el estado, las
+#       llaves, los repositorios y lo único del proyecto.
 #
 # Sale con 0 si se admite, 1 si se rechaza (con el motivo en ::error::) y 2 si el uso es
 # incorrecto. Sin espacios ni mayúsculas tolerados: lo que no coincide exactamente se rechaza.
@@ -27,7 +29,7 @@ usage() {
 }
 
 # Entornos que se pueden destruir. prod no está y no se agrega: tiene protección contra borrado
-# obligatoria (contrato §7.4 a §7.6) y su desmontaje no es un destroy.
+# obligatoria y su desmontaje no es un destroy.
 check_environment() { # check_environment <entorno>
   case "$1" in
     dev | qa) ;;
@@ -61,8 +63,8 @@ case "${mode}" in
     env_name="$1" root="$2"
     check_environment "${env_name}"
     case "${root}" in
-      "stages/3-networks/envs/${env_name}" | "stages/4-projects/envs/${env_name}" | "stages/5-workloads/envs/${env_name}") ;;
-      *) reject "La raíz '${root}' no se destruye en el entorno ${env_name}: solo stages/{3-networks,4-projects,5-workloads}/envs/${env_name}. No se destruye nada." ;;
+      "stages/3-workloads/envs/${env_name}" | "stages/2-networks/envs/${env_name}") ;;
+      *) reject "La raíz '${root}' no se destruye en el entorno ${env_name}: solo stages/3-workloads/envs/${env_name} y stages/2-networks/envs/${env_name}. No se destruye nada." ;;
     esac
     echo "OK: ${root} en el entorno ${env_name}."
     ;;

@@ -13,25 +13,27 @@ import (
 // envSmoke habilita la prueba de humo de dev.
 const envSmoke = "TEST_SMOKE"
 
-// smokeRoots son las raíces ya aplicadas cuyas salidas usa la prueba de humo de dev.
+// smokeRoots son las raíces ya aplicadas cuyas salidas usa la prueba de humo de dev: el hub,
+// el spoke de dev y las cargas de dev (ADR 0029 §2).
 var smokeRoots = []stage{
-	{Key: "3-networks"},
-	{Key: "3-networks/envs/dev", Env: "dev"},
-	{Key: "5-workloads/envs/dev", Env: "dev"},
+	{Key: keyHub},
+	{Key: spokeKey("dev"), Env: "dev"},
+	{Key: workloadsKey("dev"), Env: "dev"},
 }
 
 // TestDevSmoke es la prueba de humo de dev que corre apply.yml después de aplicar dev y antes
 // de qa (trabajo "dev / prueba de humo"). No aplica ni destruye nada: inicializa las raíces de
 // smokeRoots contra el bucket de estado, lee sus salidas y corre las Connectivity Tests que
-// la configuración de dev permite expresar (las mismas de TestEndToEnd, sin la de prod):
-// dev → Cloud SQL por IP privada, Internet → balanceador de dev en 443 y dev → on-premises
-// simulado. Exige al menos una. Si la instancia de Cloud SQL está detenida por el apagado fuera
-// de horario (ADR 0028), la prueba dev → Cloud SQL falla con un mensaje que lo dice y explica
-// cómo seguir (sqlStoppedError); no la enciende.
+// la configuración de dev permite expresar en el proyecto único (las mismas de TestEndToEnd,
+// sin la de prod): dev → Cloud SQL por IP privada, Internet → balanceador de dev en 443 y
+// dev → on-premises simulado. Exige al menos una. Si la instancia de Cloud SQL está detenida
+// por el apagado fuera de horario (ADR 0028), la prueba dev → Cloud SQL falla con un mensaje
+// que lo dice y explica cómo seguir (sqlStoppedError); no la enciende.
 //
-// Compuerta: TEST_SMOKE=true y TEST_E2E_STATE_BUCKET. La identidad (en CI, la cuenta
-// GCP_AUDIT_SERVICE_ACCOUNT) necesita leer los prefijos de estado 3-networks/ y 5-workloads/,
-// crear Connectivity Tests en el proyecto host de dev y describir la instancia de Cloud SQL.
+// Compuerta: TEST_SMOKE=true y TEST_E2E_STATE_BUCKET. La identidad (en CI, la cuenta de
+// lectura GCP_AUDIT_SERVICE_ACCOUNT, salida read_service_account de 0-bootstrap) necesita leer
+// los prefijos de estado 2-networks/ y 3-workloads/, crear Connectivity Tests en el proyecto
+// (roles/networkmanagement.admin, ADR 0029 §3) y describir la instancia de Cloud SQL.
 // VERIFICAR-EN-APPLY: esos permisos (ver docs/pipeline.md §2) y que cada prueba dé lo esperado.
 func TestDevSmoke(t *testing.T) {
 	helpers.RequireGate(t, envSmoke, "la prueba de humo lee el estado y crea Connectivity Tests en dev")

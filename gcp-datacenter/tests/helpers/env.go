@@ -13,41 +13,45 @@ import (
 	"testing"
 )
 
-// Variables de entorno que leen las pruebas. Las cuatro TERRATEST_* y GOOGLE_CLOUD_PROJECT son
-// las que exporta .github/workflows/terratest.yml (mismos nombres que las variables de
-// repositorio); las TEST_* son compuertas y ajustes que el flujo toma de variables de
-// repositorio con el mismo nombre (salvo TEST_REUSE_PROJECT, solo local).
+// Variables de entorno que leen las pruebas. Las TERRATEST_* y GOOGLE_CLOUD_PROJECT son las que
+// exporta .github/workflows/terratest.yml (mismos nombres que las variables de repositorio); las
+// TEST_* son compuertas y ajustes que el flujo toma de variables de repositorio con el mismo
+// nombre.
 const (
-	EnvOrgID          = "TERRATEST_ORG_ID"          // número de la organización, sin "organizations/"
-	EnvFolderID       = "TERRATEST_FOLDER_ID"       // opcional: carpeta de los proyectos y carpetas efímeros
-	EnvBillingAccount = "TERRATEST_BILLING_ACCOUNT" // XXXXXX-XXXXXX-XXXXXX, de los proyectos efímeros
-	EnvProjectID      = "TERRATEST_PROJECT_ID"      // proyecto de pruebas (cuota y llamadas sin proyecto propio)
-	EnvQuotaProject   = "GOOGLE_CLOUD_PROJECT"      // proyecto por defecto de gcloud y del proveedor
-	// EnvReuseProject = "true" hace que cada prueba use TERRATEST_PROJECT_ID en vez de crear
-	// un proyecto efímero (más rápido y barato en local; el flujo de CI no lo define).
-	EnvReuseProject     = "TEST_REUSE_PROJECT"
-	EnvRegion           = "TEST_REGION"          // región primaria (por defecto us-central1)
-	EnvDRRegion         = "TEST_DR_REGION"       // región secundaria (por defecto us-east4)
-	EnvAllowExpensive   = "TEST_ALLOW_EXPENSIVE" // "true" habilita las pruebas lentas o caras
-	EnvAllowOrg         = "TEST_ALLOW_ORG"       // "true" habilita las pruebas con alcance de organización
-	EnvDirectoryCust    = "TEST_DIRECTORY_CUSTOMER_ID"
-	EnvAccessPolicyID   = "TEST_ACCESS_POLICY_ID" // política de Access Context Manager existente
-	EnvNotificationMail = "TEST_NOTIFICATION_EMAIL"
-	EnvGKESecurityGroup = "TEST_GKE_SECURITY_GROUP" // gke-security-groups@<dominio>
-	EnvMIGImage         = "TEST_MIG_IMAGE"
-	EnvCloudRunImage    = "TEST_CLOUD_RUN_IMAGE"
-	EnvLBDomain         = "TEST_LB_DOMAIN"
+	// EnvProjectID es el proyecto único de pruebas (ADR 0029: un solo proyecto, sin carpetas):
+	// cada prueba de integración crea ahí sus recursos con un prefijo propio de la ejecución.
+	// Conviene que no sea el proyecto de la landing zone: drift.yml reportaría los recursos de
+	// prueba como no administrados.
+	EnvProjectID    = "TERRATEST_PROJECT_ID"
+	EnvQuotaProject = "GOOGLE_CLOUD_PROJECT" // proyecto por defecto de gcloud y del proveedor
+	// EnvEphemeralProjects = "true" vuelve al modo de un proyecto efímero por prueba (contrato
+	// §9.2): necesita TERRATEST_BILLING_ACCOUNT y una carpeta u organización donde crearlo.
+	EnvEphemeralProjects = "TEST_EPHEMERAL_PROJECTS"
+	EnvBillingAccount    = "TERRATEST_BILLING_ACCOUNT" // XXXXXX-XXXXXX-XXXXXX, solo con proyectos efímeros
+	EnvFolderID          = "TERRATEST_FOLDER_ID"       // opcional: carpeta de los proyectos efímeros y de TestProjectFactory
+	EnvOrgID             = "TERRATEST_ORG_ID"          // número de la organización, sin "organizations/"; solo pruebas de organización
+	EnvRegion            = "TEST_REGION"               // región primaria (por defecto us-central1)
+	EnvDRRegion          = "TEST_DR_REGION"            // región secundaria (por defecto us-east4)
+	EnvAllowExpensive    = "TEST_ALLOW_EXPENSIVE"      // "true" habilita las pruebas lentas o caras
+	EnvAllowOrg          = "TEST_ALLOW_ORG"            // "true" habilita las pruebas con alcance de organización
+	EnvDirectoryCust     = "TEST_DIRECTORY_CUSTOMER_ID"
+	EnvAccessPolicyID    = "TEST_ACCESS_POLICY_ID" // política de Access Context Manager existente
+	EnvNotificationMail  = "TEST_NOTIFICATION_EMAIL"
+	EnvGKESecurityGroup  = "TEST_GKE_SECURITY_GROUP" // gke-security-groups@<dominio>
+	EnvMIGImage          = "TEST_MIG_IMAGE"
+	EnvCloudRunImage     = "TEST_CLOUD_RUN_IMAGE"
+	EnvLBDomain          = "TEST_LB_DOMAIN"
 )
 
 // Valores por defecto que no identifican a nadie: son las regiones del ADR 0002 e imágenes
 // públicas de Google.
 //
-// DefaultCloudRunImage y Binary Authorization: las pruebas de integración corren en proyectos
-// efímeros sin google_binary_authorization_policy, cuya política es la de Google por defecto
-// (admite todo), así que la imagen pública sirve. En la prueba de extremo a extremo, la etapa 4
-// crea la política del proyecto de la aplicación (ALWAYS_DENY salvo su repositorio de Artifact
-// Registry y binary_authorization_allowlist_patterns): e2e/config.example.json agrega esta
-// imagen a binary_authorization_allowlist_patterns de 4-projects/envs/dev. Quien cambie
+// DefaultCloudRunImage y Binary Authorization: las pruebas de integración corren en un proyecto
+// de pruebas sin google_binary_authorization_policy, cuya política es la de Google por defecto
+// (admite todo), así que la imagen pública sirve. En la prueba de extremo a extremo, 1-base crea
+// la única política del proyecto (su regla por defecto admite los repositorios del proyecto y
+// binary_authorization_allowlist_patterns, ADR 0029 §4): e2e/config.example.json agrega esta
+// imagen a binary_authorization_allowlist_patterns de 1-base. Quien cambie
 // TEST_CLOUD_RUN_IMAGE o cloud_run_image debe cambiar también ese patrón.
 // VERIFICAR-EN-APPLY: que el patrón con * final admita la etiqueta :latest.
 const (

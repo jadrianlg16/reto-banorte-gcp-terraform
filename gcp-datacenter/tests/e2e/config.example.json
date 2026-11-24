@@ -1,9 +1,7 @@
 {
   "common": {
-    "org_id": "000000000000",
-    "billing_account": "000000-000000-000000",
+    "project_id": "example-project",
     "prefix": "bnt",
-    "project_suffix": "e2e01",
     "primary_region": "us-central1",
     "dr_region": "us-east4",
     "labels": {
@@ -13,32 +11,21 @@
   },
   "stages": {
     "0-bootstrap": {
+      "billing_account": "000000-000000-000000",
+      "budget_amount": 1000,
       "github_repository": "example-org/example-repo",
       "labels": { "app": "landing-zone" }
     },
-    "1-org": {
-      "directory_customer_id": "C00000000",
-      "groups": {
-        "org_admins": "gcp-org-admins@example.com",
-        "billing_admins": "gcp-billing-admins@example.com",
-        "security_admins": "gcp-security-admins@example.com",
-        "network_admins": "gcp-network-admins@example.com",
-        "platform_devops": "gcp-platform-devops@example.com",
-        "developers": "gcp-developers@example.com",
-        "auditors": "gcp-auditors@example.com"
-      },
+    "1-base": {
+      "environments": ["dev", "qa", "prod"],
+      "applications": { "app": { "apis": [], "secrets": [] } },
+      "secret_names": { "dev": ["app-api-token"], "qa": ["app-api-token"], "prod": ["app-api-token"] },
+      "binary_authorization_allowlist_patterns": ["us-docker.pkg.dev/cloudrun/container/hello*"],
       "log_retention_days": 365,
       "log_retention_locked": false,
-      "budget_amount": 1000,
       "labels": { "app": "landing-zone" }
     },
-    "2-security": {
-      "environments": ["dev", "qa", "prod"],
-      "secret_names": { "dev": ["app-api-token"], "qa": ["app-api-token"], "prod": ["app-api-token"] },
-      "vpc_sc_enforced": false,
-      "labels": { "app": "landing-zone" }
-    },
-    "3-networks": {
+    "2-networks": {
       "hub_supernet": "10.0.0.0/16",
       "hub_cidrs": { "hub": "10.0.0.0/24", "hub_dr": "10.0.1.0/24" },
       "spoke_supernets": { "dev": "10.10.0.0/16", "qa": "10.20.0.0/16", "prod": "10.30.0.0/16" },
@@ -55,7 +42,7 @@
       "enable_interconnect": false,
       "labels": { "app": "network" }
     },
-    "3-networks/envs/dev": {
+    "2-networks/envs/dev": {
       "environment": "dev",
       "enable_dr": false,
       "spoke_supernet": "10.10.0.0/16",
@@ -78,13 +65,7 @@
       "onprem_dns_domain": "corp.example.com.",
       "labels": { "app": "network" }
     },
-    "4-projects/envs/dev": {
-      "environment": "dev",
-      "applications": { "app": { "apis": [], "secrets": [] } },
-      "binary_authorization_allowlist_patterns": ["us-docker.pkg.dev/cloudrun/container/hello*"],
-      "labels": { "app": "app" }
-    },
-    "5-workloads/envs/dev": {
+    "3-workloads/envs/dev": {
       "environment": "dev",
       "application": "app",
       "enable_dr": false,
