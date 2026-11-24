@@ -15,7 +15,8 @@
 # así que no bloquea ni espera a un apply en curso.
 #
 # La incidencia lleva solo las direcciones de los recursos y la línea "Plan:", no el plan
-# completo: las incidencias de un repositorio público las ve cualquiera.
+# completo: el repositorio es privado, pero las incidencias las ve cualquiera con acceso de
+# lectura, y el plan completo puede traer valores de configuración que no hace falta repartir.
 #
 # Recursos no administrados (objetivo "cero recursos manuales", verificado con Cloud Asset
 # Inventory): lista con Cloud Asset los recursos del proyecto (salida project_id de
