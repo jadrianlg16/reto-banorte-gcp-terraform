@@ -4,6 +4,7 @@
 #   affected-roots.sh       raíces que planea pr.yml (y drift.yml con --all)
 #   root-tfvars.py          variables de cada raíz desde GCP_TFVARS_JSON
 #   disabled-envs.py        entornos apagados con GCP_DISABLED_ENVS (apply.yml y drift.yml)
+#   terratest-project-check.py   proyecto de Terratest distinto del de la landing zone
 #   go-test-report.sh       conteo de pruebas omitidas de go test -json
 #   module-tests.sh         pruebas de integración de cada módulo
 #   plan-fingerprint.py     huella del plan revisado (apply.yml)
@@ -595,6 +596,54 @@ ok = (body and "name: go (vet y pruebas sin GCP)" in body and "working-directory
 sys.exit(0 if ok else 1)
 ' "$WF/pr.yml"
 check "pr.yml: trabajo go (vet y pruebas sin GCP) con go vet y go test de tests/, sin credenciales ni condición" 0 $?
+
+# --- terratest-project-check.py --------------------------------------------------------------
+# terratest.yml falla si TERRATEST_PROJECT_ID es el proyecto de la landing zone
+# (GCP_TFVARS_JSON.common.project_id), sin mostrar ninguno de los dos, y exporta
+# TERRATEST_LANDING_ZONE_PROJECT_ID para la guarda de tests/helpers (RequireProjectEnv).
+tpc() { TERRATEST_PROJECT_ID="$1" TFVARS_JSON="$2" "$PY" scripts/terratest-project-check.py "${@:3}"; }
+lzjson='{"common": {"project_id": "bnt-lz-pruebas"}, "stages/1-base": {"project_id": "otro"}}'
+tpc bnt-lz-pruebas "$lzjson" >"$tmp/tpc-out.txt" 2>&1
+rc=$?
+[ "$rc" = 1 ] && ! grep -q 'bnt-lz-pruebas' "$tmp/tpc-out.txt"
+check "terratest-project-check: el mismo proyecto que common.project_id es error (1) y no muestra el ID" 0 $?
+tpc " BNT-LZ-Pruebas " "$lzjson" >/dev/null 2>&1
+check "terratest-project-check: compara sin mayúsculas ni espacios" 1 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-lz-pruebas "$lzjson" "$tmp/tpc-env.txt" >"$tmp/tpc-out.txt" 2>&1
+[ $? = 1 ] && [ ! -s "$tmp/tpc-env.txt" ] && grep -q '^::error::' "$tmp/tpc-out.txt"
+check "terratest-project-check: con archivo, ::error:: y no exporta nada" 0 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-terratest "$lzjson" "$tmp/tpc-env.txt" >/dev/null 2>&1
+[ $? = 0 ] && [ "$(cat "$tmp/tpc-env.txt")" = "TERRATEST_LANDING_ZONE_PROJECT_ID=bnt-lz-pruebas" ]
+check "terratest-project-check: otro proyecto pasa y exporta TERRATEST_LANDING_ZONE_PROJECT_ID (GITHUB_ENV)" 0 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-terratest "" "$tmp/tpc-env.txt" >"$tmp/tpc-out.txt" 2>&1
+rc1=$?
+tpc bnt-terratest 'no es json' >/dev/null 2>&1
+rc2=$?
+tpc bnt-terratest '{"stages/1-base": {"project_id": "bnt-terratest"}}' >/dev/null 2>&1
+rc3=$?
+[ "$rc1 $rc2 $rc3" = "0 0 0" ] && [ ! -s "$tmp/tpc-env.txt" ] && grep -q '^::notice::.*no se puede comprobar' "$tmp/tpc-out.txt"
+check "terratest-project-check: sin common.project_id que leer no falla y lo avisa" 0 $?
+: >"$tmp/tpc-env.txt"
+tpc bnt-terratest '{"common": {"project_id": "bnt-lz\nOTRA=1"}}' "$tmp/tpc-env.txt" >/dev/null 2>&1
+[ $? = 0 ] && [ ! -s "$tmp/tpc-env.txt" ]
+check "terratest-project-check: no exporta un valor que no tiene la forma de un ID de proyecto" 0 $?
+"$PY" -c '
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+i = t.find("python3 scripts/terratest-project-check.py \"${GITHUB_ENV}\"")
+j = t.find("go test -count=1 -json")
+step = t[t.rfind("- name:", 0, i):i] if i >= 0 else ""
+ok = 0 <= i < j and "TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}" in step
+go = open(sys.argv[2], encoding="utf-8").read()
+py = open(sys.argv[3], encoding="utf-8").read()
+m = re.search(r"EnvLandingZoneProjectID\s*=\s*\"([A-Z_]+)\"", go)
+ok = ok and m and ("EXPORT = \"%s\"" % m.group(1)) in py
+sys.exit(0 if ok else 1)
+' "$WF/terratest.yml" tests/helpers/env.go scripts/terratest-project-check.py
+check "terratest-project-check: terratest.yml lo corre antes de go test, con GCP_TFVARS_JSON, y exporta la variable que lee tests/helpers" 0 $?
 
 # --- go-test-report.sh ---------------------------------------------------------------------
 g="$DATA/go-test"

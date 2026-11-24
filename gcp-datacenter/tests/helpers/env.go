@@ -24,6 +24,10 @@ const (
 	// prueba como no administrados.
 	EnvProjectID    = "TERRATEST_PROJECT_ID"
 	EnvQuotaProject = "GOOGLE_CLOUD_PROJECT" // proyecto por defecto de gcloud y del proveedor
+	// EnvLandingZoneProjectID es el proyecto de la landing zone (GCP_TFVARS_JSON.common.project_id;
+	// terratest.yml lo exporta con scripts/terratest-project-check.py). Si está definido y es
+	// igual a TERRATEST_PROJECT_ID, RequireProjectEnv detiene la prueba con un error.
+	EnvLandingZoneProjectID = "TERRATEST_LANDING_ZONE_PROJECT_ID"
 	// EnvEphemeralProjects = "true" vuelve al modo de un proyecto efímero por prueba (contrato
 	// §9.2): necesita TERRATEST_BILLING_ACCOUNT y una carpeta u organización donde crearlo.
 	EnvEphemeralProjects = "TEST_EPHEMERAL_PROJECTS"

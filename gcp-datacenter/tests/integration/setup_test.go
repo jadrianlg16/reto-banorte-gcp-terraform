@@ -55,7 +55,7 @@ func fixtureVars(run helpers.Run, project helpers.TestProject, names []string, e
 		"prefix":         run.Prefix,
 		"region":         helpers.Region(),
 		"dr_region":      helpers.DRRegion(),
-		"labels":         helpers.RequiredLabels("dev", run),
+		"labels":         helpers.RequiredLabels(helpers.TestEnvLabel, run),
 	}
 	vars := make(map[string]any, len(names)+len(extra))
 	for _, n := range names {
