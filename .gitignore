@@ -23,6 +23,9 @@ labs/**/*.txt
 # scripts/root-tfvars.py escribe aquí el GCP_TFVARS_JSON de la raíz (valores reales)
 *.auto.tfvars.json
 
+# Python (selftest.sh y los scripts cargados con importlib)
+__pycache__/
+
 # Office / sistema
 ~$*
 .DS_Store
