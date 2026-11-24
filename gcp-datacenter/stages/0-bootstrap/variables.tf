@@ -292,7 +292,7 @@ variable "enable_protection_tags" {
 }
 
 variable "enable_deny_policy" {
-  description = "Si es true (por defecto), crea la política de denegación del proyecto contra las nueve cuentas del pipeline (ADR 0029 §5). Sin etiquetas solo lleva la regla sin condición (WIF, roles personalizados, llaves de cuentas y borrar el proyecto). Quien aplica necesita roles/iam.denyAdmin."
+  description = "Si es true (por defecto), crea la política de denegación del proyecto (ADR 0029 §5). Reglas: 1) las nueve cuentas del pipeline no tocan lo etiquetado etapa-0 (solo con enable_protection_tags); 2) esas cuentas no cambian WIF, roles personalizados ni los servicios habilitados, no crean llaves, no piden tokens ni firmas de cuentas de servicio y no borran el proyecto; 3) no leen valores de secretos, salvo la del hub de red; 4) nadie (principalSet://goog/public:all) crea llaves de cuentas de servicio. Quien aplica necesita roles/iam.denyAdmin."
   type        = bool
   default     = true
   nullable    = false

@@ -33,7 +33,8 @@ Un recurso es DEL ENTORNO (ADR 0029 §8: "contiene `<prefix>-<env>-`") si cumple
      `versionedResources[].resource`) es del spoke del entorno. Solo para GKE: las rutas y reglas
      que GCP crea en un spoke que se conserva también están en su red y no son huérfanos;
   5. la descripción en JSON que GKE pone a sus recursos nombra un namespace que termina en
-     `-<env>` (ADR 0029 §9: el namespace es `<app>-<env>`): discos `pvc-*` del controlador de
+     `-<env>` (convención `<app>-<env>` del ADR 0029 §9; Workload Identity ya no depende del
+     namespace, así que un namespace fuera de la convención no se reconoce por aquí): discos `pvc-*` del controlador de
      PD (`kubernetes.io/created-for/pvc/namespace`), NEG (`namespace`) y firewalls de los
      Services (`kubernetes.io/service-name` = `<namespace>/<servicio>`);
   6. es un recurso que GKE nombra `k8s<n>-<uid de 8>-<namespace>-<servicio>-...` (NEG,

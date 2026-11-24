@@ -108,7 +108,7 @@ test_env_root_base_types_denied if {
 	count(all_denials(plan)) == 4
 }
 
-# Roles de proyecto para cualquier principal (§4.2, hallazgo N5): también las cuentas del propio
+# Roles de proyecto para cualquier principal (ADR 0029 §4, hallazgo N5): también las cuentas del propio
 # entorno (<prefix>-<env>-...), que antes se admitían.
 test_env_root_project_members_denied if {
 	members := [
@@ -241,7 +241,7 @@ test_env_root_resource_iam_allowed if {
 	count(rule_denials(mk_plan_vars(changes, env_dev), "env_root_scope")) == 0
 }
 
-# Nombres sin `<prefix>-<env>-` (§4.3) en los tipos revisados.
+# Nombres sin `<prefix>-<env>-` (ADR 0029 §4) en los tipos revisados.
 test_env_root_names_denied if {
 	plan := mk_plan_vars(
 		[
