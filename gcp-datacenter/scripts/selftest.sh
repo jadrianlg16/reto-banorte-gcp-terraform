@@ -745,6 +745,53 @@ check "destroy-orphans: --project inválido es error" 2 $?
 "$PY" scripts/destroy-orphans.py --env Dev --prefix bnt --project example-landing-zone \
   --project-number 111111111111 --assets "$d/assets-huerfanos.json" >/dev/null 2>&1
 check "destroy-orphans: --env inválido es error" 2 $?
+# Restos de GKE (ADR 0029 §8: el nombre "contiene" <prefix>-<env>-). assets-gke.json parte del
+# listado de la revisión (firewall gke-bnt-dev-*, NEG k8s1-*-app-dev-*, disco pvc-* solo con
+# goog-gke-volume, bnt-dev-leftover) y agrega: discos pvc-* con el namespace en la descripción o
+# con la etiqueta del clúster, un firewall k8s-fw-* de un Service de app-dev, un NEG en la red
+# del spoke de dev, una ruta de GCP en esa red, un disco ya borrado y restos de qa y prod. Los
+# formatos de Cloud Asset son HYPOTHESIS (VERIFICAR-EN-APPLY en destroy-orphans.py).
+do_ --assets "$d/assets-gke.json" --summary "$tmp/orphans-gke.md" >"$tmp/do-gke.txt" 2>&1
+check "destroy-orphans: restos de GKE de dev sin estado son huérfanos (1)" 1 $?
+grep '^HUERFANO ' "$tmp/do-gke.txt" >"$tmp/huerfanos-gke.txt"
+if diff -u "$d/huerfanos-gke-esperados.txt" "$tmp/huerfanos-gke.txt"; then
+  echo "OK    destroy-orphans: exactamente los 7 restos de dev (nombre que contiene bnt-dev-, namespace en el nombre o la descripción, etiqueta del clúster, red del spoke)"
+else
+  echo "FALLA destroy-orphans: la lista de restos de GKE de dev no coincide"
+  fails=$((fails + 1))
+fi
+[ "$(grep -c '^AVISO-GKE ' "$tmp/do-gke.txt")" = 1 ] &&
+  grep -q '^AVISO-GKE compute.googleapis.com/Disk .*/pvc-0f1e2d3c-' "$tmp/do-gke.txt"
+check "destroy-orphans: un disco pvc-* que solo trae goog-gke-volume es aviso (sin entorno), no huérfano" 0 $?
+! grep -E '^(ESPERADO|HUERFANO|AVISO-GKE) ' "$tmp/do-gke.txt" | grep -qE 'default-route|pvc-aaaaaaaa|bnt-qa-|app-qa-|app-prod-|pvc-12121212'
+check "destroy-orphans: rutas de GCP en el spoke, restos borrados y restos de qa o prod no cuentan para dev" 0 $?
+grep -q '| Del entorno por |' "$tmp/orphans-gke.md" && grep -q 'red del spoke' "$tmp/orphans-gke.md" &&
+  grep -q 'no se pueden atribuir a ningún entorno' "$tmp/orphans-gke.md"
+check "destroy-orphans: el resumen dice por qué cada resto es del entorno y lista los avisos de GKE" 0 $?
+"$PY" scripts/destroy-orphans.py --env qa --prefix bnt --project example-landing-zone \
+  --project-number 111111111111 --assets "$d/assets-gke.json" >"$tmp/do-gke-qa.txt" 2>&1
+[ $? = 1 ] && [ "$(grep -c '^HUERFANO ' "$tmp/do-gke-qa.txt")" = 2 ] &&
+  [ "$(grep -cE '^HUERFANO .*(gke-bnt-qa-app-gke-|k8s1-0f0f0f0f-app-qa-)' "$tmp/do-gke-qa.txt")" = 2 ]
+check "destroy-orphans: con --env qa solo cuenta el firewall y el NEG de qa" 0 $?
+"$PY" -c '
+import json, sys
+a = json.load(open(sys.argv[1], encoding="utf-8"))
+keep = [x for x in a if x["assetType"].endswith("/Project") or "pvc-0f1e2d3c" in x["name"]]
+json.dump(keep, open(sys.argv[2], "w", encoding="utf-8"))
+' "$d/assets-gke.json" "$tmp/a-solo-aviso.json"
+do_ --assets "$tmp/a-solo-aviso.json" >"$tmp/do-aviso.txt" 2>&1
+[ $? = 0 ] && grep -q '^AVISO-GKE ' "$tmp/do-aviso.txt"
+check "destroy-orphans: solo avisos de GKE sin entorno sale con 0 (los lista)" 0 $?
+# La regla que bloquea (destroy-plan-check.py) sigue estricta: un nombre que contiene
+# bnt-dev- sin empezar con él (gke-bnt-dev-*) se detiene; con bnt-dev- al inicio pasa.
+for n in gke-bnt-dev-app-gke-1a2b3c4d-all bnt-dev-net-fw-extra; do
+  printf '{"variables": {"prefix": {"value": "bnt"}, "environment": {"value": "dev"}}, "resource_changes": [{"address": "google_compute_firewall.x", "mode": "managed", "type": "google_compute_firewall", "provider_name": "registry.terraform.io/hashicorp/google", "change": {"actions": ["delete"], "before": {"name": "%s", "network": "projects/example-landing-zone/global/networks/default"}}}]}' \
+    "$n" >"$tmp/pc-contiene-$n.json"
+done
+pc "$tmp/pc-contiene-gke-bnt-dev-app-gke-1a2b3c4d-all.json" --env dev >/dev/null 2>&1
+check "destroy-plan-check: un nombre que contiene bnt-dev- sin empezar con él se detiene (regla estricta)" 1 $?
+pc "$tmp/pc-contiene-bnt-dev-net-fw-extra.json" --env dev >/dev/null 2>&1
+check "destroy-plan-check: el mismo recurso con bnt-dev- al inicio pasa" 0 $?
 
 # Estructura de destroy.yml y del modo destroy de _terraform-root.yml.
 "$PY" -c '
