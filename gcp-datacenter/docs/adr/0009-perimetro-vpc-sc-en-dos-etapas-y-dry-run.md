@@ -8,6 +8,18 @@ Enmendado el 2026-11-23: el título de la regla del pipeline lleva un hash de su
 (títulos únicos dentro del perímetro con `create_before_destroy`) y regla de operación para la
 carrera entre el plan y el apply de la etapa 2 y los applies de la etapa 4 de prod (ADR 0025).
 
+Reemplazado por [0029](0029-un-solo-proyecto.md) el 2026-11-24: sin proyectos de prod
+separados, el perímetro no puede separar entornos. Ahora es opcional y supone organización
+(ADR 0029 §1): lo crea `1-base` (`stages/1-base/org.tf`) solo cuando llega `access_policy_id`,
+sobre una política de acceso que ya existe (el módulo no la crea), con
+`resources = ["projects/<número>"]` (todo el proyecto), `environment = "common"`, las nueve
+cuentas del pipeline en la regla de entrada y siempre en dry-run (`enforced = false`). Ninguna
+otra raíz da de alta recursos ni reglas, así que la carrera de la etapa 4 y el alta del proyecto
+host ya no existen. KMS y Secret Manager pasan a estar restringidos por defecto (ADR 0019,
+también reemplazado). Sigue vigente la mecánica del módulo `vpc-sc` descrita abajo: membresía y
+regla de entrada como recursos aparte, `ignore_changes` y título con hash. El resto del texto
+describe el diseño de varios proyectos, que vive en la rama `archivo/multiproyecto`.
+
 Tipo: Aclaración.
 
 ## Contexto

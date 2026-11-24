@@ -4,6 +4,19 @@
 
 Aceptado, 2026-11-21.
 
+Reemplazado por [0029](0029-un-solo-proyecto.md) el 2026-11-24: ya no existe el proyecto
+`security` que servía a entornos fuera del perímetro. Con el proyecto único, llaves, secretos y
+cargas de los tres entornos están en el mismo proyecto y el perímetro opcional lo rodea entero
+(ADR 0009, también reemplazado). Por eso el valor por defecto de `vpc_sc_restricted_services`,
+ahora en `stages/1-base/variables.tf`, **sí** incluye `cloudkms.googleapis.com` y
+`secretmanager.googleapis.com`, además de `storage.googleapis.com` (que sigue exigido por
+validación) y los demás servicios de datos y cómputo. El ADR 0029 no lo dice de forma explícita;
+la decisión la tomó el constructor de `1-base` y la registra el contrato (§7.1). Que las cargas
+sigan usando KMS y Secret Manager con el perímetro forzado es el punto 4 de
+[`docs/pendientes-apply.md`](../pendientes-apply.md) (hoy el perímetro siempre está en
+dry-run). El resto del texto describe el diseño de varios proyectos, que vive en la rama
+`archivo/multiproyecto`.
+
 Tipo: Aclaración.
 
 ## Contexto
