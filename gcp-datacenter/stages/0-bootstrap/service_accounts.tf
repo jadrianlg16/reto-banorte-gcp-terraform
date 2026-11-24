@@ -94,16 +94,15 @@ locals {
   # google_project_iam_member cambia un solo rol por llamada, así que cada llamada cae en una de
   # las dos.
   #
-  # Personas: IAM de solo lectura de los grupos (ADR 0029 §4) y tagUser para el agente de GKE y
-  # <número>@cloudservices (etiquetas seguras de nodos y VM). La lista debe coincidir con la de
-  # stages/1-base/iam.tf.
+  # Personas: IAM de solo lectura de los grupos (ADR 0029 §4). La lista debe coincidir con la de
+  # stages/1-base/iam.tf. Sin tagUser: con él, la cuenta de 1-base podría dárselo a sí misma y
+  # quitar la etiqueta de protección (el de los agentes lo da main.tf).
   base_grantable_roles = [
     "roles/cloudkms.viewer",
     "roles/iam.securityReviewer",
     "roles/logging.privateLogViewer",
     "roles/logging.viewer",
     "roles/monitoring.viewer",
-    "roles/resourcemanager.tagUser",
     "roles/viewer",
   ]
 
@@ -124,7 +123,7 @@ locals {
   delegated_iam = {
     people = {
       title       = "solo-iam-de-lectura"
-      description = "Solo asignar los roles de lectura de los grupos de personas y tagUser (1-base, concesión delegada)."
+      description = "Solo asignar los roles de lectura de los grupos de personas (1-base, concesión delegada)."
       expression  = "api.getAttribute('iam.googleapis.com/modifiedGrantsByRole', []).hasOnly([${join(", ", [for r in local.base_grantable_roles : "'${r}'"])}])"
     }
     runtime = {
@@ -178,7 +177,9 @@ locals {
     { role = "roles/dns.admin", condition = null },
   ]
   net_env_roles = concat(local.net_roles, [
-    { role = "roles/resourcemanager.tagAdmin", condition = null },        # etiquetas seguras del spoke
+    # Etiquetas seguras del spoke y su IAM (tagUser de tf-wl-<env> sobre sus valores), sin
+    # ligarlas a recursos ni retenerlas (custom_roles.tf).
+    { role = local.custom_role_ids["network_tag_manager"], condition = null },
     { role = "roles/servicenetworking.networksAdmin", condition = null }, # conexión de PSA
   ])
 
@@ -203,8 +204,9 @@ locals {
       { role = "roles/redis.admin", condition = null },               # Memorystore
       { role = "roles/run.admin", condition = null },                 # Cloud Run y su IAM de invocador
       { role = "roles/storage.admin", condition = local.storage_prefix[e] },
-      # Etiquetas seguras de la red (lb_backend, iap_ssh) en plantillas y pools.
-      { role = "roles/resourcemanager.tagUser", condition = null },
+      # Sin tagUser de proyecto: lo trae con iam.serviceAccounts.deleteTagBinding, que la
+      # denegación no puede negar (hallazgo 1). El spoke del entorno le da tagUser solo sobre sus
+      # valores lb_backend e iap_ssh (stages/2-networks/envs/<env>/firewall.tf).
       ],
       contains(local.off_hours_environments, e) ? [{ role = "roles/cloudscheduler.admin", condition = null }] : [],
     )

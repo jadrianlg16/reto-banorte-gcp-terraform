@@ -229,12 +229,13 @@ esta raíz no se los da a sí misma. Lo que necesita para aplicar esta raíz:
   `roles/monitoring.editor`, `roles/redis.admin`, `roles/run.admin`,
   `roles/cloudscheduler.admin` (dev y qa) y `roles/storage.admin` condicionado a
   `projects/_/buckets/<prefix>-<env>-`.
-- Etiquetas seguras: `roles/resourcemanager.tagUser` sobre los valores `lb_backend` e
-  `iap_ssh` del spoke (§7.4), que `0-bootstrap` le da para crear plantillas y pools con esas
-  etiquetas. Esta raíz no declara ningún tagUser: los valores no son suyos y el mismo permiso
-  declarado desde los tres entornos se borraría con el `destroy` de cualquiera de ellos.
-  VERIFICAR-EN-APPLY: si el agente de GKE y `<número>@cloudservices.gserviceaccount.com`, que
-  crean los nodos y las VM, también lo necesitan.
+- Etiquetas seguras: `roles/resourcemanager.tagUser` solo sobre los valores `lb_backend` e
+  `iap_ssh` del spoke de su entorno (§7.4), que le da `2-networks/envs/<env>` para crear
+  plantillas y pools con esas etiquetas; ningún rol de etiquetas en el proyecto (el `tagUser` de
+  proyecto trae `iam.serviceAccounts.deleteTagBinding`, que la denegación no puede negar). Esta
+  raíz no declara ningún tagUser: los valores no son suyos. El agente de GKE y
+  `<número>@cloudservices.gserviceaccount.com`, que crean los nodos y las VM, tienen `tagUser`
+  de proyecto desde `0-bootstrap`.
 - Estado: lectura de los prefijos `1-base` y `2-networks/<env>` y escritura de
   `3-workloads/<env>` en el bucket de estado.
 

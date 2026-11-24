@@ -1,6 +1,6 @@
 # Permisos de proyecto para principales compartidos (ADR 0029 §4): grupos de personas de solo
-# lectura y agentes de servicio, más los de las cuentas de ejecución de los entornos
-# (runtime_accounts.tf). Ninguna raíz de entorno asigna roles de proyecto.
+# lectura, más los de las cuentas de ejecución de los entornos (runtime_accounts.tf). Ninguna raíz
+# de entorno asigna roles de proyecto.
 #
 # La cuenta de 1-base solo puede asignar estos roles: su projectIamAdmin está condicionado en
 # 0-bootstrap (local.base_grantable_roles y local.runtime_grantable_roles de
@@ -14,10 +14,9 @@ locals {
     auditors        = ["roles/viewer", "roles/iam.securityReviewer", "roles/logging.privateLogViewer"]
   }
 
-  # Etiquetas seguras de la red (lb_backend, iap_ssh) en nodos de GKE y VM de MIG: el agente de
-  # GKE y la cuenta de las APIs de Google (crea las VM de los MIG y los nodos) las aplican.
-  tag_user_agents = ["gke", "apis"]
-
+  # El tagUser del agente de GKE y de <número>@cloudservices (etiquetas seguras de nodos y VM) lo
+  # da 0-bootstrap (main.tf): si esta etapa pudiera asignar tagUser, su cuenta podría dárselo a sí
+  # misma y quitar la etiqueta de protección (hallazgo 1).
   project_bindings = concat(
     flatten([
       for g, email in var.groups : [
@@ -30,15 +29,6 @@ locals {
         }
       ]
     ]),
-    [
-      for a in local.tag_user_agents : {
-        key      = "agent|${a}|roles/resourcemanager.tagUser"
-        scope    = "project"
-        resource = local.project_id
-        role     = "roles/resourcemanager.tagUser"
-        member   = local.service_agents[a]
-      }
-    ],
     # Auditoría: lectura de los objetos del bucket de logs.
     contains(keys(var.groups), "auditors") ? [{
       key      = "group|auditors|bucket:audit_logs|roles/storage.objectViewer"
@@ -51,8 +41,6 @@ locals {
   )
 }
 
-# VERIFICAR-EN-APPLY: que tagUser en el proyecto baste al agente de GKE y a
-# <número>@cloudservices para crear nodos y VM con resource_manager_tags.
 module "iam" {
   source = "../../modules/iam"
 

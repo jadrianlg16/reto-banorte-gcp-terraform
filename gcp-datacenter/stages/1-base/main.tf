@@ -23,7 +23,6 @@ locals {
   # (lo publica 0-bootstrap, así que se conocen en el plan). 0-bootstrap crea los que no existen
   # hasta el primer uso (google_project_service_identity).
   service_agents = {
-    apis             = "serviceAccount:${local.project_number}@cloudservices.gserviceaccount.com"
     artifactregistry = "serviceAccount:service-${local.project_number}@gcp-sa-artifactregistry.iam.gserviceaccount.com"
     compute          = "serviceAccount:service-${local.project_number}@compute-system.iam.gserviceaccount.com"
     filestore        = "serviceAccount:service-${local.project_number}@cloud-filer.iam.gserviceaccount.com"

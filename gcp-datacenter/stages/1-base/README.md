@@ -12,7 +12,7 @@ pipeline con la cuenta `<prefix>-tf-base` (entorno de GitHub `common`); lee el e
 | `main.tf` | Configuración de auditoría del proyecto (`ADMIN_READ` para todos los servicios; `DATA_READ` y `DATA_WRITE` para KMS, IAM, Secret Manager, Cloud SQL y Cloud Storage); llaves comunes `logs` y `pubsub`; bucket de logs con CMEK y sink de proyecto (módulo `log-export`, con una exclusión para los registros del propio bucket); alertas de auditoría CIS 2.5 a 2.12 (módulo `audit-alerts`); contactos esenciales del proyecto; tema de Pub/Sub y notificación de hallazgos de SCC (opcional) |
 | `kms.tf` | Un llavero por entorno y ubicación (`primary_region`, `dr_region` y la multirregión `us`) con las llaves de cada uso y sus agentes de servicio; contenedores de secretos por entorno con réplica en las dos regiones |
 | `artifacts.tf` | Un repositorio Docker `<prefix>-<env>-<app>` por entorno y aplicación, cifrado con la llave `artifacts` de su entorno; su IAM; la política única de Binary Authorization |
-| `iam.tf` | Roles de solo lectura de los grupos de personas, `resourcemanager.tagUser` para los agentes de GKE y de las APIs de Google y los roles de proyecto de las cuentas de ejecución |
+| `iam.tf` | Roles de solo lectura de los grupos de personas y los roles de proyecto de las cuentas de ejecución (el `tagUser` de los agentes de GKE y de las APIs de Google lo da 0-bootstrap) |
 | `runtime_accounts.tf` | Las cuentas de ejecución de cada entorno y aplicación y sus permisos (tabla de abajo) |
 | `org.tf` | Solo con organización: las políticas de organización aplicadas al proyecto (módulo `org`) y el perímetro de VPC-SC en dry-run (módulo `vpc-sc`) |
 | `remote_state.tf` | Lectura del estado de `0-bootstrap` |

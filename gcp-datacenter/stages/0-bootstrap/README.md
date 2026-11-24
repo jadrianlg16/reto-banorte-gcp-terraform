@@ -9,9 +9,9 @@ aquí como `project_id`. Ninguna raíz crea ni borra el proyecto.
 
 | Archivo | Recursos |
 |---|---|
-| `main.tf` | Todas las APIs del proyecto (una sola vez, `disable_on_destroy = false`) más `additional_apis`; los agentes de servicio que 1-base necesita (`google_project_service_identity`: Artifact Registry, Filestore, Backup for GKE, Pub/Sub, Memorystore, Secret Manager y Cloud SQL); OS Login en el proyecto; la cuenta de Compute por defecto sin `roles/editor` (`DEPRIVILEGE`); llave KMS y bucket del estado; presupuesto del proyecto |
+| `main.tf` | Todas las APIs del proyecto (una sola vez, `disable_on_destroy = false`) más `additional_apis`; los agentes de servicio que 1-base necesita (`google_project_service_identity`: Artifact Registry, Filestore, Backup for GKE, Pub/Sub, Memorystore, Secret Manager y Cloud SQL); OS Login en el proyecto; la cuenta de Compute por defecto sin `roles/editor` (`DEPRIVILEGE`); `resourcemanager.tagUser` de proyecto para el agente de GKE y `<número>@cloudservices` (etiquetas seguras de nodos y VM; aquí y no en 1-base para que ninguna cuenta del pipeline pueda asignar `tagUser`); llave KMS y bucket del estado; presupuesto del proyecto |
 | `service_accounts.tf` | Las nueve cuentas del pipeline, sus roles de proyecto, su acceso condicionado al bucket de estado y quién toma cada una por WIF |
-| `custom_roles.tf` | Cinco roles personalizados del proyecto |
+| `custom_roles.tf` | Cuatro roles personalizados del proyecto |
 | `wif.tf` | Pool y proveedor de Workload Identity Federation para GitHub Actions |
 | `deny_policy.tf` | Etiqueta `<prefix>-proteccion = etapa-0` y política de denegación del proyecto |
 
@@ -53,10 +53,10 @@ se declara en una raíz de entorno (ADR 0029 §4). Todas las cuentas tienen adem
 
 | Cuenta | Roles |
 |---|---|
-| `tf-base` | `cloudkms.admin` (salvo el llavero del estado), `TfSecretContainerAdmin`, `artifactregistry.admin`, `binaryauthorization.policyEditor`, `logging.configWriter`, `monitoring.alertPolicyEditor`, `monitoring.notificationChannelEditor`, `essentialcontacts.admin`, `pubsub.admin`, `securitycenter.notificationConfigEditor`, `storage.admin` (buckets `<prefix>-common-`), `TfServiceAccountManager` (cuentas de ejecución de los entornos), `projectIamAdmin` en dos concesiones delegadas (roles de lectura de personas y `tagUser`; roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado); con `org_id`, `orgpolicy.policyAdmin` en la organización; con `access_policy_id`, `accesscontextmanager.policyEditor` sobre esa política |
+| `tf-base` | `cloudkms.admin` (salvo el llavero del estado), `TfSecretContainerAdmin`, `artifactregistry.admin`, `binaryauthorization.policyEditor`, `logging.configWriter`, `monitoring.alertPolicyEditor`, `monitoring.notificationChannelEditor`, `essentialcontacts.admin`, `pubsub.admin`, `securitycenter.notificationConfigEditor`, `storage.admin` (buckets `<prefix>-common-`), `TfServiceAccountManager` (cuentas de ejecución de los entornos), `projectIamAdmin` en dos concesiones delegadas (roles de lectura de personas; roles de las cuentas de ejecución, Cloud SQL por IAM y el apagado); con `org_id`, `orgpolicy.policyAdmin` en la organización; con `access_policy_id`, `accesscontextmanager.policyEditor` sobre esa política |
 | `tf-net` | `compute.networkAdmin`, `compute.securityAdmin`, `dns.admin` |
-| `tf-net-<env>` | los de `tf-net`, más `resourcemanager.tagAdmin` y `servicenetworking.networksAdmin` |
-| `tf-wl-<env>` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` (buckets `<prefix>-<env>-`), `resourcemanager.tagUser`; `cloudscheduler.admin` solo en dev y qa (ADR 0028). Sin roles de IAM: `1-base` le da `iam.serviceAccountUser` sobre cada cuenta de ejecución de su entorno que adjunta |
+| `tf-net-<env>` | los de `tf-net`, más `TfNetworkTagManager` (claves y valores de etiquetas y su IAM, sin ligarlas) y `servicenetworking.networksAdmin` |
+| `tf-wl-<env>` | `backupdr.admin`, `certificatemanager.editor`, `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.loadBalancerAdmin`, `compute.securityAdmin`, `compute.networkUser`, `container.admin`, `file.editor`, `gkebackup.admin`, `monitoring.editor`, `redis.admin`, `run.admin`, `storage.admin` (buckets `<prefix>-<env>-`); `cloudscheduler.admin` solo en dev y qa (ADR 0028). Sin roles de IAM ni de etiquetas en el proyecto: `1-base` le da `iam.serviceAccountUser` sobre cada cuenta de ejecución de su entorno que adjunta, y su spoke, `tagUser` sobre los valores `lb_backend` e `iap_ssh` |
 | `tf-read` | `viewer`, `iam.securityReviewer`, `cloudasset.viewer`, `networkmanagement.admin` y `storage.objectViewer` sobre el bucket de estado |
 
 Que cada lista alcance para aplicar su raíz es HYPOTHESIS hasta el primer apply. Ninguna cuenta
@@ -78,6 +78,7 @@ documentación de IAM): `base_grantable_roles` (personas y agentes) y `runtime_g
 |---|---|---|
 | `secret_container_admin` | `<prefix>TfSecretContainerAdmin` | `tf-base`: contenedores de secretos y su IAM (lectura de los secretos por las cuentas de ejecución), sin leer ni agregar versiones |
 | `service_account_manager` | `<prefix>TfServiceAccountManager` | `tf-base`: cuentas de ejecución y su IAM, lo de `iam.serviceAccountAdmin` sin `createTagBinding` ni `deleteTagBinding` |
+| `network_tag_manager` | `<prefix>TfNetworkTagManager` | `tf-net-<env>`: claves y valores de etiquetas y su IAM, como `resourcemanager.tagAdmin` sin `tagHolds`; ni este ni aquel ligan etiquetas (`tagValueBindings`, `*TagBinding`) |
 | `off_hours_scheduler` | `<prefix>OffHoursScheduler` | cuentas del apagado fuera de horario (ADR 0028); `1-base` se lo da y lo publica como `off_hours_role_id` |
 
 Van aquí y no en la raíz que los usa para que ninguna cuenta del pipeline necesite
@@ -171,8 +172,11 @@ que no se apagan), los agentes de servicio, OS Login, `DEPRIVILEGE`, el presupue
 el bucket y su llave, las ocho llaves de `stage_service_accounts` y los nombres de las cuentas,
 que no haya roles básicos ni `serviceAccountAdmin` y que `storage.admin`, `projectIamAdmin` y
 `cloudkms.admin` siempre lleven condición, las condiciones exactas por entorno, la tabla de
-estado, el `principalSet` de cada cuenta, los tres roles personalizados, la etiqueta y sus
-enlaces y las tres reglas de la denegación; las variantes sin etiquetas, sin denegación y con
+estado, el `principalSet` de cada cuenta, los cuatro roles personalizados, la etiqueta y sus
+enlaces y las tres reglas de la denegación; que ninguna cuenta del pipeline tenga un rol de
+proyecto que ligue o quite etiquetas (`ningun_rol_del_pipeline_liga_etiquetas`: `tagUser`,
+`tagAdmin`, roles con `*TagBinding` o `tagValueBindings`, y `cloudkms.admin` y `storage.admin`
+solo con una condición que deja fuera el llavero y el bucket del estado); las variantes sin etiquetas, sin denegación y con
 organización y política de acceso; y que se rechazan entradas inválidas.
 
 <!-- BEGIN_TF_DOCS -->
@@ -212,6 +216,7 @@ organización y política de acceso; y que se rechazan entradas inválidas.
 | [google_kms_crypto_key_iam_member.state_storage_agent](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/kms_crypto_key_iam_member) | resource |
 | [google_project_default_service_accounts.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_default_service_accounts) | resource |
 | [google_project_iam_custom_role.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_custom_role) | resource |
+| [google_project_iam_member.tag_user_agents](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_iam_member) | resource |
 | [google_project_service.this](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/project_service) | resource |
 | [google_service_account.read](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
 | [google_service_account.stage](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/service_account) | resource |
@@ -254,7 +259,7 @@ organización y política de acceso; y que se rechazan entradas inválidas.
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_custom_role_ids"></a> [custom\_role\_ids](#output\_custom\_role\_ids) | Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret\_container\_admin, service\_account\_manager y off\_hours\_scheduler. |
+| <a name="output_custom_role_ids"></a> [custom\_role\_ids](#output\_custom\_role\_ids) | Mapa rol → ID completo (projects/<id>/roles/<rol>) de los roles personalizados: secret\_container\_admin, service\_account\_manager, network\_tag\_manager y off\_hours\_scheduler. |
 | <a name="output_project_id"></a> [project\_id](#output\_project\_id) | ID del proyecto único. |
 | <a name="output_project_number"></a> [project\_number](#output\_project\_number) | Número del proyecto único. |
 | <a name="output_read_service_account"></a> [read\_service\_account](#output\_read\_service\_account) | Correo de la cuenta de solo lectura <prefix>-tf-read (plan, drift, prueba de humo y huérfanos; variable GCP\_AUDIT\_SERVICE\_ACCOUNT). |

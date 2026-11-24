@@ -33,6 +33,7 @@ override_data {
       custom_role_ids = {
         secret_container_admin  = "projects/example-project-id/roles/bntTfSecretContainerAdmin"
         service_account_manager = "projects/example-project-id/roles/bntTfServiceAccountManager"
+        network_tag_manager     = "projects/example-project-id/roles/bntTfNetworkTagManager"
         off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
       }
       state_iam_conditions = {}
@@ -260,17 +261,17 @@ run "plan_con_valores_de_ejemplo" {
       module.iam.bindings["group|readers|roles/viewer"].member == "group:gcp-readers@example.com",
       module.iam.bindings["group|auditors|roles/logging.privateLogViewer"].scope == "project",
       module.iam.bindings["group|auditors|bucket:audit_logs|roles/storage.objectViewer"].resource == "bnt-common-ops-audit-logs",
-      module.iam.bindings["agent|gke|roles/resourcemanager.tagUser"].member == "serviceAccount:service-222222222222@container-engine-robot.iam.gserviceaccount.com",
-      module.iam.bindings["agent|apis|roles/resourcemanager.tagUser"].member == "serviceAccount:222222222222@cloudservices.gserviceaccount.com",
+      # El tagUser de los agentes lo da 0-bootstrap: esta etapa no asigna roles de etiquetas.
+      length([for k, b in module.iam.bindings : k if strcontains(b.role, "resourcemanager.tag")]) == 0,
     ])
-    error_message = "Grupos de solo lectura y tagUser para el agente de GKE y la cuenta de las APIs de Google."
+    error_message = "Grupos de solo lectura y ningún rol de etiquetas (el tagUser de los agentes es de 0-bootstrap)."
   }
   # La cuenta de 1-base solo puede asignar los roles de sus dos condiciones en 0-bootstrap
   # (base_grantable_roles y runtime_grantable_roles).
   assert {
     condition = alltrue([for b in values(module.iam.bindings) : contains([
       "roles/cloudkms.viewer", "roles/iam.securityReviewer", "roles/logging.privateLogViewer", "roles/logging.viewer",
-      "roles/monitoring.viewer", "roles/resourcemanager.tagUser", "roles/viewer",
+      "roles/monitoring.viewer", "roles/viewer",
       "roles/autoscaling.metricsWriter", "roles/cloudsql.client", "roles/cloudsql.instanceUser", "roles/cloudtrace.agent",
       "roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/stackdriver.resourceMetadata.writer",
       "projects/example-project-id/roles/bntOffHoursScheduler",

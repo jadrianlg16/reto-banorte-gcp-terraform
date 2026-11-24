@@ -53,10 +53,11 @@ locals {
   }
 
   # Etiquetas seguras del spoke: llave tagKeys/… → valor tagValues/… (ver resource_manager_tags).
-  # El tagUser sobre los valores no se declara aquí: se lo da 0-bootstrap a tf-wl-<env>.
-  # VERIFICAR-EN-APPLY: que con el tagUser de tf-wl-<env> basten para crear la plantilla del MIG
-  # y los pools de GKE con estas etiquetas, o si el agente de GKE y <número>@cloudservices también
-  # necesitan tagUser sobre los valores (antes se lo daba la etapa 4).
+  # El tagUser sobre los valores no se declara aquí: se lo da a tf-wl-<env> el spoke del entorno,
+  # solo sobre sus valores (stages/2-networks/envs/<env>/firewall.tf); el de los agentes de GKE y
+  # <número>@cloudservices, que crean los nodos y las VM, lo da 0-bootstrap en el proyecto.
+  # VERIFICAR-EN-APPLY: que con el tagUser sobre los valores basten para crear la plantilla del
+  # MIG y los pools de GKE con estas etiquetas.
   mig_secure_tags = {
     for k in ["lb_backend", "iap_ssh"] : local.secure_tag_keys[k] => local.secure_tags[k]
   }

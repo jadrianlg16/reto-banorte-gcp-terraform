@@ -9,11 +9,14 @@
 # cuentas de servicio; que las llaves hereden la etiqueta de su llavero es HYPOTHESIS.
 #
 # Límites conocidos (la denegación no los cubre):
-# - iam.serviceAccounts.createTagBinding/deleteTagBinding y cloudkms.keyRings.deleteTagBinding no
-#   se pueden negar. Por eso ninguna cuenta del pipeline tiene esos permisos sobre lo protegido:
-#   las de cargas usan un rol propio sin ellos (custom_roles.tf) y la de 1-base no tiene tagUser
-#   ni KMS sobre el llavero del estado. Las cuentas de spoke tienen tagAdmin, pero ningún permiso
-#   sobre cuentas, buckets ni llaves.
+# - iam.serviceAccounts.createTagBinding/deleteTagBinding, cloudkms.keyRings.deleteTagBinding y
+#   resourcemanager.tagValueBindings.* no se pueden negar. Por eso ninguna cuenta del pipeline
+#   tiene esos permisos sobre lo protegido: ninguna tiene tagUser ni tagAdmin de proyecto, la de
+#   1-base usa un rol de cuentas de servicio sin etiquetas (custom_roles.tf) y no tiene KMS sobre
+#   el llavero del estado, y las de spoke usan TfNetworkTagManager, que administra claves, valores
+#   y su IAM pero no liga etiquetas. Aunque una cuenta de spoke se diera tagUser sobre el valor
+#   de protección, le faltaría deleteTagBinding sobre la cuenta, el bucket o el llavero (prueba
+#   ningun_rol_del_pipeline_liga_etiquetas).
 # - Los permisos de las políticas de denegación (iam.denypolicies.*) no se pueden negar; ninguna
 #   cuenta del pipeline tiene roles/iam.denyAdmin.
 # - Los permisos de objeto de Cloud Storage no se niegan: los prefijos del estado se separan con

@@ -53,6 +53,37 @@ locals {
         "resourcemanager.projects.get",
       ]
     }
+    # 2-networks/envs/<env>: las claves y valores de las etiquetas seguras del spoke y su IAM
+    # (tagUser de tf-wl-<env> y tagHoldAdmin del agente de GKE sobre sus valores). Reemplaza a
+    # roles/resourcemanager.tagAdmin sin resourcemanager.tagHolds.*; como tagAdmin, no tiene
+    # resourcemanager.tagValueBindings.* ni ningún *TagBinding, así que no liga ni quita
+    # etiquetas de recursos (permisos de roles/resourcemanager.tagAdmin y tagUser en la
+    # referencia de roles predefinidos, https://cloud.google.com/iam/docs/roles-permissions/resourcemanager).
+    # Con tagValues.setIamPolicy podría darse tagUser sobre el valor de protección, pero quitar
+    # ese enlace de una cuenta, del bucket o del llavero del estado exige además
+    # deleteTagBinding sobre el recurso, que ningún rol del pipeline tiene sobre ellos (prueba
+    # "ningun_rol_del_pipeline_liga_etiquetas" de tests/0-bootstrap.tftest.hcl).
+    network_tag_manager = {
+      role_id     = "${var.prefix}TfNetworkTagManager"
+      title       = "Terraform: etiquetas seguras de red sin ligarlas"
+      description = "Crear, cambiar y borrar claves y valores de etiquetas y administrar su IAM (2-networks/envs). Sin ligar ni quitar etiquetas de recursos ni retenerlas."
+      permissions = [
+        "resourcemanager.tagKeys.create",
+        "resourcemanager.tagKeys.delete",
+        "resourcemanager.tagKeys.get",
+        "resourcemanager.tagKeys.getIamPolicy",
+        "resourcemanager.tagKeys.list",
+        "resourcemanager.tagKeys.setIamPolicy",
+        "resourcemanager.tagKeys.update",
+        "resourcemanager.tagValues.create",
+        "resourcemanager.tagValues.delete",
+        "resourcemanager.tagValues.get",
+        "resourcemanager.tagValues.getIamPolicy",
+        "resourcemanager.tagValues.list",
+        "resourcemanager.tagValues.setIamPolicy",
+        "resourcemanager.tagValues.update",
+      ]
+    }
     # Apagado fuera de horario (ADR 0028, ADR 0029 §4): exactamente los permisos de las tres
     # llamadas de sus trabajos (instances.patch de Cloud SQL Admin y nodePools.setAutoscaling y
     # setSize de GKE). Sin crear, borrar ni leer datos. El ADR 0029 lo pone en 1-base; va aquí

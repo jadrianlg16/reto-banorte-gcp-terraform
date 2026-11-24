@@ -9,8 +9,9 @@
 #
 # Etiquetas seguras: lb_backend e iap_ssh, cada una con su propia llave (padre: el proyecto;
 # ligada a esta VPC) y un solo valor, para que una VM pueda llevar las dos. Quien crea las
-# instancias necesita roles/resourcemanager.tagUser sobre los valores (salida secure_tags); esta
-# raíz no lo otorga.
+# instancias necesita roles/resourcemanager.tagUser sobre los valores (salida secure_tags): esta
+# raíz se lo da a la cuenta de cargas del entorno solo sobre sus valores (hallazgo 1: tf-wl-<env>
+# ya no tiene tagUser de proyecto).
 
 locals {
   google_lb_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
@@ -101,4 +102,45 @@ module "firewall" {
   }
 
   rules = merge(local.spoke_firewall_rules, local.spoke_firewall_rules_filestore)
+}
+
+# Número del proyecto, para el correo del agente de GKE.
+data "google_project" "this" {
+  project_id = var.project_id
+}
+
+locals {
+  # Cuenta de cargas del entorno: la crea 0-bootstrap como <prefix>-tf-wl-<env> en project_id
+  # (stages/0-bootstrap/service_accounts.tf). Se arma igual porque el spoke no lee el estado de
+  # 0-bootstrap.
+  workloads_account = "serviceAccount:${var.prefix}-tf-wl-${var.environment}@${var.project_id}.iam.gserviceaccount.com"
+
+  # Valor → miembro → rol sobre ese valor de etiqueta:
+  # - tf-wl-<env>: tagUser sobre lb_backend e iap_ssh, para crear la plantilla del MIG y los
+  #   pools de GKE con esas etiquetas;
+  # - agente de GKE: tagHoldAdmin sobre lb_backend (la etiqueta de los nodos), que la guía de GKE
+  #   "Use Tags for firewalls" pide dar sobre cada valor que usan los clústeres
+  #   (https://cloud.google.com/kubernetes-engine/docs/how-to/tags-firewall-policies). Su
+  #   tagUser de proyecto lo da 0-bootstrap.
+  tag_value_bindings = {
+    "lb_backend|workloads" = { tag = "lb_backend", role = "roles/resourcemanager.tagUser", member = local.workloads_account }
+    "iap_ssh|workloads"    = { tag = "iap_ssh", role = "roles/resourcemanager.tagUser", member = local.workloads_account }
+    "lb_backend|gke_agent" = {
+      tag    = "lb_backend"
+      role   = "roles/resourcemanager.tagHoldAdmin"
+      member = "serviceAccount:service-${data.google_project.this.number}@container-engine-robot.iam.gserviceaccount.com"
+    }
+  }
+}
+
+# VERIFICAR-EN-APPLY: que tf-wl-<env> cree la plantilla del MIG y los pools de GKE con
+# lb_backend e iap_ssh con este tagUser sobre los valores y sin tagUser de proyecto (gcloud
+# resource-manager tags bindings list --parent=<recurso> muestra el enlace), y que tf-net-<env>
+# pueda asignarlo con TfNetworkTagManager (tagValues.setIamPolicy).
+resource "google_tags_tag_value_iam_member" "this" {
+  for_each = local.tag_value_bindings
+
+  tag_value = module.firewall.secure_tag_ids[each.value.tag]
+  role      = each.value.role
+  member    = each.value.member
 }

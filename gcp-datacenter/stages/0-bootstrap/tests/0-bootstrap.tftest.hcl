@@ -242,12 +242,23 @@ run "plan_con_valores_de_ejemplo" {
   }
   assert {
     condition = alltrue([
-      contains(keys(module.stage_iam.bindings), "project|2-networks/dev|roles/resourcemanager.tagAdmin"),
+      contains(keys(module.stage_iam.bindings), "project|2-networks/dev|projects/example-project-id/roles/bntTfNetworkTagManager"),
       contains(keys(module.stage_iam.bindings), "project|2-networks/dev|roles/servicenetworking.networksAdmin"),
-      !contains(keys(module.stage_iam.bindings), "project|2-networks|roles/resourcemanager.tagAdmin"),
+      !contains(keys(module.stage_iam.bindings), "project|2-networks|projects/example-project-id/roles/bntTfNetworkTagManager"),
       contains(keys(module.stage_iam.bindings), "project|2-networks|roles/dns.admin"),
     ])
-    error_message = "tagAdmin y servicenetworking solo para los spokes; el hub tiene red, seguridad y DNS."
+    error_message = "El rol de etiquetas y servicenetworking solo para los spokes; el hub tiene red, seguridad y DNS."
+  }
+  # Los agentes de GKE y de las APIs de Google reciben tagUser aquí (lo aplica una persona), no en
+  # 1-base: la concesión delegada de 1-base no incluye tagUser.
+  assert {
+    condition = alltrue([
+      google_project_iam_member.tag_user_agents["gke"].member == "serviceAccount:service-222222222222@container-engine-robot.iam.gserviceaccount.com",
+      google_project_iam_member.tag_user_agents["apis"].member == "serviceAccount:222222222222@cloudservices.gserviceaccount.com",
+      google_project_iam_member.tag_user_agents["apis"].role == "roles/resourcemanager.tagUser",
+      !contains(local.base_grantable_roles, "roles/resourcemanager.tagUser"),
+    ])
+    error_message = "tagUser de proyecto solo para los dos agentes de Google, desde 0-bootstrap."
   }
   assert {
     condition = alltrue([for r in ["roles/viewer", "roles/iam.securityReviewer", "roles/cloudasset.viewer", "roles/networkmanagement.admin"] :
@@ -317,6 +328,7 @@ run "plan_con_valores_de_ejemplo" {
     condition = output.custom_role_ids == {
       secret_container_admin  = "projects/example-project-id/roles/bntTfSecretContainerAdmin"
       service_account_manager = "projects/example-project-id/roles/bntTfServiceAccountManager"
+      network_tag_manager     = "projects/example-project-id/roles/bntTfNetworkTagManager"
       off_hours_scheduler     = "projects/example-project-id/roles/bntOffHoursScheduler"
     }
     error_message = "custom_role_ids debe dar el ID completo de los roles personalizados."
@@ -383,6 +395,64 @@ run "plan_con_valores_de_ejemplo" {
       p != "cloudresourcemanager.googleapis.com/projects.setIamPolicy"
     ])])
     error_message = "La denegación no puede quitar los objetos del estado, el proyecto de cuota ni el IAM delegado."
+  }
+}
+
+# Hallazgo 1: quitar la etiqueta <prefix>-proteccion de un recurso exige
+# resourcemanager.tagValueBindings.delete sobre el valor y <recurso>.deleteTagBinding sobre el
+# recurso (guía de etiquetas de Resource Manager). Se revisan TODOS los roles de proyecto y de
+# organización de las nueve cuentas. Roles predefinidos que traen alguno de esos permisos o el IAM
+# de las etiquetas, según la referencia de roles (actualizada el 2026-11-18): tagUser,
+# tagHoldAdmin, iam.admin, iam.securityAdmin, iam.serviceAccountAdmin, iam.workspacePoolAdmin,
+# storage.legacyBucketOwner, cuatro roles de agentes de servicio, y cloudkms.admin y storage.admin
+# (*TagBinding de llaveros y buckets); tagAdmin trae el IAM de las etiquetas.
+run "ningun_rol_del_pipeline_liga_etiquetas" {
+  command = plan
+
+  assert {
+    condition = alltrue([for k, b in module.stage_iam.bindings : !contains([
+      "roles/resourcemanager.tagUser", "roles/resourcemanager.tagAdmin", "roles/resourcemanager.tagHoldAdmin",
+      "roles/iam.admin", "roles/iam.securityAdmin", "roles/iam.serviceAccountAdmin", "roles/iam.workspacePoolAdmin",
+      "roles/storage.legacyBucketOwner", "roles/owner", "roles/editor",
+      "roles/container.serviceAgent", "roles/compute.instanceGroupManagerServiceAgent",
+      "roles/cloudkmskacls.serviceAgent", "roles/storage.malwareScannerServiceAgent",
+    ], b.role) if contains(["project", "organization"], b.scope)])
+    error_message = "Ninguna cuenta del pipeline puede tener tagUser, tagAdmin ni un rol predefinido con *TagBinding o tagValueBindings."
+  }
+  # cloudkms.admin y storage.admin traen *TagBinding de llaveros y buckets: solo con una condición
+  # que deja fuera el llavero y el bucket del estado (y la regla 1 de la denegación niega las
+  # etiquetas del bucket protegido).
+  assert {
+    condition = alltrue([for k, b in module.stage_iam.bindings : (
+      b.role == "roles/cloudkms.admin" ? try(module.stage_iam.conditions[k].expression, "") == "!resource.name.startsWith(\"projects/example-project-id/locations/us/keyRings/bnt-bootstrap-\")" : (
+        b.role == "roles/storage.admin" ? (
+          startswith(try(module.stage_iam.conditions[k].expression, ""), "resource.name.startsWith(\"projects/_/buckets/bnt-") &&
+          !strcontains(try(module.stage_iam.conditions[k].expression, "bnt-bootstrap"), "bnt-bootstrap")
+        ) : true
+      )
+    )])
+    error_message = "cloudkms.admin y storage.admin solo con una condición que excluya el llavero y el bucket del estado."
+  }
+  # Roles personalizados: ninguno liga, quita ni retiene etiquetas.
+  assert {
+    condition = alltrue(flatten([for k, r in google_project_iam_custom_role.this : [
+      for p in r.permissions : !strcontains(p, "TagBinding") && !startswith(p, "resourcemanager.tagValueBindings.") && !startswith(p, "resourcemanager.tagHolds.")
+    ]]))
+    error_message = "Ningún rol personalizado puede tener *TagBinding, tagValueBindings ni tagHolds."
+  }
+  assert {
+    condition = alltrue([
+      contains(google_project_iam_custom_role.this["network_tag_manager"].permissions, "resourcemanager.tagValues.setIamPolicy"),
+      contains(google_project_iam_custom_role.this["network_tag_manager"].permissions, "resourcemanager.tagKeys.create"),
+      length(google_project_iam_custom_role.this["network_tag_manager"].permissions) == 14,
+    ])
+    error_message = "TfNetworkTagManager administra claves, valores y su IAM, y nada más."
+  }
+  # Las cuentas de cargas no tienen ningún rol de etiquetas de proyecto: el spoke les da tagUser
+  # solo sobre sus valores.
+  assert {
+    condition     = length([for k, b in module.stage_iam.bindings : k if startswith(k, "project|3-workloads/") && strcontains(b.role, "resourcemanager.tag")]) == 0
+    error_message = "tf-wl-<env> no tiene roles de etiquetas en el proyecto."
   }
 }
 
