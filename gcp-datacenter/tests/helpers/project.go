@@ -15,10 +15,9 @@ type TestProject struct {
 	Ephemeral bool
 }
 
-// ProjectParent devuelve dónde se crean los proyectos efímeros y las carpetas de prueba:
-// TERRATEST_FOLDER_ID si está definido; si no, la organización TERRATEST_ORG_ID. Omite la
-// prueba si no hay ninguno. Solo lo usan el modo de proyectos efímeros y las pruebas de
-// módulos de organización o carpetas.
+// ProjectParent devuelve dónde se crean los proyectos efímeros: TERRATEST_FOLDER_ID si está
+// definido; si no, la organización TERRATEST_ORG_ID. Omite la prueba si no hay ninguno. Solo lo
+// usa el modo de proyectos efímeros.
 func ProjectParent(t testing.TB) (folderNumber, orgNumber string) {
 	t.Helper()
 	if f := Getenv(EnvFolderID, ""); f != "" {

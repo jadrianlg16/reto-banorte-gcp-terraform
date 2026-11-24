@@ -28,8 +28,8 @@ const (
 	// §9.2): necesita TERRATEST_BILLING_ACCOUNT y una carpeta u organización donde crearlo.
 	EnvEphemeralProjects = "TEST_EPHEMERAL_PROJECTS"
 	EnvBillingAccount    = "TERRATEST_BILLING_ACCOUNT" // XXXXXX-XXXXXX-XXXXXX, solo con proyectos efímeros
-	EnvFolderID          = "TERRATEST_FOLDER_ID"       // opcional: carpeta de los proyectos efímeros y de TestProjectFactory
-	EnvOrgID             = "TERRATEST_ORG_ID"          // número de la organización, sin "organizations/"; solo pruebas de organización
+	EnvFolderID          = "TERRATEST_FOLDER_ID"       // opcional: carpeta de los proyectos efímeros
+	EnvOrgID             = "TERRATEST_ORG_ID"          // número de la organización, sin "organizations/"; proyectos efímeros y pruebas que solo valen con organización (org, vpc-sc)
 	EnvRegion            = "TEST_REGION"               // región primaria (por defecto us-central1)
 	EnvDRRegion          = "TEST_DR_REGION"            // región secundaria (por defecto us-east4)
 	EnvAllowExpensive    = "TEST_ALLOW_EXPENSIVE"      // "true" habilita las pruebas lentas o caras
@@ -121,11 +121,6 @@ func Region() string { return Getenv(EnvRegion, DefaultRegion) }
 
 // DRRegion devuelve la región secundaria de las pruebas.
 func DRRegion() string { return Getenv(EnvDRRegion, DefaultDRRegion) }
-
-// FolderResource normaliza un ID de carpeta a la forma "folders/<número>".
-func FolderResource(id string) string {
-	return "folders/" + strings.TrimPrefix(strings.TrimSpace(id), "folders/")
-}
 
 // FolderNumber devuelve solo el número de una carpeta ("folders/123" o "123" → "123").
 func FolderNumber(id string) string {

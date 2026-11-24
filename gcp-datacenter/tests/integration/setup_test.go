@@ -21,13 +21,22 @@ var baseAPIs = []string{
 	"cloudkms.googleapis.com",
 }
 
-// moduleTest prepara una prueba de módulo: la marca como paralela, la omite si no hay con qué
-// obtener un proyecto, crea los identificadores de la ejecución y prepara el proyecto con las
-// APIs dadas (más baseAPIs). Un proyecto efímero se destruye con t.Cleanup al final de la
-// prueba; el proyecto único se conserva.
+// moduleTest prepara una prueba de módulo que corre en paralelo con las demás: la marca como
+// paralela y sigue como serialModuleTest.
 func moduleTest(t *testing.T, module string, apis ...string) (helpers.Run, helpers.TestProject) {
 	t.Helper()
 	t.Parallel()
+	return serialModuleTest(t, module, apis...)
+}
+
+// serialModuleTest prepara una prueba de módulo sin marcarla como paralela: la omite si no hay
+// con qué obtener un proyecto, crea los identificadores de la ejecución y prepara el proyecto
+// con las APIs dadas (más baseAPIs). Un proyecto efímero se destruye con t.Cleanup al final de
+// la prueba; el proyecto único se conserva. Es para las pruebas que cambian algo de todo el
+// proyecto (TestOrg): go test termina las pruebas que no son paralelas antes de soltar las
+// paralelas, así que ninguna otra prueba del paquete corre a la vez en el proyecto único.
+func serialModuleTest(t *testing.T, module string, apis ...string) (helpers.Run, helpers.TestProject) {
+	t.Helper()
 	helpers.RequireProjectEnv(t)
 	run := helpers.NewRun(module)
 	project := helpers.NewTestProject(t, run, append(append([]string{}, baseAPIs...), apis...))

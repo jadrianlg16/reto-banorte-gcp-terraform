@@ -14,7 +14,7 @@ import (
 
 // TestLogExport comprueba las exigencias del módulo log-export (§8): bucket con CMEK,
 // retención configurada (sin bloquear: un bloqueo es irreversible), sin acceso público y un
-// sink hacia él cuya identidad puede escribir en el bucket.
+// sink de proyecto hacia él, con exclusiones, cuya identidad puede escribir en el bucket.
 func TestLogExport(t *testing.T) {
 	run, project := moduleTest(t, "log-export", "storage.googleapis.com", "logging.googleapis.com")
 	ctx := t.Context()
@@ -43,10 +43,16 @@ func TestLogExport(t *testing.T) {
 	assert.Equal(t, storage.PublicAccessPreventionEnforced, attrs.PublicAccessPrevention)
 	assert.True(t, attrs.UniformBucketLevelAccess.Enabled)
 
-	// Sink de proyecto hacia el bucket.
+	// Sink de proyecto hacia el bucket, con la exclusión del propio bucket (ADR 0029 §7).
 	s := helpers.GcloudJSON(t, ctx, "logging", "sinks", "describe", sink, "--project="+project.ID)
 	assert.Equal(t, destination, helpers.PathString(s, "destination"))
 	assert.Equal(t, "storage.googleapis.com/"+bucket, destination)
+	exclusions := helpers.PathList(s, "exclusions")
+	require.Len(t, exclusions, 1, "una exclusión")
+	assert.Equal(t, "bucket-de-logs", helpers.PathString(exclusions[0], "name"))
+	assert.Equal(t, terraform.OutputContext(t, ctx, opts, "exclusion_filter"), helpers.PathString(exclusions[0], "filter"),
+		"la exclusión nombra el bucket que creó el módulo")
+	assert.False(t, helpers.PathBool(exclusions[0], "disabled"), "exclusión activa")
 
 	// La identidad del sink puede crear objetos en el bucket.
 	policy, err := client.Bucket(bucket).IAM().Policy(ctx)
