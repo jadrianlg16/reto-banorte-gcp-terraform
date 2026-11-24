@@ -11,8 +11,8 @@ desplegable desde cero con Terraform y un pipeline de CI/CD.
 
 | Carpeta | Contenido |
 |---|---|
-| [`gcp-datacenter/`](gcp-datacenter/README.md) | **Proyecto final:** landing zone de GCP en Terraform (etapas 0 a 5, 26 módulos, pruebas, políticas, runbooks y documentación). Empieza por su README |
-| `.github/workflows/` | Pipeline de CI/CD del proyecto final: revisiones de PR, apply, drift y destroy de dev y qa |
+| [`gcp-datacenter/`](gcp-datacenter/README.md) | **Proyecto final:** landing zone de GCP en Terraform dentro de un solo proyecto (etapas 0 a 3, 24 módulos, pruebas, políticas, runbooks y documentación). Empieza por su README |
+| `.github/workflows/` | Pipeline de CI/CD del proyecto final sobre un solo proyecto de GCP: revisiones de PR, apply, drift y destroy de dev y qa |
 | `labs/ejercicio-1` | Ejercicio 1: archivo con `local_file`, ciclo init/plan/apply e idempotencia |
 | `labs/ejercicio-2` | Ejercicio 2: tres archivos con `for_each` y dependencias con `random_pet` |
 | `entregas/fase-1-2` | Actividad Fases 1 y 2: reporte, bitácora del equipo y evidencias de los laboratorios |

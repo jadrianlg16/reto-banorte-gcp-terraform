@@ -264,7 +264,7 @@ Go):
 - `bash scripts/docs.sh --check` → "Resultado: PASS (33)".
 - `ls modules/*/tests/*.tftest.hcl | wc -l` → 24.
 - `grep -rh '^run "' --include=*.tftest.hcl . | wc -l` → 480 bloques `run` de `terraform test`
-  (262 en `modules/` y 218 en `stages/`, con el mismo comando sobre cada carpeta).
+  (262 en `modules/` y 218 en `stages/`, con el mismo comando sobre `modules` y sobre `stages`).
 
 `bash scripts/check.sh` completo (con `terraform test`, Terraform 1.16.5) lo reporta en cada PR
 la pata `estático (terraform 1.16.5)`.
