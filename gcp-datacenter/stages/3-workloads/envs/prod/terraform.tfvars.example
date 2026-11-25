@@ -1,0 +1,90 @@
+# Valores de ejemplo de 3-workloads/prod. Copiar a terraform.tfvars y reemplazar los marcadores.
+# El bucket de estado llega también por: terraform init -backend-config="bucket=<bucket>"
+
+# Proyecto único (ADR 0029 §1): lo crea una persona; valor real, la salida project_id de
+# 0-bootstrap.
+project_id   = "example-lz-000000"
+prefix       = "bnt"
+environment  = "prod"
+application  = "app"
+# Valor real: la salida state_bucket de 0-bootstrap.
+state_bucket = "bnt-bootstrap-ops-tfstate"
+
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+# DR de datos (réplica de Cloud SQL, bucket de doble región, Backup for GKE). dr_active = true
+# solo durante una conmutación (runbook de DR).
+enable_dr = true
+dr_active = false
+# Solo en el primer apply de la vuelta a la región primaria (runbook 04), con dr_active = true:
+# quita la protección del cómputo de DR. Exige dr_active = true.
+dr_teardown = false
+
+enable_gke         = true
+enable_mig         = true
+enable_cloud_run   = true
+enable_filestore   = true
+enable_memorystore = true
+enable_internal_lb = true
+enable_backup      = true
+# deletion_protection queda en su valor por defecto (true): en prod se rechaza false.
+
+# Plano de control de GKE: el /28 sale de reserved_cidrs del spoke (gke_master y, con
+# enable_dr, gke_master_dr). Clústeres bnt-prod-app-gke y, en DR, bnt-prod-app-gke-dr (ADR 0029
+# §4). Workload Identity: 1-base enlaza la cuenta workload a cada clúster (principalSet
+# kubernetes.cluster, ADR 0029 §9); cualquier pod del clúster actúa como workload.
+
+gke_authenticator_security_group = "gke-security-groups@example.com"
+gke_release_channel              = "STABLE"
+gke_master_authorized_networks = [
+  { cidr_block = "192.168.0.0/16", display_name = "onprem" },
+]
+gke_node_pools = {
+  general = {
+    machine_type   = "e2-standard-4"
+    min_node_count = 1
+    max_node_count = 3
+  }
+}
+# Se llenan después del primer despliegue de la carga en GKE (NEG zonales de la anotación
+# cloud.google.com/neg); vacío hasta entonces.
+gke_lb_negs = {
+  primary = []
+  dr      = []
+}
+
+mig_image        = "projects/example-images/global/images/family/app-hardened"
+mig_machine_type = "e2-standard-2"
+mig_min_replicas = 2
+mig_max_replicas = 6
+
+# Imagen del repositorio de prod de la aplicación (salida artifact_registry_repositories de
+# 1-base): Binary Authorization solo admite ese repositorio en los clústeres de prod. Una
+# etiqueta de versión o un digest, nunca latest.
+cloud_run_image = "us-docker.pkg.dev/example-lz-000000/bnt-prod-app/api:1.0.0"
+
+sql_tier             = "db-custom-2-7680"
+sql_database_version = "POSTGRES_16"
+sql_databases        = ["app"]
+sql_instance_name    = "sql"
+
+memorystore_memory_gb = 5
+filestore_tier        = "REGIONAL"
+filestore_capacity_gb = 1024
+
+domain_names          = ["app.example.com"]
+internal_domain_names = ["app.prod.example.com"]
+lb_backend_paths = {
+  mig = ["/legacy/*"]
+}
+
+notification_emails = ["alertas-prod@example.com"]
+
+# Sin apagado fuera de horario: off_hours_shutdown.enabled = true se rechaza en prod (ADR 0028).
+
+labels = {
+  app         = "app"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}

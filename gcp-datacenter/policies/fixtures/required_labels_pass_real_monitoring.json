@@ -1,0 +1,953 @@
+{
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "observability": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_monitoring_alert_policy.saturation",
+                "expressions": {
+                  "alert_strategy": [
+                    {
+                      "auto_close": {
+                        "constant_value": "1800s"
+                      }
+                    }
+                  ],
+                  "combiner": {
+                    "constant_value": "OR"
+                  },
+                  "display_name": {
+                    "references": [
+                      "local.name"
+                    ]
+                  },
+                  "documentation": [
+                    {
+                      "content": {
+                        "constant_value": "Saturación de CPU o memoria sostenida 5 minutos en VM o nodos de GKE. Revisar el autoescalado (MIG o pools de nodos) y los límites de recursos. La memoria de VM requiere Ops Agent."
+                      },
+                      "mime_type": {
+                        "constant_value": "text/markdown"
+                      }
+                    }
+                  ],
+                  "notification_channels": {
+                    "references": [
+                      "local.channel_ids"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "severity": {
+                    "constant_value": "WARNING"
+                  },
+                  "user_labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  }
+                },
+                "mode": "managed",
+                "name": "saturation",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_monitoring_alert_policy"
+              },
+              {
+                "address": "google_monitoring_custom_service.this",
+                "expressions": {
+                  "display_name": {
+                    "references": [
+                      "local.name"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "service_id": {
+                    "references": [
+                      "local.name"
+                    ]
+                  },
+                  "user_labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_monitoring_custom_service"
+              },
+              {
+                "address": "google_monitoring_notification_channel.email",
+                "expressions": {
+                  "display_name": {
+                    "references": [
+                      "local.name",
+                      "each.key"
+                    ]
+                  },
+                  "labels": {
+                    "references": [
+                      "each.value"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "type": {
+                    "constant_value": "email"
+                  },
+                  "user_labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.emails"
+                  ]
+                },
+                "mode": "managed",
+                "name": "email",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_monitoring_notification_channel"
+              },
+              {
+                "address": "google_monitoring_slo.availability",
+                "expressions": {
+                  "display_name": {
+                    "references": [
+                      "var.slo_target",
+                      "var.slo_rolling_period_days"
+                    ]
+                  },
+                  "goal": {
+                    "references": [
+                      "var.slo_target"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "request_based_sli": [
+                    {
+                      "good_total_ratio": [
+                        {
+                          "bad_service_filter": {
+                            "references": [
+                              "local.lb_5xx_filter"
+                            ]
+                          },
+                          "total_service_filter": {
+                            "references": [
+                              "local.lb_requests_filter"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "rolling_period_days": {
+                    "references": [
+                      "var.slo_rolling_period_days"
+                    ]
+                  },
+                  "service": {
+                    "references": [
+                      "google_monitoring_custom_service.this.service_id",
+                      "google_monitoring_custom_service.this"
+                    ]
+                  },
+                  "slo_id": {
+                    "references": [
+                      "local.name"
+                    ]
+                  },
+                  "user_labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  }
+                },
+                "mode": "managed",
+                "name": "availability",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_monitoring_slo"
+              },
+              {
+                "address": "google_monitoring_uptime_check_config.this",
+                "expressions": {
+                  "display_name": {
+                    "references": [
+                      "local.name",
+                      "each.key"
+                    ]
+                  },
+                  "http_check": [
+                    {
+                      "path": {
+                        "references": [
+                          "each.value.path",
+                          "each.value"
+                        ]
+                      },
+                      "port": {
+                        "references": [
+                          "each.value.port",
+                          "each.value"
+                        ]
+                      },
+                      "request_method": {
+                        "constant_value": "GET"
+                      },
+                      "use_ssl": {
+                        "references": [
+                          "each.value.use_ssl",
+                          "each.value"
+                        ]
+                      },
+                      "validate_ssl": {
+                        "references": [
+                          "each.value.validate_ssl",
+                          "each.value"
+                        ]
+                      }
+                    }
+                  ],
+                  "log_check_failures": {
+                    "constant_value": true
+                  },
+                  "monitored_resource": [
+                    {
+                      "labels": {
+                        "references": [
+                          "var.project_id",
+                          "each.value.host",
+                          "each.value"
+                        ]
+                      },
+                      "type": {
+                        "constant_value": "uptime_url"
+                      }
+                    }
+                  ],
+                  "period": {
+                    "references": [
+                      "each.value.period",
+                      "each.value"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "selected_regions": {
+                    "references": [
+                      "each.value.selected_regions",
+                      "each.value"
+                    ]
+                  },
+                  "timeout": {
+                    "references": [
+                      "each.value.timeout",
+                      "each.value"
+                    ]
+                  },
+                  "user_labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "var.uptime_checks"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_monitoring_uptime_check_config"
+              }
+            ]
+          },
+          "source": "../.."
+        }
+      }
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "module.observability.google_monitoring_alert_policy.saturation",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "alert_strategy": [
+            {
+              "auto_close": "1800s",
+              "notification_channel_strategy": [],
+              "notification_prompts": null,
+              "notification_rate_limit": []
+            }
+          ],
+          "combiner": "OR",
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {
+                      "alignment_period": "60s",
+                      "cross_series_reducer": null,
+                      "group_by_fields": null,
+                      "per_series_aligner": "ALIGN_MEAN"
+                    }
+                  ],
+                  "comparison": "COMPARISON_GT",
+                  "denominator_aggregations": [],
+                  "denominator_filter": null,
+                  "duration": "300s",
+                  "evaluation_missing_data": null,
+                  "filter": "resource.type=\"k8s_node\" AND metric.type=\"kubernetes.io/node/cpu/allocatable_utilization\"",
+                  "forecast_options": [],
+                  "threshold_value": 0.85,
+                  "trigger": [
+                    {
+                      "count": 1,
+                      "percent": null
+                    }
+                  ]
+                }
+              ],
+              "display_name": "CPU asignable de nodos de GKE sobre 85 %"
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {
+                      "alignment_period": "60s",
+                      "cross_series_reducer": null,
+                      "group_by_fields": null,
+                      "per_series_aligner": "ALIGN_MEAN"
+                    }
+                  ],
+                  "comparison": "COMPARISON_GT",
+                  "denominator_aggregations": [],
+                  "denominator_filter": null,
+                  "duration": "300s",
+                  "evaluation_missing_data": null,
+                  "filter": "resource.type=\"k8s_node\" AND metric.type=\"kubernetes.io/node/memory/allocatable_utilization\" AND metric.label.memory_type=\"non-evictable\"",
+                  "forecast_options": [],
+                  "threshold_value": 0.9,
+                  "trigger": [
+                    {
+                      "count": 1,
+                      "percent": null
+                    }
+                  ]
+                }
+              ],
+              "display_name": "Memoria asignable de nodos de GKE sobre 90 %"
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {
+                      "alignment_period": "60s",
+                      "cross_series_reducer": null,
+                      "group_by_fields": null,
+                      "per_series_aligner": "ALIGN_MEAN"
+                    }
+                  ],
+                  "comparison": "COMPARISON_GT",
+                  "denominator_aggregations": [],
+                  "denominator_filter": null,
+                  "duration": "300s",
+                  "evaluation_missing_data": null,
+                  "filter": "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/utilization\"",
+                  "forecast_options": [],
+                  "threshold_value": 0.85,
+                  "trigger": [
+                    {
+                      "count": 1,
+                      "percent": null
+                    }
+                  ]
+                }
+              ],
+              "display_name": "CPU de VM sobre 85 %"
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {
+                      "alignment_period": "60s",
+                      "cross_series_reducer": null,
+                      "group_by_fields": null,
+                      "per_series_aligner": "ALIGN_MEAN"
+                    }
+                  ],
+                  "comparison": "COMPARISON_GT",
+                  "denominator_aggregations": [],
+                  "denominator_filter": null,
+                  "duration": "300s",
+                  "evaluation_missing_data": null,
+                  "filter": "resource.type=\"gce_instance\" AND metric.type=\"agent.googleapis.com/memory/percent_used\" AND metric.label.state=\"used\"",
+                  "forecast_options": [],
+                  "threshold_value": 90,
+                  "trigger": [
+                    {
+                      "count": 1,
+                      "percent": null
+                    }
+                  ]
+                }
+              ],
+              "display_name": "Memoria de VM (Ops Agent) sobre 90 %"
+            }
+          ],
+          "display_name": "bnt-prod-ops-alert-saturation",
+          "documentation": [
+            {
+              "content": "Saturación de CPU o memoria sostenida 5 minutos en VM o nodos de GKE. Revisar el autoescalado (MIG o pools de nodos) y los límites de recursos. La memoria de VM requiere Ops Agent.",
+              "links": [],
+              "mime_type": "text/markdown",
+              "subject": null
+            }
+          ],
+          "enabled": true,
+          "project": "example-prod-app",
+          "severity": "WARNING",
+          "timeouts": null,
+          "user_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          }
+        },
+        "after_sensitive": {
+          "alert_strategy": [
+            {
+              "notification_channel_strategy": [],
+              "notification_rate_limit": []
+            }
+          ],
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ]
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ]
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ]
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ]
+            }
+          ],
+          "creation_record": [],
+          "documentation": [
+            {
+              "links": []
+            }
+          ],
+          "notification_channels": [],
+          "user_labels": {}
+        },
+        "after_unknown": {
+          "alert_strategy": [
+            {
+              "notification_channel_strategy": [],
+              "notification_rate_limit": []
+            }
+          ],
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ],
+              "name": true
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ],
+              "name": true
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ],
+              "name": true
+            },
+            {
+              "condition_absent": [],
+              "condition_matched_log": [],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [
+                {
+                  "aggregations": [
+                    {}
+                  ],
+                  "denominator_aggregations": [],
+                  "forecast_options": [],
+                  "trigger": [
+                    {}
+                  ]
+                }
+              ],
+              "name": true
+            }
+          ],
+          "creation_record": true,
+          "documentation": [
+            {
+              "links": []
+            }
+          ],
+          "id": true,
+          "name": true,
+          "notification_channels": true,
+          "user_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.observability",
+      "name": "saturation",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_alert_policy"
+    },
+    {
+      "address": "module.observability.google_monitoring_custom_service.this",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "display_name": "bnt-prod-ops-lb (balanceador externo)",
+          "project": "example-prod-app",
+          "service_id": "bnt-prod-ops-lb",
+          "telemetry": [],
+          "timeouts": null,
+          "user_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          }
+        },
+        "after_sensitive": {
+          "telemetry": [],
+          "user_labels": {}
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "telemetry": [],
+          "user_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.observability",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_custom_service"
+    },
+    {
+      "address": "module.observability.google_monitoring_notification_channel.email[\"alertas-prod@example.com\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "display_name": "bnt-prod-ops-email-alertas-prod@example.com",
+          "enabled": true,
+          "force_delete": false,
+          "labels": {
+            "email_address": "alertas-prod@example.com"
+          },
+          "project": "example-prod-app",
+          "sensitive_labels": [],
+          "timeouts": null,
+          "type": "email",
+          "user_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          }
+        },
+        "after_sensitive": {
+          "labels": {},
+          "sensitive_labels": [],
+          "user_labels": {}
+        },
+        "after_unknown": {
+          "id": true,
+          "labels": {},
+          "name": true,
+          "sensitive_labels": [],
+          "user_labels": {},
+          "verification_status": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "alertas-prod@example.com",
+      "mode": "managed",
+      "module_address": "module.observability",
+      "name": "email",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_notification_channel"
+    },
+    {
+      "address": "module.observability.google_monitoring_slo.availability",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "basic_sli": [],
+          "calendar_period": null,
+          "display_name": "Disponibilidad del balanceador 99.9 % (28 días)",
+          "goal": 0.999,
+          "project": "example-prod-app",
+          "request_based_sli": [
+            {
+              "distribution_cut": [],
+              "good_total_ratio": [
+                {
+                  "bad_service_filter": "resource.type=\"https_lb_rule\" AND metric.type=\"loadbalancing.googleapis.com/https/request_count\" AND resource.label.url_map_name=\"bnt-prod-app-web-xlb-um\" AND metric.label.response_code_class=500",
+                  "good_service_filter": null,
+                  "total_service_filter": "resource.type=\"https_lb_rule\" AND metric.type=\"loadbalancing.googleapis.com/https/request_count\" AND resource.label.url_map_name=\"bnt-prod-app-web-xlb-um\""
+                }
+              ]
+            }
+          ],
+          "rolling_period_days": 28,
+          "service": "bnt-prod-ops-lb",
+          "slo_id": "bnt-prod-ops-lb-availability",
+          "timeouts": null,
+          "user_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "windows_based_sli": []
+        },
+        "after_sensitive": {
+          "basic_sli": [],
+          "request_based_sli": [
+            {
+              "distribution_cut": [],
+              "good_total_ratio": [
+                {}
+              ]
+            }
+          ],
+          "user_labels": {},
+          "windows_based_sli": []
+        },
+        "after_unknown": {
+          "basic_sli": [],
+          "id": true,
+          "name": true,
+          "request_based_sli": [
+            {
+              "distribution_cut": [],
+              "good_total_ratio": [
+                {}
+              ]
+            }
+          ],
+          "user_labels": {},
+          "windows_based_sli": []
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.observability",
+      "name": "availability",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_slo"
+    },
+    {
+      "address": "module.observability.google_monitoring_uptime_check_config.this[\"web\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "content_matchers": [],
+          "display_name": "bnt-prod-ops-uptime-web",
+          "http_check": [
+            {
+              "accepted_response_status_codes": [],
+              "auth_info": [],
+              "body": null,
+              "content_type": null,
+              "custom_content_type": null,
+              "mask_headers": null,
+              "path": "/healthz",
+              "ping_config": [],
+              "port": 443,
+              "request_method": "GET",
+              "service_agent_authentication": [],
+              "use_ssl": true,
+              "validate_ssl": true
+            }
+          ],
+          "log_check_failures": true,
+          "monitored_resource": [
+            {
+              "labels": {
+                "host": "app.example.com",
+                "project_id": "example-prod-app"
+              },
+              "type": "uptime_url"
+            }
+          ],
+          "period": "60s",
+          "project": "example-prod-app",
+          "resource_group": [],
+          "selected_regions": [],
+          "synthetic_monitor": [],
+          "tcp_check": [],
+          "timeout": "10s",
+          "timeouts": null,
+          "user_labels": {
+            "app": "web",
+            "cost_center": "cc-0000",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          }
+        },
+        "after_sensitive": {
+          "content_matchers": [],
+          "http_check": [
+            {
+              "accepted_response_status_codes": [],
+              "auth_info": [],
+              "headers": {},
+              "ping_config": [],
+              "service_agent_authentication": []
+            }
+          ],
+          "monitored_resource": [
+            {
+              "labels": {}
+            }
+          ],
+          "resource_group": [],
+          "selected_regions": [],
+          "synthetic_monitor": [],
+          "tcp_check": [],
+          "user_labels": {}
+        },
+        "after_unknown": {
+          "checker_type": true,
+          "content_matchers": [],
+          "http_check": [
+            {
+              "accepted_response_status_codes": [],
+              "auth_info": [],
+              "headers": true,
+              "ping_config": [],
+              "service_agent_authentication": []
+            }
+          ],
+          "id": true,
+          "monitored_resource": [
+            {
+              "labels": {}
+            }
+          ],
+          "name": true,
+          "resource_group": [],
+          "selected_regions": [],
+          "synthetic_monitor": [],
+          "tcp_check": [],
+          "uptime_check_id": true,
+          "user_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "web",
+      "mode": "managed",
+      "module_address": "module.observability",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_monitoring_uptime_check_config"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

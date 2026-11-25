@@ -1,0 +1,6 @@
+# Los fixtures no versionan el archivo de bloqueo: Terratest los copia a una carpeta temporal y
+# corre terraform init ahí; un init local (terraform validate) lo genera en la carpeta.
+fixtures/**/.terraform.lock.hcl
+# Configuración real de la prueba de extremo a extremo (el ejemplo sí se versiona).
+e2e/*.json
+!e2e/*.example.json

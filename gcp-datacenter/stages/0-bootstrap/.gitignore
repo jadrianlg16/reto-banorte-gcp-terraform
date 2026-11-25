@@ -1,0 +1,5 @@
+# Primera ejecución con estado local (ver README): ni el override ni el estado local se
+# versionan. El estado local contiene el estado completo de la etapa 0 hasta que se migra.
+backend_override.tf
+terraform.tfstate
+terraform.tfstate.*

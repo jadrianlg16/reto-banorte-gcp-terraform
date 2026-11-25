@@ -1,0 +1,45 @@
+# Valores de ejemplo (marcadores, no IDs reales). Copiar a terraform.tfvars y ajustar.
+
+# Proyecto único que creó una persona y su cuenta de facturación (ADR 0029 §1).
+project_id      = "example-project-id"
+billing_account = "000000-000000-000000"
+
+# Solo si el proyecto está dentro de una organización (si no, dejar comentados). Con org_id esta
+# etapa aplica las políticas de organización al proyecto y, con access_policy_id, el perímetro de
+# VPC-SC en dry-run (org.tf).
+# org_id                = "000000000000"
+# directory_customer_id = "C00000000"
+# access_policy_id      = "000000000000"
+
+prefix         = "bnt"
+name_suffix    = ""
+primary_region = "us-central1"
+dr_region      = "us-east4"
+
+github_repository = "example-org/example-repo"
+# IDs numéricos del repositorio y de su dueño (base de la confianza de WIF):
+#   gh api repos/<dueño>/<repositorio> --jq '.id, .owner.id'
+github_repository_id       = "000000000"
+github_repository_owner_id = "000000000"
+
+# Bucket de estado y su llave: multirregión US (sobreviven a la caída de primary_region).
+# Opcional: doble región configurable con la región primaria y la de DR.
+state_bucket_location = "US"
+# state_bucket_dual_regions = ["us-central1", "us-east4"]
+
+# Presupuesto mensual del proyecto, en la moneda de la cuenta de facturación.
+budget_amount = 300
+
+# Protección del estado (ADR 0029 §5). Apagar solo si un apply demuestra que no funciona.
+enable_protection_tags = true
+enable_deny_policy     = true
+
+# VM DNS de prueba de onprem-sim: el hub recibe compute.instanceAdmin.v1 y 1-base crea su cuenta.
+# Solo junto con simulate_onprem = true y onprem_dns_vm = true en 2-networks.
+# onprem_dns_vm = true
+
+labels = {
+  app         = "landing-zone"
+  owner       = "plataforma"
+  cost_center = "ti-001"
+}

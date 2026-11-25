@@ -1,0 +1,48 @@
+# Dueños de código por etapa (CONTRATO §9.3).
+#
+# IMPORTANTE: @PENDIENTE-red, @PENDIENTE-seguridad y @PENDIENTE-plataforma son marcadores.
+# Hay que reemplazarlos por usuarios o equipos reales de GitHub (@usuario u @org/equipo, con
+# permiso de escritura en el repositorio) ANTES de activar la protección de rama de main con
+# "Require review from Code Owners". GitHub ignora a los dueños que no existen: con los
+# marcadores, ningún archivo tendría dueño válido y la regla no exigiría nada.
+#
+# Gana la última línea que coincide, así que la regla general va primero.
+
+# Plataforma: todo lo que no tenga dueño más específico abajo (3-workloads, el resto de los
+# módulos, las pruebas de Go y la documentación).
+*                                                   @PENDIENTE-plataforma
+
+# Red: 2-networks (hub y spokes, ADR 0029 §2) y módulos de red.
+/gcp-datacenter/stages/2-networks/                  @PENDIENTE-red
+/gcp-datacenter/modules/network-hub/                @PENDIENTE-red
+/gcp-datacenter/modules/network-spoke/              @PENDIENTE-red
+/gcp-datacenter/modules/firewall/                   @PENDIENTE-red
+/gcp-datacenter/modules/dns/                        @PENDIENTE-red
+/gcp-datacenter/modules/hybrid-connectivity/        @PENDIENTE-red
+/gcp-datacenter/modules/load-balancer/              @PENDIENTE-red
+/gcp-datacenter/modules/cloud-armor/                @PENDIENTE-red
+
+# Seguridad: 1-base (auditoría, llaves, secretos, Binary Authorization e IAM de personas, ADR
+# 0029 §4), políticas de Conftest y módulos de seguridad. 3-workloads queda en plataforma (*).
+/gcp-datacenter/stages/1-base/                      @PENDIENTE-seguridad
+/gcp-datacenter/policies/                           @PENDIENTE-seguridad
+/gcp-datacenter/modules/org/                        @PENDIENTE-seguridad
+/gcp-datacenter/modules/iam/                        @PENDIENTE-seguridad
+/gcp-datacenter/modules/kms/                        @PENDIENTE-seguridad
+/gcp-datacenter/modules/secrets/                    @PENDIENTE-seguridad
+/gcp-datacenter/modules/vpc-sc/                     @PENDIENTE-seguridad
+/gcp-datacenter/modules/audit-alerts/               @PENDIENTE-seguridad
+
+# Seguridad: lo que decide quién puede aplicar y qué se revisa. Los flujos usan las cuentas de
+# servicio que pueden aplicar; 0-bootstrap crea esas cuentas, el WIF y el bucket de estado; los
+# scripts eligen qué raíces se planean y corren las políticas. Solo seguridad, sin plataforma:
+# GitHub acepta la aprobación de cualquiera de los dueños de una ruta, así que agregar a
+# plataforma permitiría cambiarlos sin que seguridad los revise.
+/.github/                                           @PENDIENTE-seguridad
+/gcp-datacenter/stages/0-bootstrap/                 @PENDIENTE-seguridad
+/gcp-datacenter/scripts/                            @PENDIENTE-seguridad
+# Configuración de los análisis estáticos (una exclusión global aquí apaga una comprobación en
+# todos los PR) y la prueba de humo de dev, que es la compuerta antes de qa.
+/gcp-datacenter/.checkov.yaml                       @PENDIENTE-seguridad
+/gcp-datacenter/.tflint.hcl                         @PENDIENTE-seguridad
+/gcp-datacenter/tests/e2e/                          @PENDIENTE-seguridad

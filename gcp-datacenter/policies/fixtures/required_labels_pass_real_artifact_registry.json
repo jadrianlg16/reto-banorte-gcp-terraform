@@ -1,0 +1,143 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_artifact_registry_repository.labelled",
+          "expressions": {
+            "description": {
+              "constant_value": "Imágenes de contenedor de app en dev (sonda)."
+            },
+            "docker_config": [
+              {
+                "immutable_tags": {
+                  "constant_value": true
+                }
+              }
+            ],
+            "format": {
+              "constant_value": "DOCKER"
+            },
+            "kms_key_name": {
+              "constant_value": "projects/example-common-security/locations/us/keyRings/bnt-dev-sec-kr-us/cryptoKeys/artifacts"
+            },
+            "labels": {
+              "constant_value": {
+                "app": "app",
+                "cost_center": "ti-001",
+                "env": "dev",
+                "managed_by": "terraform",
+                "owner": "plataforma"
+              }
+            },
+            "location": {
+              "constant_value": "us"
+            },
+            "project": {
+              "constant_value": "example-dev-app"
+            },
+            "repository_id": {
+              "constant_value": "bnt-dev-app-images"
+            }
+          },
+          "mode": "managed",
+          "name": "labelled",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_artifact_registry_repository"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_artifact_registry_repository.labelled",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "cleanup_policies": [],
+          "cleanup_policy_dry_run": null,
+          "description": "Imágenes de contenedor de app en dev (sonda).",
+          "docker_config": [
+            {
+              "immutable_tags": true
+            }
+          ],
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "format": "DOCKER",
+          "kms_key_name": "projects/example-common-security/locations/us/keyRings/bnt-dev-sec-kr-us/cryptoKeys/artifacts",
+          "labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "location": "us",
+          "maven_config": [],
+          "mode": "STANDARD_REPOSITORY",
+          "project": "example-dev-app",
+          "remote_repository_config": [],
+          "repository_id": "bnt-dev-app-images",
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null,
+          "virtual_repository_config": []
+        },
+        "after_sensitive": {
+          "cleanup_policies": [],
+          "docker_config": [
+            {}
+          ],
+          "effective_labels": {},
+          "labels": {},
+          "maven_config": [],
+          "remote_repository_config": [],
+          "terraform_labels": {},
+          "virtual_repository_config": [],
+          "vulnerability_scanning_config": []
+        },
+        "after_unknown": {
+          "cleanup_policies": [],
+          "create_time": true,
+          "docker_config": [
+            {}
+          ],
+          "effective_labels": {},
+          "id": true,
+          "labels": {},
+          "maven_config": [],
+          "name": true,
+          "remote_repository_config": [],
+          "terraform_labels": {},
+          "update_time": true,
+          "virtual_repository_config": [],
+          "vulnerability_scanning_config": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "labelled",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_artifact_registry_repository"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

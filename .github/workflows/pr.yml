@@ -1,0 +1,442 @@
+# Revisión de pull requests (CONTRATO §9.3).
+#
+# Sin GCP (siempre): scripts/check.sh con Terraform 1.9.8 (fmt, validate, tflint, checkov) y
+# 1.16.5 (además terraform test); scripts/policy-check.sh (conftest verify y planes de ejemplo
+# de policies/); scripts/selftest.sh (scripts de los flujos); terraform-docs al día; go vet y
+# go test de tests/ (las pruebas que tocan GCP se omiten solas).
+#
+# Corre con cualquier cambio, también solo de documentación: las comprobaciones obligatorias
+# tienen que reportarse siempre (un flujo que no se dispara deja el PR esperando), y
+# scripts/docs.sh --check y selftest.sh (que lee docs/pipeline.md) revisan la documentación. Por
+# eso aquí no hay filtro de rutas en el disparo; el filtro equivalente está en los planes: solo
+# corren para las raíces afectadas, y ni docs/ ni un .md (README de módulos y etapas) afectan
+# ninguna (scripts/affected-roots.sh), igual que apply.yml no se dispara por ellos.
+#
+# Con GCP (solo si la variable de repositorio GCP_ENABLED es "true"): plan por raíz afectada
+# (scripts/affected-roots.sh), con la cuenta de lectura y sin candado (ADR 0029 §3), Conftest
+# sobre el plan y un comentario en el PR con el resumen y el costo (Infracost).
+#
+# Comprobaciones obligatorias de la protección de main (nombres estables, docs/pipeline.md §4):
+#   estático (terraform 1.9.8), estático (terraform 1.16.5),
+#   conftest (pruebas y planes de ejemplo), scripts (autopruebas), terraform-docs al día,
+#   go (vet y pruebas sin GCP), plan-gate.
+# Los trabajos de plan tienen un nombre por raíz y no se pueden exigir uno por uno: plan-gate
+# resume su resultado (falla si alguno falló o se canceló).
+# Autenticación por Workload Identity Federation; sin llaves. Variables de repositorio:
+#   GCP_ENABLED                     "true" para activar los trabajos que tocan GCP.
+#   GCP_WORKLOAD_IDENTITY_PROVIDER  nombre completo del proveedor (salida
+#                                   workload_identity_provider de 0-bootstrap).
+#   GCP_AUDIT_SERVICE_ACCOUNT       cuenta de lectura tf-read (salida read_service_account de
+#                                   0-bootstrap): la usan los plan de este flujo, de apply.yml y
+#                                   de drift.yml, la prueba de humo y la búsqueda de huérfanos.
+#   GCP_STAGE_SERVICE_ACCOUNTS      JSON raíz -> correo de la cuenta que aplica (salida
+#                                   stage_service_accounts de 0-bootstrap), con las llaves
+#                                   1-base, 2-networks, 2-networks/<env> y 3-workloads/<env>.
+#                                   La usan solo los apply de apply.yml y destroy.yml.
+#   GCP_STATE_BUCKET                bucket de estado (salida state_bucket de 0-bootstrap).
+#   GCP_TFVARS_JSON                 JSON con los valores de las variables para el plan:
+#                                   {"common": {"project_id": "...", ...}, "stages/1-base": {...},
+#                                   ...}. Para cada raíz se combinan "common" y la llave de la
+#                                   raíz (scripts/root-tfvars.py). "common" debe traer
+#                                   project_id, el proyecto único (ADR 0029 §1): sin él, el plan
+#                                   de una raíz que lo declara falla. También falla si un valor
+#                                   resuelto (del JSON o del terraform.tfvars.example) lleva un
+#                                   marcador de los ejemplos: example.com, example-...,
+#                                   REEMPLAZAR, <...> o un ID de solo ceros; el mensaje nombra las
+#                                   variables que faltan, sin mostrar valores.
+# Secreto opcional: INFRACOST_API_KEY (sin él se omite el costo).
+
+name: pr
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.16.5"
+  TFLINT_VERSION: "v0.65.0"
+  CHECKOV_VERSION: "3.4.6"
+  CONFTEST_VERSION: "0.71.1"
+  TERRAFORM_DOCS_VERSION: "v0.25.1"
+  TF_IN_AUTOMATION: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: gcp-datacenter
+
+jobs:
+  static:
+    name: estático (terraform ${{ matrix.terraform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.9.8: versión mínima del código de módulos y raíces (§4.1): fmt, validate, tflint y
+        # checkov, sin terraform test, porque las pruebas *.tftest.hcl pueden usar atributos de
+        # Terraform >= 1.11 (override_during). 1.16.5, la que usa el equipo: todo.
+        include:
+          - terraform: "1.9.8"
+            skip: test
+          - terraform: "1.16.5"
+            skip: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          terraform_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Instalar checkov
+        run: python -m pip install --disable-pip-version-check "checkov==${CHECKOV_VERSION}"
+
+      - name: Caché de proveedores y plugins de tflint
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            ~/.tflint.d/plugins
+          key: tf-${{ runner.os }}-${{ matrix.terraform }}-${{ hashFiles('gcp-datacenter/**/versions.tf', 'gcp-datacenter/.tflint.hcl') }}
+          restore-keys: |
+            tf-${{ runner.os }}-${{ matrix.terraform }}-
+
+      - name: scripts/check.sh
+        env:
+          # tflint --init descarga los plugins de GitHub; con el token no hay límite anónimo.
+          GITHUB_TOKEN: ${{ github.token }}
+          SKIP_STEPS: ${{ matrix.skip }}
+        run: bash scripts/check.sh ${SKIP_STEPS:+--skip "${SKIP_STEPS}"}
+
+  conftest:
+    name: conftest (pruebas y planes de ejemplo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar conftest
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          file="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep "  ${file}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${file}" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          conftest --version
+
+      # conftest verify y, por cada plan de ejemplo de policies/fixtures/, que pase o que lo
+      # rechace solo su regla (§9.1). Falla si faltan políticas o planes de ejemplo.
+      - name: scripts/policy-check.sh
+        run: bash scripts/policy-check.sh
+
+  selftest:
+    name: scripts (autopruebas)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Prueba sin GCP los scripts que usan apply.yml, drift.yml y terratest.yml (huella del
+      # plan, recursos no administrados, conteo de omitidas, pruebas por módulo, recorte de
+      # planes) con los datos de scripts/testdata/. Usa python3 y bash del runner.
+      - name: scripts/selftest.sh
+        run: bash scripts/selftest.sh
+
+  docs:
+    name: terraform-docs al día
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Instalar terraform-docs
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/terraform-docs/terraform-docs/releases/download/${TERRAFORM_DOCS_VERSION}"
+          file="terraform-docs-${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/terraform-docs-${TERRAFORM_DOCS_VERSION}.sha256sum"
+          grep "  ${file}\$" "terraform-docs-${TERRAFORM_DOCS_VERSION}.sha256sum" | sha256sum -c -
+          tar -xzf "${file}" terraform-docs
+          sudo install -m 0755 terraform-docs /usr/local/bin/terraform-docs
+          terraform-docs --version
+
+      - name: scripts/docs.sh --check
+        run: bash scripts/docs.sh --check
+
+  # Pruebas de Go sin GCP: go vet y go test de todos los paquetes de tests/. Este trabajo no
+  # tiene id-token ni variables de GCP: las pruebas de integración, la de extremo a extremo y la
+  # de humo se omiten solas (t.Skip por la variable o la compuerta que falta) y corren las que no
+  # necesitan GCP: config.example.json contra los variables.tf de cada raíz (variables
+  # obligatorias y tipos), la validación de binary_authorization_allowlist_patterns, el orden de
+  # las raíces y la evaluación de conectividad. Tarda segundos (8 s el 24 nov 2026 en Windows,
+  # sin la descarga de módulos).
+  go:
+    name: go (vet y pruebas sin GCP)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gcp-datacenter/tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: gcp-datacenter/tests/go.mod
+          cache-dependency-path: gcp-datacenter/tests/go.sum
+
+      - name: go vet ./...
+        run: go vet ./...
+
+      - name: go test ./... (sin GCP)
+        run: go test -count=1 ./...
+
+  # ---------------------------------------------------------------------------------------
+  # Trabajos con GCP: se omiten mientras GCP_ENABLED no sea "true".
+
+  affected:
+    name: raíces afectadas
+    # También en un PR desde un fork (no necesita GCP): plan-gate debe saber si toca raíces,
+    # aunque las variables del repositorio no lleguen al fork.
+    if: vars.GCP_ENABLED == 'true' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: [static, conftest]
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.roots.outputs.roots }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: roots
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bash scripts/affected-roots.sh "${BASE_SHA}" "${HEAD_SHA}" | tee -a "${GITHUB_OUTPUT}"
+
+  plan:
+    name: plan ${{ matrix.root }}
+    # Un fork no recibe token OIDC: no se intenta planear (plan-gate falla con el motivo).
+    if: vars.GCP_ENABLED == 'true' && needs.affected.outputs.roots != '[]' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: affected
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.affected.outputs.roots) }}
+    env:
+      ROOT: ${{ matrix.root }}
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "${GCP_AUDIT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Falta la variable de repositorio GCP_AUDIT_SERVICE_ACCOUNT (salida read_service_account de 0-bootstrap): los plan corren con la cuenta de lectura (docs/pipeline.md §2)."
+            exit 1
+          fi
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Cuenta de lectura (tf-read): las cuentas que escriben solo aceptan tokens de main, del
+      # trabajo de _terraform-root.yml en main, de un evento push o workflow_dispatch y de un
+      # trabajo con su entorno de GitHub (attribute.deploy); este trabajo no tiene entorno, corre
+      # en la rama del PR y su evento es pull_request (ADR 0029 §3).
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      - name: Instalar conftest
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}"
+          file="conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/checksums.txt"
+          grep "  ${file}\$" checksums.txt | sha256sum -c -
+          tar -xzf "${file}" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1) o
+      # si un valor resuelto es de los ejemplos (marcadores en scripts/root-tfvars.py).
+      - name: Variables del plan
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: python3 scripts/root-tfvars.py "${ROOT}"
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          cd "${ROOT}"
+          terraform init -input=false -no-color -backend-config="bucket=${STATE_BUCKET}"
+
+      - name: terraform plan
+        run: |
+          cd "${ROOT}"
+          # -lock=false: la cuenta de lectura no puede escribir el candado del estado.
+          terraform plan -input=false -no-color -lock=false -out=tfplan
+          terraform show -json tfplan > plan.json
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Conftest sobre el plan
+        id: conftest
+        run: |
+          if [ -z "$(find policies -name '*.rego' -type f 2>/dev/null | head -n 1)" ]; then
+            echo "policies/ no tiene archivos .rego todavía." | tee "${ROOT}/conftest.txt"
+            exit 0
+          fi
+          set -o pipefail
+          conftest test "${ROOT}/plan.json" --policy policies --no-color 2>&1 | tee "${ROOT}/conftest.txt"
+
+      - name: Instalar Infracost
+        if: env.INFRACOST_API_KEY != ''
+        uses: infracost/actions/setup@a5783eb98adc93aa7a0049fce0abb06fdd30770a # v5.0.1
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Costo con Infracost
+        if: env.INFRACOST_API_KEY != ''
+        run: |
+          infracost breakdown --path "${ROOT}/plan.json" --format table --no-color \
+            --out-file "${ROOT}/infracost.txt"
+
+      - name: Resumen de la raíz
+        if: always()
+        env:
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+        run: |
+          out="${RUNNER_TEMP}/summary"
+          mkdir -p "${out}"
+          f="${out}/summary.md"
+          {
+            echo "### \`${ROOT}\`"
+            echo
+            if [ -f "${ROOT}/plan.txt" ]; then
+              line="$(grep -E '^(Plan:|No changes\.)' "${ROOT}/plan.txt" | head -n 1 || true)"
+              echo "- Plan: ${line:-ver registro del trabajo}"
+            else
+              echo "- Plan: falló (ver registro del trabajo)"
+            fi
+            echo "- Conftest: ${CONFTEST_OUTCOME:-no corrió}"
+            if [ -f "${ROOT}/conftest.txt" ]; then
+              echo
+              echo "<details><summary>Conftest</summary>"
+              echo
+              echo '```'
+              cat "${ROOT}/conftest.txt"
+              echo '```'
+              echo "</details>"
+            fi
+            if [ -f "${ROOT}/infracost.txt" ]; then
+              echo
+              echo "<details><summary>Costo (Infracost)</summary>"
+              echo
+              echo '```'
+              cat "${ROOT}/infracost.txt"
+              echo '```'
+              echo "</details>"
+            else
+              echo "- Costo: sin INFRACOST_API_KEY o no se calculó"
+            fi
+            echo
+          } > "${f}"
+          cat "${f}" >> "${GITHUB_STEP_SUMMARY}"
+          # Nombre de artefacto sin "/".
+          echo "ARTIFACT_NAME=plan-$(printf '%s' "${ROOT}" | tr '/' '-')" >> "${GITHUB_ENV}"
+
+      - name: Subir resumen
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/summary/summary.md
+          retention-days: 7
+
+  comment:
+    name: comentario del plan
+    if: always() && vars.GCP_ENABLED == 'true' && needs.affected.result == 'success' && needs.affected.outputs.roots != '[]' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [affected, plan]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+          path: summaries
+
+      - name: Publicar o actualizar el comentario
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const marker = '<!-- gcp-datacenter-plan -->';
+            const dirs = fs.existsSync('summaries') ? fs.readdirSync('summaries').sort() : [];
+            let body = `${marker}\n## Plan por raíz afectada\n\n`;
+            for (const d of dirs) {
+              const f = path.join('summaries', d, 'summary.md');
+              if (fs.existsSync(f)) body += fs.readFileSync(f, 'utf8') + '\n';
+            }
+            if (dirs.length === 0) body += 'No se generaron resúmenes (ver los registros del flujo).\n';
+            if (body.length > 65000) body = body.slice(0, 65000) + '\n\n(recortado; ver el resumen del flujo)\n';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const previous = comments.find(c => c.body && c.body.startsWith(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+  # Comprobación obligatoria que resume los planes por raíz (cuyos nombres cambian con cada PR).
+  # Corre siempre. Falla si el cálculo de raíces o algún plan (con su Conftest) falló o se
+  # canceló, o si con GCP habilitado no corrió lo que debía. Pasa cuando la omisión es
+  # legítima: GCP_ENABLED distinto de "true", o ninguna raíz afectada.
+  plan-gate:
+    name: plan-gate
+    if: always()
+    needs: [affected, plan]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # La decisión está en scripts/plan-gate.sh (probada en scripts/selftest.sh), incluido el
+      # caso de un PR desde un fork que toca raíces: falla con un mensaje claro.
+      - name: Resultado de los planes
+        env:
+          GCP_ENABLED: ${{ vars.GCP_ENABLED }}
+          AFFECTED: ${{ needs.affected.result }}
+          ROOTS: ${{ needs.affected.outputs.roots }}
+          PLAN: ${{ needs.plan.result }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: bash scripts/plan-gate.sh

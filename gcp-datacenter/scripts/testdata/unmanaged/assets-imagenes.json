@@ -1,0 +1,8 @@
+[
+  {"name": "//cloudresourcemanager.googleapis.com/projects/111111111111", "assetType": "cloudresourcemanager.googleapis.com/Project", "project": "projects/111111111111", "displayName": "example-landing-zone", "state": "ACTIVE"},
+  {"name": "//artifactregistry.googleapis.com/projects/example-landing-zone/locations/us/repositories/bnt-dev-app", "assetType": "artifactregistry.googleapis.com/Repository", "project": "projects/111111111111", "displayName": "bnt-dev-app"},
+  {"name": "//artifactregistry.googleapis.com/projects/example-landing-zone/locations/us/repositories/bnt-dev-app/dockerImages/api@sha256:1111111111111111111111111111111111111111111111111111111111111111", "assetType": "artifactregistry.googleapis.com/DockerImage", "project": "projects/111111111111", "displayName": "api"},
+  {"name": "//artifactregistry.googleapis.com/projects/111111111111/locations/us/repositories/bnt-dev-app/dockerImages/equipo%2Fworker@sha256:2222222222222222222222222222222222222222222222222222222222222222", "assetType": "artifactregistry.googleapis.com/DockerImage", "project": "projects/111111111111", "displayName": "equipo/worker"},
+  {"name": "//artifactregistry.googleapis.com/projects/111111111111/locations/us-central1/repositories/cloud-run-source-deploy", "assetType": "artifactregistry.googleapis.com/Repository", "project": "projects/111111111111", "displayName": "cloud-run-source-deploy"},
+  {"name": "//artifactregistry.googleapis.com/projects/111111111111/locations/us-central1/repositories/cloud-run-source-deploy/dockerImages/servicio@sha256:3333333333333333333333333333333333333333333333333333333333333333", "assetType": "artifactregistry.googleapis.com/DockerImage", "project": "projects/111111111111", "displayName": "servicio"}
+]

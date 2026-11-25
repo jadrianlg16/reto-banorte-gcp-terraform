@@ -1,0 +1,6 @@
+HUERFANO compute.googleapis.com/FirewallPolicy //compute.googleapis.com/projects/example-landing-zone/global/firewallPolicies/bnt-dev-net-fw
+HUERFANO compute.googleapis.com/Instance //compute.googleapis.com/projects/example-landing-zone/zones/us-central1-a/instances/bnt-dev-app-mig-zz99 [RUNNING]
+HUERFANO compute.googleapis.com/Network //compute.googleapis.com/projects/example-landing-zone/global/networks/bnt-dev-net-spoke
+HUERFANO iam.googleapis.com/ServiceAccount //iam.googleapis.com/projects/example-landing-zone/serviceAccounts/100000000000000000002
+HUERFANO run.googleapis.com/Service //run.googleapis.com/projects/example-landing-zone/locations/us-central1/services/api
+HUERFANO storage.googleapis.com/Bucket //storage.googleapis.com/bnt-dev-data-app-usc1

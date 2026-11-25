@@ -1,0 +1,290 @@
+# Detección diaria de drift (CONTRATO §9.3, ADR 0029). Ver docs/pipeline.md.
+#
+# Por cada raíz de stages/ salvo 0-bootstrap (scripts/affected-roots.sh --all) y salvo las de los
+# entornos apagados con la variable de repositorio GCP_DISABLED_ENVS (dev y qa; ver apply.yml y
+# scripts/disabled-envs.py):
+# terraform plan -detailed-exitcode -lock=false con la cuenta de lectura
+# (GCP_AUDIT_SERVICE_ACCOUNT, salida read_service_account de 0-bootstrap; Workload Identity
+# Federation, sin llaves). Las cuentas que escriben solo aceptan tokens de main, del trabajo de
+# _terraform-root.yml en main (job_workflow_ref exacto), de un evento push o workflow_dispatch y
+# de un trabajo con su entorno de GitHub (attribute.deploy); estos trabajos no tienen entorno y
+# este flujo no es _terraform-root.yml (ADR 0029 §3).
+#   código 0  sin cambios: no hace nada.
+#   código 2  drift: abre una incidencia con la etiqueta `drift` para esa raíz o, si ya hay
+#             una abierta, actualiza su cuerpo y agrega un comentario.
+#   código 1  error: el trabajo falla.
+# -lock=false: la cuenta de lectura no puede escribir el candado y el plan no escribe estado,
+# así que no bloquea ni espera a un apply en curso.
+#
+# La incidencia lleva solo las direcciones de los recursos y la línea "Plan:", no el plan
+# completo: el repositorio es privado, pero las incidencias las ve cualquiera con acceso de
+# lectura, y el plan completo puede traer valores de configuración que no hace falta repartir.
+#
+# Recursos no administrados (objetivo "cero recursos manuales", verificado con Cloud Asset
+# Inventory): lista con Cloud Asset los recursos del proyecto (salida project_id de
+# 0-bootstrap) y los compara con todos los estados del bucket (scripts/unmanaged-resources.py).
+# Falla si hay recursos que ningún estado administra y los lista en el resumen. El drift de
+# arriba no los ve: un recurso creado a mano fuera de Terraform no cambia ningún plan.
+# Identidad: la misma cuenta de lectura (docs/pipeline.md §2).
+#
+# Sin GCP: mientras GCP_ENABLED no sea "true", el flujo no hace nada y termina en verde.
+
+name: drift
+
+on:
+  schedule:
+    - cron: "17 12 * * *" # diario, 12:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-gcp-datacenter
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.16.5"
+  TF_IN_AUTOMATION: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: gcp-datacenter
+
+jobs:
+  roots:
+    name: raíces
+    if: vars.GCP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.roots.outputs.roots }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Sin las raíces de los entornos de GCP_DISABLED_ENVS (ver apply.yml); con prod u otro
+      # nombre que no se puede apagar, el trabajo falla con un mensaje.
+      - id: roots
+        name: Listar raíces (sin 0-bootstrap ni entornos apagados)
+        env:
+          GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}
+        run: |
+          bash scripts/affected-roots.sh --all > "${RUNNER_TEMP}/roots.txt"
+          python3 scripts/disabled-envs.py filter "${GITHUB_OUTPUT}" < "${RUNNER_TEMP}/roots.txt"
+          grep '^roots=' "${GITHUB_OUTPUT}"
+
+  plan:
+    name: drift ${{ matrix.root }}
+    if: vars.GCP_ENABLED == 'true' && needs.roots.outputs.roots != '[]'
+    needs: roots
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.roots.outputs.roots) }}
+    env:
+      ROOT: ${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "${GCP_AUDIT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Falta la variable de repositorio GCP_AUDIT_SERVICE_ACCOUNT (salida read_service_account de 0-bootstrap, docs/pipeline.md §2)."
+            exit 1
+          fi
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      # common + la llave de la raíz; falla si GCP_TFVARS_JSON no trae project_id (ADR 0029 §1) o
+      # si un valor resuelto es de los ejemplos (marcadores en scripts/root-tfvars.py).
+      - name: Variables de la raíz
+        env:
+          TFVARS_JSON: ${{ vars.GCP_TFVARS_JSON }}
+        run: python3 scripts/root-tfvars.py "${ROOT}"
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          cd "${ROOT}"
+          terraform init -input=false -no-color -backend-config="bucket=${STATE_BUCKET}"
+
+      - name: terraform plan -detailed-exitcode
+        id: plan
+        run: |
+          cd "${ROOT}"
+          set +e
+          terraform plan -input=false -no-color -lock=false -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          case "${code}" in
+            0) echo "drift=false" >> "${GITHUB_OUTPUT}" ;;
+            2) echo "drift=true" >> "${GITHUB_OUTPUT}" ;;
+            *) exit "${code}" ;;
+          esac
+          summary="${RUNNER_TEMP}/drift-summary.md"
+          {
+            echo '```'
+            # Direcciones de recursos con cambios y la línea final del plan (máximo 200 líneas).
+            terraform show -no-color tfplan |
+              grep -E '^  # .* (will be|must be)|^Plan:|^Changes to Outputs' | head -n 200 || true
+            echo '```'
+          } > "${summary}"
+          echo "summary=${summary}" >> "${GITHUB_OUTPUT}"
+          cat "${summary}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Abrir o actualizar la incidencia de drift
+        if: steps.plan.outputs.drift == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SUMMARY_FILE: ${{ steps.plan.outputs.summary }}
+        with:
+          script: |
+            const fs = require('fs');
+            const root = process.env.ROOT;
+            const label = 'drift';
+            const title = `Drift: ${root}`;
+            const marker = `<!-- drift:${root} -->`;
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const summary = fs.readFileSync(process.env.SUMMARY_FILE, 'utf8');
+            const body = [
+              marker,
+              `La raíz \`${root}\` no coincide con su estado (plan con cambios).`,
+              '',
+              `Última detección: ${new Date().toISOString()} ([ejecución](${runUrl})).`,
+              '',
+              summary,
+              '',
+              'Ver el runbook de respuesta a drift en `gcp-datacenter/docs/runbooks/`.',
+            ].join('\n');
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: 'd93f0b',
+                description: 'La infraestructura no coincide con Terraform',
+              });
+            }
+
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: label, per_page: 100,
+            });
+            const existing = open.find(
+              (i) => !i.pull_request && ((i.body || '').startsWith(marker) || i.title === title),
+            );
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `El drift sigue presente (${runUrl}).`,
+              });
+              core.notice(`Incidencia #${existing.number} actualizada para ${root}.`);
+            } else {
+              const created = await github.rest.issues.create({ owner, repo, title, body, labels: [label] });
+              core.notice(`Incidencia #${created.data.number} abierta para ${root}.`);
+            }
+
+  unmanaged:
+    name: recursos no administrados (proyecto)
+    if: vars.GCP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Comprobar variables
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+        run: |
+          missing=""
+          for v in GCP_AUDIT_SERVICE_ACCOUNT STATE_BUCKET; do
+            if [ -z "${!v:-}" ]; then
+              missing="${missing} ${v}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::Faltan variables de repositorio:${missing} (docs/pipeline.md §2)."
+            exit 1
+          fi
+
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # Los estados crudos llevan valores sensibles: quedan en la carpeta temporal del runner y
+      # no se suben como artefacto.
+      - name: Descargar los estados del bucket y leer el proyecto (salidas de 0-bootstrap)
+        id: project
+        run: |
+          dir="${RUNNER_TEMP}/states"
+          mkdir -p "${dir}"
+          gcloud storage ls "gs://${STATE_BUCKET}/**/default.tfstate" > "${RUNNER_TEMP}/state-list.txt"
+          while IFS= read -r url; do
+            name="$(printf '%s' "${url#gs://"${STATE_BUCKET}"/}" | tr '/' '_')"
+            gcloud storage cp --quiet "${url}" "${dir}/${name}"
+          done < "${RUNNER_TEMP}/state-list.txt"
+          ls "${dir}"
+          boot="${dir}/0-bootstrap_default.tfstate"
+          project="$(jq -r '.outputs.project_id.value // empty' "${boot}" 2>/dev/null || true)"
+          number="$(jq -r '.outputs.project_number.value // empty' "${boot}" 2>/dev/null || true)"
+          if [ -z "${project}" ] || [ -z "${number}" ]; then
+            echo "::error::El estado de 0-bootstrap (gs://${STATE_BUCKET}/0-bootstrap/default.tfstate) no está o no tiene las salidas project_id y project_number."
+            exit 1
+          fi
+          echo "Proyecto: ${project} (${number})"
+          echo "project=${project}" >> "${GITHUB_OUTPUT}"
+          echo "number=${number}" >> "${GITHUB_OUTPUT}"
+
+      - name: Listar el proyecto con Cloud Asset
+        env:
+          PROJECT_ID: ${{ steps.project.outputs.project }}
+        run: |
+          # VERIFICAR-EN-APPLY: cuota de la API cloudasset con la cuenta de lectura y que el
+          # listado traiga el proyecto mismo con --scope=projects/<ID>.
+          gcloud asset search-all-resources --scope="projects/${PROJECT_ID}" --format=json > "${RUNNER_TEMP}/assets.json"
+
+      - name: Comparar con los estados
+        env:
+          PROJECT_ID: ${{ steps.project.outputs.project }}
+          PROJECT_NUMBER: ${{ steps.project.outputs.number }}
+        run: |
+          # El script exige que el listado sea del proyecto (lo trae y no trae recursos de otro
+          # proyecto); si no, sale con 2 (docs/pipeline.md §1.3).
+          args=()
+          for s in "${RUNNER_TEMP}"/states/*; do
+            args+=(--state "${s}")
+          done
+          {
+            echo "### Recursos no administrados del proyecto ${PROJECT_ID}"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+          python3 scripts/unmanaged-resources.py --project "${PROJECT_ID}" --project-number "${PROJECT_NUMBER}" \
+            --assets "${RUNNER_TEMP}/assets.json" "${args[@]}" --summary "${GITHUB_STEP_SUMMARY}"

@@ -1,0 +1,540 @@
+{
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_compute_subnetwork.europe",
+          "expressions": {
+            "ip_cidr_range": {
+              "constant_value": "10.10.2.0/24"
+            },
+            "name": {
+              "constant_value": "bnt-dev-net-app-euw1"
+            },
+            "network": {
+              "references": [
+                "google_compute_network.good.id",
+                "google_compute_network.good"
+              ]
+            },
+            "region": {
+              "constant_value": "europe-west1"
+            }
+          },
+          "mode": "managed",
+          "name": "europe",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_compute_subnetwork"
+        },
+        {
+          "address": "google_kms_key_ring.asia",
+          "expressions": {
+            "location": {
+              "constant_value": "asia"
+            },
+            "name": {
+              "constant_value": "bnt-dev-sec-kr-asia"
+            }
+          },
+          "mode": "managed",
+          "name": "asia",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_kms_key_ring"
+        },
+        {
+          "address": "google_secret_manager_secret.replicas",
+          "expressions": {
+            "replication": [
+              {
+                "user_managed": [
+                  {
+                    "replicas": [
+                      {
+                        "location": {
+                          "constant_value": "us-central1"
+                        }
+                      },
+                      {
+                        "location": {
+                          "constant_value": "europe-west1"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "secret_id": {
+              "constant_value": "bnt-dev-sec-replicas"
+            }
+          },
+          "mode": "managed",
+          "name": "replicas",
+          "provider_config_key": "google",
+          "schema_version": 0,
+          "type": "google_secret_manager_secret"
+        },
+        {
+          "address": "google_storage_bucket.asia",
+          "expressions": {
+            "location": {
+              "constant_value": "ASIA-EAST1"
+            },
+            "name": {
+              "constant_value": "bnt-dev-data-ase1"
+            },
+            "public_access_prevention": {
+              "constant_value": "enforced"
+            },
+            "uniform_bucket_level_access": {
+              "constant_value": true
+            }
+          },
+          "mode": "managed",
+          "name": "asia",
+          "provider_config_key": "google",
+          "schema_version": 3,
+          "type": "google_storage_bucket"
+        },
+        {
+          "address": "google_storage_bucket.dual_west",
+          "expressions": {
+            "custom_placement_config": [
+              {
+                "data_locations": {
+                  "constant_value": [
+                    "US-CENTRAL1",
+                    "US-WEST1"
+                  ]
+                }
+              }
+            ],
+            "location": {
+              "constant_value": "US"
+            },
+            "name": {
+              "constant_value": "bnt-dev-data-dualw-us"
+            },
+            "public_access_prevention": {
+              "constant_value": "enforced"
+            },
+            "uniform_bucket_level_access": {
+              "constant_value": true
+            }
+          },
+          "mode": "managed",
+          "name": "dual_west",
+          "provider_config_key": "google",
+          "schema_version": 3,
+          "type": "google_storage_bucket"
+        }
+      ]
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_compute_subnetwork.europe",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "ip_cidr_range": "10.10.2.0/24",
+          "ip_collection": null,
+          "ipv6_access_type": null,
+          "log_config": [],
+          "name": "bnt-dev-net-app-euw1",
+          "params": [],
+          "project": "example-project",
+          "region": "europe-west1",
+          "reserved_internal_range": null,
+          "role": null,
+          "send_secondary_ip_range_if_empty": null,
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "log_config": [],
+          "params": [],
+          "secondary_ip_range": []
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "enable_flow_logs": true,
+          "external_ipv6_prefix": true,
+          "fingerprint": true,
+          "gateway_address": true,
+          "id": true,
+          "internal_ipv6_prefix": true,
+          "ipv6_cidr_range": true,
+          "ipv6_gce_endpoint": true,
+          "log_config": [],
+          "network": true,
+          "params": [],
+          "private_ip_google_access": true,
+          "private_ipv6_google_access": true,
+          "purpose": true,
+          "secondary_ip_range": true,
+          "self_link": true,
+          "stack_type": true,
+          "state": true,
+          "subnetwork_id": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "europe",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_subnetwork"
+    },
+    {
+      "address": "google_kms_key_ring.asia",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "location": "asia",
+          "name": "bnt-dev-sec-kr-asia",
+          "project": "example-project",
+          "timeouts": null
+        },
+        "after_sensitive": {},
+        "after_unknown": {
+          "id": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "asia",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_kms_key_ring"
+    },
+    {
+      "address": "google_secret_manager_secret.replicas",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "annotations": null,
+          "deletion_protection": false,
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "labels": null,
+          "project": "example-project",
+          "replication": [
+            {
+              "auto": [],
+              "user_managed": [
+                {
+                  "replicas": [
+                    {
+                      "customer_managed_encryption": [],
+                      "location": "us-central1"
+                    },
+                    {
+                      "customer_managed_encryption": [],
+                      "location": "europe-west1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "rotation": [],
+          "secret_id": "bnt-dev-sec-replicas",
+          "tags": null,
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null,
+          "topics": [],
+          "ttl": null,
+          "version_aliases": null,
+          "version_destroy_ttl": null
+        },
+        "after_sensitive": {
+          "effective_annotations": {},
+          "effective_labels": {},
+          "replication": [
+            {
+              "auto": [],
+              "user_managed": [
+                {
+                  "replicas": [
+                    {
+                      "customer_managed_encryption": []
+                    },
+                    {
+                      "customer_managed_encryption": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "rotation": [],
+          "terraform_labels": {},
+          "topics": []
+        },
+        "after_unknown": {
+          "create_time": true,
+          "effective_annotations": true,
+          "effective_labels": {},
+          "expire_time": true,
+          "id": true,
+          "name": true,
+          "replication": [
+            {
+              "auto": [],
+              "user_managed": [
+                {
+                  "replicas": [
+                    {
+                      "customer_managed_encryption": []
+                    },
+                    {
+                      "customer_managed_encryption": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "rotation": [],
+          "terraform_labels": {},
+          "topics": []
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "replicas",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_secret_manager_secret"
+    },
+    {
+      "address": "google_storage_bucket.asia",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "default_event_based_hold": null,
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "enable_object_retention": null,
+          "encryption": [],
+          "force_destroy": false,
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "labels": null,
+          "lifecycle_rule": [],
+          "location": "ASIA-EAST1",
+          "logging": [],
+          "name": "bnt-dev-data-ase1",
+          "public_access_prevention": "enforced",
+          "requester_pays": null,
+          "retention_policy": [],
+          "storage_class": "STANDARD",
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null,
+          "uniform_bucket_level_access": true
+        },
+        "after_sensitive": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "retention_policy": [],
+          "soft_delete_policy": [],
+          "terraform_labels": {},
+          "versioning": [],
+          "website": []
+        },
+        "after_unknown": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "id": true,
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "project": true,
+          "project_number": true,
+          "retention_policy": [],
+          "rpo": true,
+          "self_link": true,
+          "soft_delete_policy": true,
+          "terraform_labels": {},
+          "time_created": true,
+          "updated": true,
+          "url": true,
+          "versioning": true,
+          "website": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "asia",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_storage_bucket"
+    },
+    {
+      "address": "google_storage_bucket.dual_west",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [
+            {
+              "data_locations": [
+                "US-CENTRAL1",
+                "US-WEST1"
+              ]
+            }
+          ],
+          "default_event_based_hold": null,
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "enable_object_retention": null,
+          "encryption": [],
+          "force_destroy": false,
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "labels": null,
+          "lifecycle_rule": [],
+          "location": "US",
+          "logging": [],
+          "name": "bnt-dev-data-dualw-us",
+          "public_access_prevention": "enforced",
+          "requester_pays": null,
+          "retention_policy": [],
+          "storage_class": "STANDARD",
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "dev",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null,
+          "uniform_bucket_level_access": true
+        },
+        "after_sensitive": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [
+            {
+              "data_locations": [
+                false,
+                false
+              ]
+            }
+          ],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "retention_policy": [],
+          "soft_delete_policy": [],
+          "terraform_labels": {},
+          "versioning": [],
+          "website": []
+        },
+        "after_unknown": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [
+            {
+              "data_locations": [
+                false,
+                false
+              ]
+            }
+          ],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "id": true,
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "project": true,
+          "project_number": true,
+          "retention_policy": [],
+          "rpo": true,
+          "self_link": true,
+          "soft_delete_policy": true,
+          "terraform_labels": {},
+          "time_created": true,
+          "updated": true,
+          "url": true,
+          "versioning": true,
+          "website": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "name": "dual_west",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_storage_bucket"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

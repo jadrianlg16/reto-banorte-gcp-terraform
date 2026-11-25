@@ -1,0 +1,25 @@
+# Configuración de checkov. scripts/check.sh la pasa con --config-file.
+#
+# Regla del repositorio: no hay omisiones generales. Si una revisión debe omitirse, se hace
+# aquí en "skip-check" con un comentario en español que diga por qué, o en el recurso con
+#   # checkov:skip=CKV_XXX_NN: motivo en español
+# y el motivo debe justificarse en el PR.
+
+framework:
+  - terraform
+
+# Solo muestra fallas, sin el bloque de código completo.
+compact: true
+quiet: true
+
+# Un hallazgo hace fallar el paso.
+soft-fail: false
+
+# Los módulos son propios (ADR 0013); no se descargan módulos externos.
+download-external-modules: false
+
+# Directorios generados por terraform init.
+skip-path:
+  - \.terraform/
+
+# skip-check: (vacío a propósito)

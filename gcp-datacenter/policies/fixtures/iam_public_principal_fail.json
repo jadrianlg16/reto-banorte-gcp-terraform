@@ -1,0 +1,160 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_secret_manager_secret_iam_member.public",
+          "mode": "managed",
+          "type": "google_secret_manager_secret_iam_member",
+          "name": "public",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "secret_id": "projects/example-project/secrets/bnt-dev-sec-db-config",
+            "role": "roles/secretmanager.secretAccessor",
+            "member": "allUsers",
+            "condition": []
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "google_project_iam_member.external",
+          "mode": "managed",
+          "type": "google_project_iam_member",
+          "name": "external",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "role": "roles/cloudsql.client",
+            "member": "allAuthenticatedUsers",
+            "condition": []
+          },
+          "sensitive_values": {}
+        }
+      ],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.cloud_run.google_cloud_run_v2_service_iam_member.public",
+              "mode": "managed",
+              "type": "google_cloud_run_v2_service_iam_member",
+              "name": "public",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "location": "us-central1",
+                "name": "bnt-dev-app-run-usc1",
+                "role": "roles/run.invoker",
+                "member": "allUsers",
+                "condition": []
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.cloud_run"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "google_secret_manager_secret_iam_member.public",
+      "mode": "managed",
+      "type": "google_secret_manager_secret_iam_member",
+      "name": "public",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "secret_id": "projects/example-project/secrets/bnt-dev-sec-db-config",
+          "role": "roles/secretmanager.secretAccessor",
+          "member": "allUsers",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.cloud_run.google_cloud_run_v2_service_iam_member.public",
+      "module_address": "module.cloud_run",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_service_iam_member",
+      "name": "public",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "location": "us-central1",
+          "name": "bnt-dev-app-run-usc1",
+          "role": "roles/run.invoker",
+          "member": "allUsers",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_project_iam_member.external",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "external",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "role": "roles/cloudsql.client",
+          "member": "allAuthenticatedUsers",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-24T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

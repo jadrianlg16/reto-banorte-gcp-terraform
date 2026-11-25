@@ -1,0 +1,21 @@
+{
+  "name": "projects/example-dev-host/locations/global/connectivityTests/e2e-x-dev-onprem",
+  "protocol": "TCP",
+  "reachabilityDetails": {
+    "result": "UNREACHABLE",
+    "verifyTime": "2026-11-21T10:00:00Z",
+    "traces": [
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host", "network": {"displayName": "bnt-dev-vpc"}},
+          {"state": "APPLY_EGRESS_FIREWALL_RULE", "projectId": "example-dev-host", "firewall": {"direction": "EGRESS", "action": "ALLOW"}},
+          {"state": "APPLY_ROUTE", "projectId": "example-dev-host", "route": {"routeType": "PEERING_DYNAMIC", "nextHopType": "NEXT_HOP_PEERING", "destIpRange": "192.168.0.0/24"}},
+          {"state": "APPLY_ROUTE", "projectId": "example-net-hub", "route": {"routeType": "DYNAMIC", "nextHopType": "NEXT_HOP_VPN_TUNNEL", "destIpRange": "192.168.0.0/24"}},
+          {"state": "ARRIVE_AT_VPN_TUNNEL", "projectId": "example-net-hub", "vpnTunnel": {"displayName": "bnt-hub-vpn-onprem-0", "region": "us-central1", "routingType": "DYNAMIC"}},
+          {"state": "APPLY_INGRESS_FIREWALL_RULE", "projectId": "example-net-hub", "firewall": {"direction": "INGRESS", "action": "DENY"}},
+          {"state": "DROP", "causesDrop": true, "drop": {"cause": "FIREWALL_RULE"}}
+        ]
+      }
+    ]
+  }
+}

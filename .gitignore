@@ -13,13 +13,18 @@ override.tf.json
 # Archivos que generan los laboratorios al hacer apply
 labs/**/*.txt
 
-# Documentación local (plan y documento de Banorte): no se versiona
+# Documentación local (plan y documento del cliente): no se versiona
 /docs/
 /labs/README.md
 
 # Variables con datos reales (los ejemplos sí se versionan como *.tfvars.example)
 *.tfvars
 !*.tfvars.example
+# scripts/root-tfvars.py escribe aquí el GCP_TFVARS_JSON de la raíz (valores reales)
+*.auto.tfvars.json
+
+# Python (selftest.sh y los scripts cargados con importlib)
+__pycache__/
 
 # Office / sistema
 ~$*

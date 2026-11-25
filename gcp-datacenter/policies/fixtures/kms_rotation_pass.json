@@ -1,0 +1,157 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.kms.google_kms_key_ring.this",
+              "mode": "managed",
+              "type": "google_kms_key_ring",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "name": "bnt-dev-sec-kr-usc1",
+                "project": "example-project",
+                "location": "us-central1"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.kms.google_kms_crypto_key.this[\"sql\"]",
+              "mode": "managed",
+              "type": "google_kms_crypto_key",
+              "name": "this",
+              "index": "sql",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "name": "sql",
+                "purpose": "ENCRYPT_DECRYPT",
+                "destroy_scheduled_duration": "2592000s",
+                "skip_initial_version_creation": false,
+                "labels": {
+                  "env": "dev",
+                  "app": "app",
+                  "owner": "plataforma",
+                  "cost_center": "ti-001",
+                  "managed_by": "terraform"
+                },
+                "terraform_labels": {
+                  "env": "dev",
+                  "app": "app",
+                  "owner": "plataforma",
+                  "cost_center": "ti-001",
+                  "managed_by": "terraform"
+                },
+                "version_template": [
+                  {
+                    "algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION",
+                    "protection_level": "SOFTWARE"
+                  }
+                ],
+                "rotation_period": "7776000s"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.kms"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "module.kms.google_kms_key_ring.this",
+      "module_address": "module.kms",
+      "mode": "managed",
+      "type": "google_kms_key_ring",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "bnt-dev-sec-kr-usc1",
+          "project": "example-project",
+          "location": "us-central1"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.kms.google_kms_crypto_key.this[\"sql\"]",
+      "module_address": "module.kms",
+      "mode": "managed",
+      "type": "google_kms_crypto_key",
+      "name": "this",
+      "index": "sql",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "sql",
+          "purpose": "ENCRYPT_DECRYPT",
+          "destroy_scheduled_duration": "2592000s",
+          "skip_initial_version_creation": false,
+          "labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "terraform_labels": {
+            "env": "dev",
+            "app": "app",
+            "owner": "plataforma",
+            "cost_center": "ti-001",
+            "managed_by": "terraform"
+          },
+          "version_template": [
+            {
+              "algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION",
+              "protection_level": "SOFTWARE"
+            }
+          ],
+          "rotation_period": "7776000s"
+        },
+        "after_unknown": {
+          "id": true,
+          "key_ring": true,
+          "effective_labels": true,
+          "primary": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-20T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

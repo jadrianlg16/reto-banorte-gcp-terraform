@@ -1,0 +1,1177 @@
+{
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "vpn_hub": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_compute_ha_vpn_gateway.this",
+                "expressions": {
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.vpn_name"
+                    ]
+                  },
+                  "network": {
+                    "references": [
+                      "var.network"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "stack_type": {
+                    "constant_value": "IPV4_ONLY"
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 1,
+                "type": "google_compute_ha_vpn_gateway"
+              },
+              {
+                "address": "google_compute_vpn_tunnel.this",
+                "expressions": {
+                  "ike_version": {
+                    "constant_value": 2
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.vpn_name",
+                      "each.key"
+                    ]
+                  },
+                  "peer_external_gateway": {
+                    "references": [
+                      "local.is_external",
+                      "google_compute_external_vpn_gateway.this[0].id",
+                      "google_compute_external_vpn_gateway.this[0]",
+                      "google_compute_external_vpn_gateway.this"
+                    ]
+                  },
+                  "peer_external_gateway_interface": {
+                    "references": [
+                      "local.is_external",
+                      "each.value.peer_external_interface",
+                      "each.value"
+                    ]
+                  },
+                  "peer_gcp_gateway": {
+                    "references": [
+                      "local.is_external",
+                      "var.peer.gcp_gateway_self_link",
+                      "var.peer"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "router": {
+                    "references": [
+                      "local.router_id"
+                    ]
+                  },
+                  "shared_secret": {
+                    "references": [
+                      "var.shared_secret_overrides",
+                      "each.key",
+                      "var.shared_secret"
+                    ]
+                  },
+                  "vpn_gateway": {
+                    "references": [
+                      "google_compute_ha_vpn_gateway.this.id",
+                      "google_compute_ha_vpn_gateway.this"
+                    ]
+                  },
+                  "vpn_gateway_interface": {
+                    "references": [
+                      "each.value.vpn_gateway_interface",
+                      "each.value"
+                    ]
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.sessions"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_compute_vpn_tunnel"
+              }
+            ]
+          },
+          "source": "../.."
+        },
+        "vpn_onprem_real": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_compute_external_vpn_gateway.this",
+                "count_expression": {
+                  "references": [
+                    "local.is_external"
+                  ]
+                },
+                "expressions": {
+                  "description": {
+                    "constant_value": "Gateway VPN on-premises."
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.name_base",
+                      "var.connection_name"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "redundancy_type": {
+                    "references": [
+                      "local.external_ip_count"
+                    ]
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_compute_external_vpn_gateway"
+              },
+              {
+                "address": "google_compute_ha_vpn_gateway.this",
+                "expressions": {
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.vpn_name"
+                    ]
+                  },
+                  "network": {
+                    "references": [
+                      "var.network"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "stack_type": {
+                    "constant_value": "IPV4_ONLY"
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 1,
+                "type": "google_compute_ha_vpn_gateway"
+              },
+              {
+                "address": "google_compute_vpn_tunnel.this",
+                "expressions": {
+                  "ike_version": {
+                    "constant_value": 2
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.vpn_name",
+                      "each.key"
+                    ]
+                  },
+                  "peer_external_gateway": {
+                    "references": [
+                      "local.is_external",
+                      "google_compute_external_vpn_gateway.this[0].id",
+                      "google_compute_external_vpn_gateway.this[0]",
+                      "google_compute_external_vpn_gateway.this"
+                    ]
+                  },
+                  "peer_external_gateway_interface": {
+                    "references": [
+                      "local.is_external",
+                      "each.value.peer_external_interface",
+                      "each.value"
+                    ]
+                  },
+                  "peer_gcp_gateway": {
+                    "references": [
+                      "local.is_external",
+                      "var.peer.gcp_gateway_self_link",
+                      "var.peer"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "router": {
+                    "references": [
+                      "local.router_id"
+                    ]
+                  },
+                  "shared_secret": {
+                    "references": [
+                      "var.shared_secret_overrides",
+                      "each.key",
+                      "var.shared_secret"
+                    ]
+                  },
+                  "vpn_gateway": {
+                    "references": [
+                      "google_compute_ha_vpn_gateway.this.id",
+                      "google_compute_ha_vpn_gateway.this"
+                    ]
+                  },
+                  "vpn_gateway_interface": {
+                    "references": [
+                      "each.value.vpn_gateway_interface",
+                      "each.value"
+                    ]
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.sessions"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_compute_vpn_tunnel"
+              }
+            ]
+          },
+          "source": "../.."
+        },
+        "vpn_onprem_sim": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_compute_ha_vpn_gateway.this",
+                "expressions": {
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.vpn_name"
+                    ]
+                  },
+                  "network": {
+                    "references": [
+                      "var.network"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "stack_type": {
+                    "constant_value": "IPV4_ONLY"
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 1,
+                "type": "google_compute_ha_vpn_gateway"
+              },
+              {
+                "address": "google_compute_vpn_tunnel.this",
+                "expressions": {
+                  "ike_version": {
+                    "constant_value": 2
+                  },
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "name": {
+                    "references": [
+                      "local.vpn_name",
+                      "each.key"
+                    ]
+                  },
+                  "peer_external_gateway": {
+                    "references": [
+                      "local.is_external",
+                      "google_compute_external_vpn_gateway.this[0].id",
+                      "google_compute_external_vpn_gateway.this[0]",
+                      "google_compute_external_vpn_gateway.this"
+                    ]
+                  },
+                  "peer_external_gateway_interface": {
+                    "references": [
+                      "local.is_external",
+                      "each.value.peer_external_interface",
+                      "each.value"
+                    ]
+                  },
+                  "peer_gcp_gateway": {
+                    "references": [
+                      "local.is_external",
+                      "var.peer.gcp_gateway_self_link",
+                      "var.peer"
+                    ]
+                  },
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "router": {
+                    "references": [
+                      "local.router_id"
+                    ]
+                  },
+                  "shared_secret": {
+                    "references": [
+                      "var.shared_secret_overrides",
+                      "each.key",
+                      "var.shared_secret"
+                    ]
+                  },
+                  "vpn_gateway": {
+                    "references": [
+                      "google_compute_ha_vpn_gateway.this.id",
+                      "google_compute_ha_vpn_gateway.this"
+                    ]
+                  },
+                  "vpn_gateway_interface": {
+                    "references": [
+                      "each.value.vpn_gateway_interface",
+                      "each.value"
+                    ]
+                  }
+                },
+                "for_each_expression": {
+                  "references": [
+                    "local.sessions"
+                  ]
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 0,
+                "type": "google_compute_vpn_tunnel"
+              }
+            ]
+          },
+          "source": "../.."
+        }
+      }
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "module.vpn_hub.google_compute_ha_vpn_gateway.this",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "gateway_ip_version": "IPV4",
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-onprem-usc1",
+          "network": "projects/example-net-hub/global/networks/bnt-common-net-hub",
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "stack_type": "IPV4_ONLY",
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "terraform_labels": {},
+          "vpn_interfaces": []
+        },
+        "after_unknown": {
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "self_link": true,
+          "terraform_labels": {},
+          "vpn_interfaces": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.vpn_hub",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_ha_vpn_gateway"
+    },
+    {
+      "address": "module.vpn_hub.google_compute_vpn_tunnel.this[\"if0\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "ike_version": 2,
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-onprem-usc1-if0",
+          "peer_external_gateway": null,
+          "peer_external_gateway_interface": null,
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "router": "projects/example-net-hub/regions/us-central1/routers/bnt-common-net-hub-router-usc1",
+          "shared_secret": "REDACTADO",
+          "target_vpn_gateway": null,
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null,
+          "vpn_gateway_interface": 0
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "local_traffic_selector": [],
+          "remote_traffic_selector": [],
+          "shared_secret": true,
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "detailed_status": true,
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "local_traffic_selector": true,
+          "peer_gcp_gateway": true,
+          "peer_ip": true,
+          "remote_traffic_selector": true,
+          "self_link": true,
+          "shared_secret_hash": true,
+          "terraform_labels": {},
+          "tunnel_id": true,
+          "vpn_gateway": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "if0",
+      "mode": "managed",
+      "module_address": "module.vpn_hub",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_vpn_tunnel"
+    },
+    {
+      "address": "module.vpn_hub.google_compute_vpn_tunnel.this[\"if1\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "ike_version": 2,
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-onprem-usc1-if1",
+          "peer_external_gateway": null,
+          "peer_external_gateway_interface": null,
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "router": "projects/example-net-hub/regions/us-central1/routers/bnt-common-net-hub-router-usc1",
+          "shared_secret": "REDACTADO",
+          "target_vpn_gateway": null,
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null,
+          "vpn_gateway_interface": 1
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "local_traffic_selector": [],
+          "remote_traffic_selector": [],
+          "shared_secret": true,
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "detailed_status": true,
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "local_traffic_selector": true,
+          "peer_gcp_gateway": true,
+          "peer_ip": true,
+          "remote_traffic_selector": true,
+          "self_link": true,
+          "shared_secret_hash": true,
+          "terraform_labels": {},
+          "tunnel_id": true,
+          "vpn_gateway": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "if1",
+      "mode": "managed",
+      "module_address": "module.vpn_hub",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_vpn_tunnel"
+    },
+    {
+      "address": "module.vpn_onprem_real.google_compute_external_vpn_gateway.this[0]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": "Gateway VPN on-premises.",
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "interface": [
+            {
+              "id": 0,
+              "ip_address": "203.0.113.10",
+              "ipv6_address": null
+            },
+            {
+              "id": 1,
+              "ip_address": "203.0.113.11",
+              "ipv6_address": null
+            }
+          ],
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-dc1-peer",
+          "project": "example-net-hub",
+          "redundancy_type": "TWO_IPS_REDUNDANCY",
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "interface": [
+            {},
+            {}
+          ],
+          "labels": {},
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "effective_labels": {},
+          "id": true,
+          "interface": [
+            {},
+            {}
+          ],
+          "label_fingerprint": true,
+          "labels": {},
+          "self_link": true,
+          "terraform_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": 0,
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_real",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_external_vpn_gateway"
+    },
+    {
+      "address": "module.vpn_onprem_real.google_compute_ha_vpn_gateway.this",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "gateway_ip_version": "IPV4",
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-dc1-usc1",
+          "network": "projects/example-net-hub/global/networks/bnt-common-net-hub",
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "stack_type": "IPV4_ONLY",
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "terraform_labels": {},
+          "vpn_interfaces": []
+        },
+        "after_unknown": {
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "self_link": true,
+          "terraform_labels": {},
+          "vpn_interfaces": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_real",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_ha_vpn_gateway"
+    },
+    {
+      "address": "module.vpn_onprem_real.google_compute_vpn_tunnel.this[\"if0\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "ike_version": 2,
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-dc1-usc1-if0",
+          "peer_external_gateway_interface": 0,
+          "peer_gcp_gateway": null,
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "router": "projects/example-net-hub/regions/us-central1/routers/bnt-common-net-hub-router-usc1",
+          "shared_secret": "REDACTADO",
+          "target_vpn_gateway": null,
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null,
+          "vpn_gateway_interface": 0
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "local_traffic_selector": [],
+          "remote_traffic_selector": [],
+          "shared_secret": true,
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "detailed_status": true,
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "local_traffic_selector": true,
+          "peer_external_gateway": true,
+          "peer_ip": true,
+          "remote_traffic_selector": true,
+          "self_link": true,
+          "shared_secret_hash": true,
+          "terraform_labels": {},
+          "tunnel_id": true,
+          "vpn_gateway": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "if0",
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_real",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_vpn_tunnel"
+    },
+    {
+      "address": "module.vpn_onprem_real.google_compute_vpn_tunnel.this[\"if1\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "ike_version": 2,
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-dc1-usc1-if1",
+          "peer_external_gateway_interface": 1,
+          "peer_gcp_gateway": null,
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "router": "projects/example-net-hub/regions/us-central1/routers/bnt-common-net-hub-router-usc1",
+          "shared_secret": "REDACTADO",
+          "target_vpn_gateway": null,
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null,
+          "vpn_gateway_interface": 1
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "local_traffic_selector": [],
+          "remote_traffic_selector": [],
+          "shared_secret": true,
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "detailed_status": true,
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "local_traffic_selector": true,
+          "peer_external_gateway": true,
+          "peer_ip": true,
+          "remote_traffic_selector": true,
+          "self_link": true,
+          "shared_secret_hash": true,
+          "terraform_labels": {},
+          "tunnel_id": true,
+          "vpn_gateway": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "if1",
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_real",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_vpn_tunnel"
+    },
+    {
+      "address": "module.vpn_onprem_sim.google_compute_ha_vpn_gateway.this",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "gateway_ip_version": "IPV4",
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-onprem-sim-usc1",
+          "network": "projects/example-net-hub/global/networks/bnt-common-net-onprem-sim",
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "stack_type": "IPV4_ONLY",
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "terraform_labels": {},
+          "vpn_interfaces": []
+        },
+        "after_unknown": {
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "self_link": true,
+          "terraform_labels": {},
+          "vpn_interfaces": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_sim",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_ha_vpn_gateway"
+    },
+    {
+      "address": "module.vpn_onprem_sim.google_compute_vpn_tunnel.this[\"if0\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "ike_version": 2,
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-onprem-sim-usc1-if0",
+          "peer_external_gateway": null,
+          "peer_external_gateway_interface": null,
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "router": "projects/example-net-hub/regions/us-central1/routers/bnt-common-net-onprem-sim-router-usc1",
+          "shared_secret": "REDACTADO",
+          "target_vpn_gateway": null,
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null,
+          "vpn_gateway_interface": 0
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "local_traffic_selector": [],
+          "remote_traffic_selector": [],
+          "shared_secret": true,
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "detailed_status": true,
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "local_traffic_selector": true,
+          "peer_gcp_gateway": true,
+          "peer_ip": true,
+          "remote_traffic_selector": true,
+          "self_link": true,
+          "shared_secret_hash": true,
+          "terraform_labels": {},
+          "tunnel_id": true,
+          "vpn_gateway": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "if0",
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_sim",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_vpn_tunnel"
+    },
+    {
+      "address": "module.vpn_onprem_sim.google_compute_vpn_tunnel.this[\"if1\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "description": null,
+          "effective_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "ike_version": 2,
+          "labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "name": "bnt-common-net-vpn-onprem-sim-usc1-if1",
+          "peer_external_gateway": null,
+          "peer_external_gateway_interface": null,
+          "project": "example-net-hub",
+          "region": "us-central1",
+          "router": "projects/example-net-hub/regions/us-central1/routers/bnt-common-net-onprem-sim-router-usc1",
+          "shared_secret": "REDACTADO",
+          "target_vpn_gateway": null,
+          "terraform_labels": {
+            "app": "network",
+            "cost_center": "example-cc",
+            "env": "common",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "example-team"
+          },
+          "timeouts": null,
+          "vpn_gateway_interface": 1
+        },
+        "after_sensitive": {
+          "effective_labels": {},
+          "labels": {},
+          "local_traffic_selector": [],
+          "remote_traffic_selector": [],
+          "shared_secret": true,
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "creation_timestamp": true,
+          "detailed_status": true,
+          "effective_labels": {},
+          "id": true,
+          "label_fingerprint": true,
+          "labels": {},
+          "local_traffic_selector": true,
+          "peer_gcp_gateway": true,
+          "peer_ip": true,
+          "remote_traffic_selector": true,
+          "self_link": true,
+          "shared_secret_hash": true,
+          "terraform_labels": {},
+          "tunnel_id": true,
+          "vpn_gateway": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "if1",
+      "mode": "managed",
+      "module_address": "module.vpn_onprem_sim",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_vpn_tunnel"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

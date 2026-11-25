@@ -1,0 +1,26 @@
+{
+  "version": 4,
+  "terraform_version": "1.16.5",
+  "serial": 2,
+  "lineage": "00000000-0000-4000-8000-000000000001",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "managed", "type": "google_kms_key_ring", "name": "env", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [{"index_key": "dev", "schema_version": 0, "attributes": {"id": "projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1", "name": "bnt-dev-kr-usc1", "project": "example-landing-zone", "location": "us-central1"}}]
+    },
+    {
+      "mode": "managed", "type": "google_kms_crypto_key", "name": "env", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [{"index_key": "dev/sql", "schema_version": 1, "attributes": {"id": "projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1/cryptoKeys/bnt-dev-sql-usc1", "name": "bnt-dev-sql-usc1", "key_ring": "projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1"}}]
+    },
+    {
+      "mode": "managed", "type": "google_secret_manager_secret", "name": "env", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [{"index_key": "dev/app-api-token", "schema_version": 0, "attributes": {"id": "projects/example-landing-zone/secrets/bnt-dev-app-api-token", "secret_id": "bnt-dev-app-api-token", "project": "example-landing-zone", "name": "projects/111111111111/secrets/bnt-dev-app-api-token"}}]
+    },
+    {
+      "mode": "managed", "type": "google_artifact_registry_repository", "name": "env", "provider": "provider[\"registry.terraform.io/hashicorp/google\"]",
+      "instances": [{"index_key": "dev/app", "schema_version": 0, "attributes": {"id": "projects/example-landing-zone/locations/us/repositories/bnt-dev-app", "repository_id": "bnt-dev-app", "project": "example-landing-zone", "location": "us"}}]
+    }
+  ],
+  "check_results": null
+}

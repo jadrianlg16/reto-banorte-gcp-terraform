@@ -1,0 +1,11 @@
+# Solo para la PRIMERA ejecución de la etapa 0, antes de que exista el bucket de estado.
+#
+#   cp backend_override.tf.example backend_override.tf
+#
+# Terraform carga los archivos *_override.tf después del resto y este bloque reemplaza al
+# backend "gcs" de backend.tf: el estado queda en terraform.tfstate, en este directorio.
+# backend_override.tf y terraform.tfstate* están en el .gitignore de esta raíz. Después del
+# primer apply se borra backend_override.tf y se migra el estado al bucket (ver README).
+terraform {
+  backend "local" {}
+}

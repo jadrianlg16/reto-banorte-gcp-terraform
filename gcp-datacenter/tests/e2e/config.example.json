@@ -1,0 +1,96 @@
+{
+  "common": {
+    "project_id": "example-project",
+    "prefix": "bnt",
+    "primary_region": "us-central1",
+    "dr_region": "us-east4",
+    "labels": {
+      "owner": "plataforma",
+      "cost_center": "ti-001"
+    }
+  },
+  "stages": {
+    "0-bootstrap": {
+      "billing_account": "000000-000000-000000",
+      "budget_amount": 1000,
+      "github_repository": "example-org/example-repo",
+      "github_repository_id": "000000000",
+      "github_repository_owner_id": "000000000",
+      "labels": { "app": "landing-zone" }
+    },
+    "1-base": {
+      "environments": ["dev", "qa", "prod"],
+      "applications": ["app"],
+      "secret_names": { "dev": ["app-api-token"], "qa": ["app-api-token"], "prod": ["app-api-token"] },
+      "binary_authorization_allowlist_patterns": ["us-docker.pkg.dev/cloudrun/container/hello*"],
+      "security_alert_email": "seguridad@example.com",
+      "essential_contacts": {
+        "admin@example.com": ["LEGAL", "SUSPENSION", "TECHNICAL"],
+        "seguridad@example.com": ["SECURITY", "TECHNICAL"]
+      },
+      "log_retention_days": 365,
+      "log_retention_locked": false,
+      "labels": { "app": "landing-zone" }
+    },
+    "2-networks": {
+      "hub_supernet": "10.0.0.0/16",
+      "hub_cidrs": { "hub": "10.0.0.0/24", "hub_dr": "10.0.1.0/24" },
+      "spoke_supernets": { "dev": "10.10.0.0/16", "qa": "10.20.0.0/16", "prod": "10.30.0.0/16" },
+      "onprem_cidrs": ["192.168.0.0/16"],
+      "vpn_bgp_ranges": ["169.254.0.0/30", "169.254.0.4/30"],
+      "hub_asn": 64514,
+      "onprem_asn": 65001,
+      "simulate_onprem": true,
+      "enable_vpn_dr": true,
+      "vpn_dr_bgp_ranges": ["169.254.0.8/30", "169.254.0.12/30"],
+      "onprem_sim_cidr": "192.168.0.0/24",
+      "onprem_dns_domain": "corp.example.com.",
+      "onprem_dns_servers": ["192.168.0.10"],
+      "enable_interconnect": false,
+      "labels": { "app": "network" }
+    },
+    "2-networks/envs/dev": {
+      "environment": "dev",
+      "enable_dr": false,
+      "spoke_supernet": "10.10.0.0/16",
+      "subnet_cidrs": {
+        "app": "10.10.0.0/20",
+        "app_dr": "10.10.16.0/20",
+        "proxy": "10.10.32.0/23",
+        "proxy_dr": "10.10.34.0/23",
+        "run": "10.10.36.0/24",
+        "run_dr": "10.10.37.0/24",
+        "gke_master": "10.10.38.0/28",
+        "gke_master_dr": "10.10.38.16/28",
+        "pods": "10.10.64.0/18",
+        "services": "10.10.128.0/20",
+        "services_dr": "10.10.160.0/20",
+        "psa": "10.10.176.0/20",
+        "pods_dr": "10.10.192.0/18"
+      },
+      "onprem_cidrs": ["192.168.0.0/16"],
+      "onprem_dns_domain": "corp.example.com.",
+      "labels": { "app": "network" }
+    },
+    "3-workloads/envs/dev": {
+      "environment": "dev",
+      "application": "app",
+      "enable_dr": false,
+      "dr_active": false,
+      "enable_gke": false,
+      "enable_mig": false,
+      "enable_cloud_run": true,
+      "enable_filestore": false,
+      "enable_memorystore": false,
+      "enable_internal_lb": false,
+      "enable_backup": true,
+      "cloud_run_image": "us-docker.pkg.dev/cloudrun/container/hello:latest",
+      "sql_tier": "db-custom-1-3840",
+      "sql_database_version": "POSTGRES_16",
+      "sql_databases": ["app"],
+      "domain_names": ["app.dev.example.com"],
+      "notification_emails": ["alertas-dev@example.com"],
+      "labels": { "app": "app" }
+    }
+  }
+}

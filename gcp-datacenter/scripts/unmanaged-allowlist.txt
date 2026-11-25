@@ -1,0 +1,44 @@
+# Recursos que Cloud Asset Inventory lista en el proyecto de la landing zone (ADR 0029) y que no
+# crea una persona: los crea Google al habilitar una API o un servicio administrado a partir de
+# un recurso de Terraform. scripts/unmanaged-resources.py no los reporta. El proyecto mismo
+# tampoco se reporta (lo crea una persona, ADR 0029 §1), pero eso lo decide el script, no esta
+# lista.
+#
+# Formato: una expresión regular (sintaxis de Python) por línea, seguida de " # " y el motivo.
+# Se evalúa con search sobre "<assetType> <nombre normalizado> <displayName>"; el nombre
+# normalizado no lleva //servicio.googleapis.com/ y usa el número del proyecto.
+#
+# VERIFICAR-EN-APPLY: cada regla se escribió con la documentación de Google, no con el proyecto
+# real. En la primera corrida, revisar lo que queda permitido y lo que sale como no
+# administrado, y ajustar aquí (nunca agregar una regla que cubra un tipo completo sin motivo).
+# La red `default` no se permite: se borra a mano antes de 0-bootstrap (runbook 01) y, si sigue
+# ahí, se reporta.
+
+# APIs habilitadas: solo las que Google habilita como dependencia de una API que el código sí
+# declara, o que vienen habilitadas en todo proyecto, y que 0-bootstrap no declara (las que
+# declara salen como administradas por nombre). Cualquier otra API habilitada a mano se reporta.
+# HIPÓTESIS (documentación de Google, sin el proyecto real): container → autoscaling,
+# containerfilesystem, containerregistry, networkconnectivity, bigquerystorage y
+# bigquerymigration; storage → storage-api y storage-component; sqladmin → sql-component;
+# servicemanagement, serviceusage y cloudapis están en todo proyecto. Si otra API aparece como
+# dependencia, se declara en 0-bootstrap o se agrega aquí con motivo.
+^serviceusage\.googleapis\.com/Service projects/[0-9]+/services/(autoscaling|containerfilesystem|containerregistry|networkconnectivity|bigquerystorage|bigquerymigration|storage-api|storage-component|sql-component|servicemanagement|serviceusage|cloudapis)\.googleapis\.com( |$)  # APIs que Google habilita como dependencia o en todo proyecto (lista cerrada, ver arriba)
+^logging\.googleapis\.com/LogBucket .*/buckets/_(Default|Required)( |$)  # buckets de registros que crea Cloud Logging en cada proyecto
+^logging\.googleapis\.com/LogSink .*/sinks/_(Default|Required)( |$)  # sinks que crea Cloud Logging en cada proyecto
+^iam\.googleapis\.com/ServiceAccount .* (Compute Engine default service account|App Engine default service account)$  # cuentas por defecto que crea Google al habilitar la API
+^compute\.googleapis\.com/Route .*/routes/default-route-[0-9a-f]+( |$)  # rutas por defecto de cada VPC y subred
+^compute\.googleapis\.com/Route .*/routes/peering-route-[0-9a-f]+( |$)  # rutas que importa un peering de VPC
+^compute\.googleapis\.com/(Instance|Disk|InstanceGroup|InstanceGroupManager|InstanceTemplate) .*/gke-[a-z0-9-]+( |$)  # nodos, discos, grupos y plantillas que crea GKE para los node pools
+^compute\.googleapis\.com/Firewall .*/firewalls/(gke|k8s)-[a-z0-9-]+( |$)  # reglas de firewall que crea GKE para el clúster y sus Services
+^compute\.googleapis\.com/(ForwardingRule|BackendService|HealthCheck|TargetPool|NetworkEndpointGroup|UrlMap|TargetHttpProxy|TargetHttpsProxy) .*/(k8s[0-9]?-[a-z0-9-]+|a[0-9a-f]{31})( |$)  # balanceadores y NEG que crea GKE para Services e Ingress
+^container\.googleapis\.com/NodePool .*/nodePools/default-pool( |$)  # pool por defecto que GKE crea y Terraform elimina (remove_default_node_pool) mientras el índice se actualiza
+^cloudbilling\.googleapis\.com/ProjectBillingInfo  # facturación del proyecto: atributo de google_project, no un recurso aparte
+
+# Imágenes de contenedor: las publica CI o una persona a propósito (runbook 02), no Terraform.
+# Dentro de un repositorio que administra 1-base ya salen como hijas del repositorio (regla 2 del
+# script); esta regla cubre el caso de que Cloud Asset las nombre de otra forma que el id del
+# repositorio en el estado (HIPÓTESIS: formato de nombre de DockerImage sin comprobar en el
+# proyecto real). Solo cubre la imagen, nunca el repositorio: un repositorio creado a mano (por
+# ejemplo cloud-run-source-deploy, que crea `gcloud run deploy --source`) sigue saliendo como no
+# administrado.
+^artifactregistry\.googleapis\.com/DockerImage projects/[0-9]+/locations/[a-z0-9-]+/repositories/[a-z0-9-]+/dockerImages/[^ /]+( |$)  # imágenes publicadas por CI o por una persona (runbook 02); el repositorio no se permite

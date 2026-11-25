@@ -1,0 +1,11 @@
+[
+  {"name": "//cloudresourcemanager.googleapis.com/projects/111111111111", "assetType": "cloudresourcemanager.googleapis.com/Project", "project": "projects/111111111111", "displayName": "example-landing-zone", "state": "ACTIVE"},
+  {"name": "//storage.googleapis.com/bnt-qa-data-app-usc1", "assetType": "storage.googleapis.com/Bucket", "project": "projects/111111111111", "displayName": "bnt-qa-data-app-usc1", "labels": {"env": "qa"}},
+  {"name": "//cloudkms.googleapis.com/projects/example-landing-zone/locations/us-central1/keyRings/bnt-dev-kr-usc1", "assetType": "cloudkms.googleapis.com/KeyRing", "project": "projects/111111111111", "displayName": "bnt-dev-kr-usc1"},
+  {"name": "//compute.googleapis.com/projects/example-landing-zone/global/networks/bnt-dev-net-spoke", "assetType": "compute.googleapis.com/Network", "project": "projects/111111111111", "displayName": "bnt-dev-net-spoke"},
+  {"name": "//storage.googleapis.com/bnt-dev-data-app-usc1", "assetType": "storage.googleapis.com/Bucket", "project": "projects/111111111111", "displayName": "bnt-dev-data-app-usc1", "labels": {"env": "dev"}},
+  {"name": "//iam.googleapis.com/projects/example-landing-zone/serviceAccounts/100000000000000000002", "assetType": "iam.googleapis.com/ServiceAccount", "project": "projects/111111111111", "displayName": "Cloud Run de app", "additionalAttributes": {"email": "bnt-dev-app-run@example-landing-zone.iam.gserviceaccount.com"}},
+  {"name": "//run.googleapis.com/projects/example-landing-zone/locations/us-central1/services/api", "assetType": "run.googleapis.com/Service", "project": "projects/111111111111", "displayName": "api", "labels": {"env": "dev"}},
+  {"name": "//compute.googleapis.com/projects/example-landing-zone/zones/us-central1-a/instances/bnt-dev-app-mig-zz99", "assetType": "compute.googleapis.com/Instance", "project": "projects/111111111111", "displayName": "bnt-dev-app-mig-zz99", "labels": {"env": "dev"}, "state": "RUNNING"},
+  {"name": "//compute.googleapis.com/projects/example-landing-zone/global/firewallPolicies/bnt-dev-net-fw", "assetType": "compute.googleapis.com/FirewallPolicy", "project": "projects/111111111111", "displayName": "bnt-dev-net-fw"}
+]

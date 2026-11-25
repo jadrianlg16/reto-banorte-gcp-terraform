@@ -1,0 +1,24 @@
+{
+  "name": "projects/example-dev-host/locations/global/connectivityTests/e2e-x-dev-prod",
+  "protocol": "TCP",
+  "reachabilityDetails": {
+    "result": "UNREACHABLE",
+    "verifyTime": "2026-11-21T10:00:00Z",
+    "traces": [
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host"},
+          {"state": "APPLY_ROUTE", "projectId": "example-net-hub", "route": {"routeType": "DYNAMIC", "nextHopType": "NEXT_HOP_VPN_TUNNEL"}},
+          {"state": "ARRIVE_AT_VPN_TUNNEL", "projectId": "example-net-hub", "vpnTunnel": {"displayName": "bnt-hub-vpn-onprem-0"}},
+          {"state": "DROP", "causesDrop": true, "drop": {"cause": "FIREWALL_RULE"}}
+        ]
+      },
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host"},
+          {"state": "ABORT", "abort": {"cause": "NO_SOURCE_LOCATION"}}
+        ]
+      }
+    ]
+  }
+}

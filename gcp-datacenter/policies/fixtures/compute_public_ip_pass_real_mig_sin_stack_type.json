@@ -1,0 +1,413 @@
+{
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "mig": {
+          "module": {
+            "resources": [
+              {
+                "address": "google_compute_region_instance_template.this",
+                "expressions": {
+                  "can_ip_forward": {
+                    "constant_value": false
+                  },
+                  "description": {
+                    "references": [
+                      "var.environment",
+                      "var.name"
+                    ]
+                  },
+                  "disk": [
+                    {
+                      "auto_delete": {
+                        "constant_value": true
+                      },
+                      "boot": {
+                        "constant_value": true
+                      },
+                      "disk_encryption_key": [
+                        {
+                          "kms_key_self_link": {
+                            "references": [
+                              "var.kms_key"
+                            ]
+                          }
+                        }
+                      ],
+                      "disk_size_gb": {
+                        "references": [
+                          "var.disk_size_gb"
+                        ]
+                      },
+                      "disk_type": {
+                        "references": [
+                          "var.disk_type"
+                        ]
+                      },
+                      "labels": {
+                        "references": [
+                          "var.labels"
+                        ]
+                      },
+                      "source_image": {
+                        "references": [
+                          "var.image"
+                        ]
+                      }
+                    }
+                  ],
+                  "labels": {
+                    "references": [
+                      "var.labels"
+                    ]
+                  },
+                  "machine_type": {
+                    "references": [
+                      "var.machine_type"
+                    ]
+                  },
+                  "metadata": {
+                    "references": [
+                      "local.metadata"
+                    ]
+                  },
+                  "name_prefix": {
+                    "references": [
+                      "local.base_name"
+                    ]
+                  },
+                  "network_interface": [
+                    {
+                      "subnetwork": {
+                        "references": [
+                          "var.subnet"
+                        ]
+                      }
+                    }
+                  ],
+                  "project": {
+                    "references": [
+                      "var.project_id"
+                    ]
+                  },
+                  "region": {
+                    "references": [
+                      "var.region"
+                    ]
+                  },
+                  "resource_manager_tags": {
+                    "references": [
+                      "var.resource_manager_tags"
+                    ]
+                  },
+                  "scheduling": [
+                    {
+                      "automatic_restart": {
+                        "constant_value": true
+                      },
+                      "on_host_maintenance": {
+                        "constant_value": "MIGRATE"
+                      },
+                      "preemptible": {
+                        "constant_value": false
+                      }
+                    }
+                  ],
+                  "service_account": [
+                    {
+                      "email": {
+                        "references": [
+                          "var.service_account"
+                        ]
+                      },
+                      "scopes": {
+                        "constant_value": [
+                          "https://www.googleapis.com/auth/cloud-platform"
+                        ]
+                      }
+                    }
+                  ],
+                  "shielded_instance_config": [
+                    {
+                      "enable_integrity_monitoring": {
+                        "constant_value": true
+                      },
+                      "enable_secure_boot": {
+                        "constant_value": true
+                      },
+                      "enable_vtpm": {
+                        "constant_value": true
+                      }
+                    }
+                  ],
+                  "tags": {
+                    "references": [
+                      "var.network_tags"
+                    ]
+                  }
+                },
+                "mode": "managed",
+                "name": "this",
+                "provider_config_key": "google",
+                "schema_version": 1,
+                "type": "google_compute_region_instance_template"
+              }
+            ]
+          },
+          "source": "../.."
+        }
+      }
+    }
+  },
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "module.mig.google_compute_region_instance_template.this",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "advanced_machine_features": [],
+          "can_ip_forward": false,
+          "description": "Plantilla prod de mig (administrada por Terraform).",
+          "disk": [
+            {
+              "auto_delete": true,
+              "boot": true,
+              "disk_encryption_key": [
+                {
+                  "kms_key_self_link": "projects/example-common-security/locations/us-central1/keyRings/bnt-prod-sec-kr-usc1/cryptoKeys/compute",
+                  "kms_key_service_account": null
+                }
+              ],
+              "disk_name": null,
+              "disk_size_gb": 50,
+              "disk_type": "pd-balanced",
+              "guest_os_features": null,
+              "labels": {
+                "app": "app",
+                "cost_center": "ti-001",
+                "env": "prod",
+                "managed_by": "terraform",
+                "owner": "plataforma"
+              },
+              "resource_manager_tags": null,
+              "resource_policies": null,
+              "source": null,
+              "source_image": "projects/example-images/global/images/family/example-hardened-linux",
+              "source_image_encryption_key": [],
+              "source_snapshot": null,
+              "source_snapshot_encryption_key": []
+            }
+          ],
+          "effective_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "guest_accelerator": [],
+          "instance_description": null,
+          "key_revocation_action_type": null,
+          "labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "prod",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "machine_type": "e2-standard-2",
+          "metadata": {
+            "block-project-ssh-keys": "TRUE",
+            "enable-oslogin": "TRUE",
+            "serial-port-enable": "FALSE"
+          },
+          "metadata_startup_script": null,
+          "min_cpu_platform": null,
+          "name_prefix": "bnt-prod-app-mig-usc1-",
+          "network_interface": [
+            {
+              "access_config": [],
+              "alias_ip_range": [],
+              "network_ip": null,
+              "nic_type": null,
+              "queue_count": null,
+              "subnetwork": "projects/example-prod-net-spoke/regions/us-central1/subnetworks/bnt-prod-net-app-usc1"
+            }
+          ],
+          "network_performance_config": [],
+          "project": "example-prod-app",
+          "region": "us-central1",
+          "reservation_affinity": [],
+          "resource_manager_tags": null,
+          "resource_policies": null,
+          "scheduling": [
+            {
+              "automatic_restart": true,
+              "availability_domain": null,
+              "instance_termination_action": null,
+              "local_ssd_recovery_timeout": [],
+              "max_run_duration": [],
+              "min_node_cpus": null,
+              "node_affinities": [],
+              "on_host_maintenance": "MIGRATE",
+              "on_instance_stop_action": [],
+              "preemptible": false,
+              "termination_time": null
+            }
+          ],
+          "service_account": [
+            {
+              "email": "bnt-prod-app-mig@example-prod-app.iam.gserviceaccount.com",
+              "scopes": [
+                "https://www.googleapis.com/auth/cloud-platform"
+              ]
+            }
+          ],
+          "shielded_instance_config": [
+            {
+              "enable_integrity_monitoring": true,
+              "enable_secure_boot": true,
+              "enable_vtpm": true
+            }
+          ],
+          "tags": null,
+          "terraform_labels": {
+            "app": "app",
+            "cost_center": "ti-001",
+            "env": "prod",
+            "goog-terraform-provisioned": "true",
+            "managed_by": "terraform",
+            "owner": "plataforma"
+          },
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "advanced_machine_features": [],
+          "confidential_instance_config": [],
+          "disk": [
+            {
+              "disk_encryption_key": [
+                {}
+              ],
+              "labels": {},
+              "source_image_encryption_key": [],
+              "source_snapshot_encryption_key": []
+            }
+          ],
+          "effective_labels": {},
+          "guest_accelerator": [],
+          "labels": {},
+          "metadata": {},
+          "network_interface": [
+            {
+              "access_config": [],
+              "alias_ip_range": [],
+              "ipv6_access_config": []
+            }
+          ],
+          "network_performance_config": [],
+          "reservation_affinity": [],
+          "scheduling": [
+            {
+              "local_ssd_recovery_timeout": [],
+              "max_run_duration": [],
+              "node_affinities": [],
+              "on_instance_stop_action": []
+            }
+          ],
+          "service_account": [
+            {
+              "scopes": [
+                false
+              ]
+            }
+          ],
+          "shielded_instance_config": [
+            {}
+          ],
+          "terraform_labels": {}
+        },
+        "after_unknown": {
+          "advanced_machine_features": [],
+          "confidential_instance_config": true,
+          "creation_timestamp": true,
+          "disk": [
+            {
+              "architecture": true,
+              "device_name": true,
+              "disk_encryption_key": [
+                {}
+              ],
+              "interface": true,
+              "labels": {},
+              "mode": true,
+              "provisioned_iops": true,
+              "provisioned_throughput": true,
+              "source_image_encryption_key": [],
+              "source_snapshot_encryption_key": [],
+              "type": true
+            }
+          ],
+          "effective_labels": {},
+          "guest_accelerator": [],
+          "id": true,
+          "labels": {},
+          "metadata": {},
+          "metadata_fingerprint": true,
+          "name": true,
+          "network_interface": [
+            {
+              "access_config": [],
+              "alias_ip_range": [],
+              "internal_ipv6_prefix_length": true,
+              "ipv6_access_config": true,
+              "ipv6_access_type": true,
+              "ipv6_address": true,
+              "name": true,
+              "network": true,
+              "stack_type": true,
+              "subnetwork_project": true
+            }
+          ],
+          "network_performance_config": [],
+          "numeric_id": true,
+          "reservation_affinity": [],
+          "scheduling": [
+            {
+              "local_ssd_recovery_timeout": [],
+              "max_run_duration": [],
+              "node_affinities": [],
+              "on_instance_stop_action": [],
+              "provisioning_model": true
+            }
+          ],
+          "self_link": true,
+          "service_account": [
+            {
+              "scopes": [
+                false
+              ]
+            }
+          ],
+          "shielded_instance_config": [
+            {}
+          ],
+          "tags_fingerprint": true,
+          "terraform_labels": {}
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "mode": "managed",
+      "module_address": "module.mig",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "type": "google_compute_region_instance_template"
+    }
+  ],
+  "terraform_version": "1.16.5"
+}

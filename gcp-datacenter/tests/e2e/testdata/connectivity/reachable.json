@@ -1,0 +1,18 @@
+{
+  "name": "projects/example-dev-host/locations/global/connectivityTests/e2e-x-dev-sql",
+  "protocol": "TCP",
+  "reachabilityDetails": {
+    "result": "REACHABLE",
+    "verifyTime": "2026-11-21T10:00:00Z",
+    "traces": [
+      {
+        "steps": [
+          {"state": "START_FROM_PRIVATE_NETWORK", "projectId": "example-dev-host", "network": {"displayName": "bnt-dev-vpc", "uri": "projects/example-dev-host/global/networks/bnt-dev-vpc"}},
+          {"state": "APPLY_EGRESS_FIREWALL_RULE", "projectId": "example-dev-host", "firewall": {"displayName": "default-egress-allow", "direction": "EGRESS", "action": "ALLOW"}},
+          {"state": "APPLY_ROUTE", "projectId": "example-dev-host", "route": {"routeType": "PEERING_SUBNET", "nextHopType": "NEXT_HOP_PEERING", "destIpRange": "10.10.176.0/20"}},
+          {"state": "DELIVER", "deliver": {"target": "CLOUD_SQL_INSTANCE", "resourceUri": "projects/example-dev-data/instances/bnt-dev-data-sql"}}
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,333 @@
+# Despliegue de las etapas 1 → 3 al integrar en main (CONTRATO §9.3, ADR 0029 §2). Ver
+# docs/pipeline.md.
+#
+# Orden (ADR 0029 §2; cada flecha espera a que el trabajo anterior termine con éxito):
+#   común:  1-base → 2-networks (hub)                                  entorno `common`
+#   dev:    2-networks/envs/dev → 3-workloads/envs/dev → prueba de humo   entorno `dev`
+#   qa:     2-networks/envs/qa → 3-workloads/envs/qa, después de la prueba de humo de dev
+#   prod:   2-networks/envs/prod → 3-workloads/envs/prod, después de qa  entorno `prod`
+#
+# Entornos apagados: variable de repositorio GCP_DISABLED_ENVS, opcional. Nombres separados por
+# comas, por ejemplo "dev,qa" (vacía o sin definir: ninguno). Las raíces de esos entornos no se
+# planean ni se aplican, y drift.yml tampoco las planea. Sirve para dejar apagado un entorno
+# destruido con destroy.yml, sin que el siguiente push a main lo vuelva a crear. Solo dev y qa:
+# con prod (o cualquier otro nombre) el trabajo gate falla con un mensaje y no se aplica nada.
+# Lo valida y lo traduce scripts/disabled-envs.py (salidas dev y qa de gate: "true" si el
+# entorno se despliega). Con un entorno apagado, el siguiente sigue sin esperarlo:
+#   - dev apagado: qa empieza después del hub (no hay prueba de humo de dev que esperar).
+#   - qa apagado: prod empieza después de la prueba de humo de dev.
+#   - dev y qa apagados: prod empieza después del hub.
+# Un trabajo omitido solo cuenta como "listo" si su entorno está apagado: si dev está encendido y
+# su prueba de humo falla o se omite porque falló una raíz de dev, qa y prod no corren.
+#
+# Cada raíz llama a _terraform-root.yml: un trabajo `plan` sin entorno, con la cuenta de lectura
+# (GCP_AUDIT_SERVICE_ACCOUNT) y sin candado (plan, Conftest y resumen del plan), y un trabajo
+# `apply` en el entorno, con la cuenta de la raíz, solo si el plan tiene cambios. Las reglas de
+# protección del entorno (revisores) se cumplen antes del apply, con el resumen del plan ya
+# visible en la ejecución; el apply aplica exactamente el plan revisado (huella, ADR 0025). Sin
+# cambios no hay apply ni pedido de aprobación.
+#
+# Llaves de GCP_STAGE_SERVICE_ACCOUNTS (salida stage_service_accounts de 0-bootstrap): 1-base,
+# 2-networks, 2-networks/<env> y 3-workloads/<env>. Cada cuenta que escribe solo acepta tokens
+# de main, del trabajo de _terraform-root.yml en main (job_workflow_ref exacto), de un evento
+# push o workflow_dispatch y de su entorno de GitHub (`common` para tf-base y tf-net):
+# attribute.deploy de stages/0-bootstrap/wif.tf (ADR 0029 §3).
+#
+# Los spokes (2-networks/envs/<env>) quedan en serie por el encadenado entre entornos, también
+# con entornos apagados (cada spoke sigue dependiendo del trabajo del entorno anterior, aunque se
+# omita): GCP no admite dos operaciones de peering a la vez sobre la VPC hub.
+#
+# 0-bootstrap no está aquí: la aplica una persona, una sola vez y a mano (ADR 0029 §2).
+#
+# Entornos `common` y `prod`: el equipo debe configurar en GitHub (Settings → Environments) la
+# regla "Required reviewers". Eso no se puede declarar en YAML; sin esa regla se aplicarían sin
+# aprobación (ver docs/pipeline.md §4 sobre el plan de GitHub).
+#
+# Sin GCP: mientras la variable de repositorio GCP_ENABLED no sea "true", todos los trabajos
+# de Terraform se omiten y el flujo termina en verde. Una ejecución manual desde otra rama
+# tampoco aplica nada: los trabajos exigen github.ref == refs/heads/main y, además, WIF no entrega
+# las cuentas que escriben fuera de main (attribute.deploy, ver docs/pipeline.md). Autenticación
+# solo por Workload Identity
+# Federation; no hay llaves en ningún lado.
+
+name: apply
+
+on:
+  push:
+    branches: [main]
+    # Las mismas rutas que scripts/check-main-tip.sh considera "del despliegue": un commit que
+    # deja vieja a una ejecución en curso siempre trae otra que la retoma (docs/pipeline.md
+    # §1.2, "Ejecuciones viejas"). Sin la documentación: gcp-datacenter/docs/ y los .md de
+    # gcp-datacenter/ (README de módulos y etapas que regenera terraform-docs); ningún .tf los
+    # lee. Las exclusiones van con "!" al final de la lista (GitHub no admite paths y
+    # paths-ignore juntos en el mismo evento; el último patrón que coincide decide).
+    paths:
+      - "gcp-datacenter/**"
+      - ".github/workflows/**"
+      - "!gcp-datacenter/docs/**"
+      - "!gcp-datacenter/**.md"
+  workflow_dispatch:
+    inputs:
+      omitir_prueba_de_humo:
+        description: "Omitir la prueba de humo de dev (queda registrado en el resumen). Solo para una emergencia."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Un solo apply a la vez en todo el repositorio. No se cancela uno en curso: el siguiente
+# queda en espera (GitHub conserva solo el más reciente en espera). Una ejecución que espera
+# una aprobación también retiene el grupo: los push siguientes quedan en espera detrás de ella
+# y solo el último sobrevive. Por eso conviene aprobar o rechazar pronto; el trabajo apply
+# vuelve a planear y rechaza el plan si cambió desde la revisión. destroy.yml usa el mismo grupo.
+concurrency:
+  group: apply-gcp-datacenter
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: GCP habilitado
+    runs-on: ubuntu-latest
+    outputs:
+      dev: ${{ steps.envs.outputs.dev }}
+      qa: ${{ steps.envs.outputs.qa }}
+    steps:
+      - name: Estado de GCP_ENABLED y de la rama
+        env:
+          GCP_ENABLED: ${{ vars.GCP_ENABLED }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "${GCP_ENABLED}" != "true" ]; then
+            echo "::notice::GCP_ENABLED no es \"true\": no se aplica nada en GCP."
+          elif [ "${REF}" != "refs/heads/main" ]; then
+            echo "::warning::apply solo corre desde main (ref actual: ${REF}): no se aplica nada."
+          else
+            echo "GCP_ENABLED=true en main: se aplican las etapas 1 a 3."
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Se valida siempre, también sin GCP: un valor inválido falla ahora y no en el primer apply.
+      - id: envs
+        name: Entornos apagados (GCP_DISABLED_ENVS)
+        working-directory: gcp-datacenter
+        env:
+          GCP_DISABLED_ENVS: ${{ vars.GCP_DISABLED_ENVS }}
+        run: python3 scripts/disabled-envs.py outputs "${GITHUB_OUTPUT}"
+
+  # --- Raíces comunes (entorno protegido `common`, con revisores) ------------------------
+
+  base:
+    name: 1-base
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: gate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/1-base
+      stage: 1-base
+      environment: common
+
+  networks-hub:
+    name: 2-networks (hub)
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: base
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/2-networks
+      stage: 2-networks
+      environment: common
+
+  # --- dev (entorno `dev`, sin revisores; se omite si GCP_DISABLED_ENVS lo trae) ---------
+
+  dev-networks:
+    name: dev / 2-networks
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.dev == 'true'
+    needs: [gate, networks-hub]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/2-networks/envs/dev
+      stage: 2-networks/dev
+      environment: dev
+
+  dev-workloads:
+    name: dev / 3-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.dev == 'true'
+    needs: [gate, dev-networks]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-workloads/envs/dev
+      stage: 3-workloads/dev
+      environment: dev
+
+  # Prueba de humo de dev: qa no empieza si falla. Lee las salidas del hub y de las raíces de
+  # dev ya aplicadas y corre las Connectivity Tests de dev en el proyecto (tests/e2e,
+  # TestDevSmoke). No aplica nada. Cuenta de lectura (GCP_AUDIT_SERVICE_ACCOUNT, tf-read, con
+  # roles/networkmanagement.admin para las Connectivity Tests, ADR 0029 §3).
+  # Solo se omite a pedido, en una ejecución manual con omitir_prueba_de_humo = true.
+  dev-smoke:
+    name: dev / prueba de humo
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.dev == 'true'
+    needs: [gate, dev-workloads]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SKIP_SMOKE: ${{ inputs.omitir_prueba_de_humo == true }}
+      TERRAFORM_VERSION: "1.16.5"
+      TF_IN_AUTOMATION: "1"
+    defaults:
+      run:
+        shell: bash
+        working-directory: gcp-datacenter
+    steps:
+      - name: Omisión pedida
+        if: env.SKIP_SMOKE == 'true'
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          echo "::warning::Prueba de humo de dev OMITIDA a pedido de ${ACTOR} (omitir_prueba_de_humo = true)."
+          {
+            echo "### Prueba de humo de dev: OMITIDA"
+            echo
+            echo "La pidió omitir \`${ACTOR}\` en una ejecución manual. qa sigue sin la prueba."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.SKIP_SMOKE != 'true'
+
+      - name: Comprobar variables
+        if: env.SKIP_SMOKE != 'true'
+        env:
+          GCP_AUDIT_SERVICE_ACCOUNT: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+          GCP_STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+        run: |
+          missing=""
+          for v in GCP_AUDIT_SERVICE_ACCOUNT GCP_STATE_BUCKET; do
+            if [ -z "${!v:-}" ]; then
+              missing="${missing} ${v}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::Faltan variables de repositorio:${missing}. La prueba de humo no se omite sola: configúrelas (docs/pipeline.md §2) o corra el flujo a mano con omitir_prueba_de_humo."
+            exit 1
+          fi
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: env.SKIP_SMOKE != 'true'
+        with:
+          go-version-file: gcp-datacenter/tests/go.mod
+          cache-dependency-path: gcp-datacenter/tests/go.sum
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        if: env.SKIP_SMOKE != 'true'
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Autenticar con Workload Identity Federation (cuenta de lectura)
+        if: env.SKIP_SMOKE != 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_AUDIT_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        if: env.SKIP_SMOKE != 'true'
+
+      - name: go test -run TestDevSmoke
+        if: env.SKIP_SMOKE != 'true'
+        working-directory: gcp-datacenter/tests
+        env:
+          TEST_SMOKE: "true"
+          TEST_E2E_STATE_BUCKET: ${{ vars.GCP_STATE_BUCKET }}
+          TEST_E2E_RUN_ID: smoke-${{ github.run_id }}
+        run: |
+          set +e
+          go test -count=1 -json -timeout 25m -run '^TestDevSmoke$' ./e2e > "${RUNNER_TEMP}/smoke.json"
+          code=$?
+          set -e
+          # Máximo de omitidas 0: una prueba de humo omitida (variables faltantes) es una falla.
+          bash ../scripts/go-test-report.sh "${RUNNER_TEMP}/smoke.json" 0 "${GITHUB_STEP_SUMMARY}" || code=1
+          exit "${code}"
+
+  # --- qa (después de la prueba de humo de dev, o del hub si dev está apagado) -----------
+  # !cancelled() deja evaluar la condición aunque dev-smoke se haya omitido; las demás
+  # comprobaciones exigen el éxito de cada trabajo previo, salvo dev-smoke omitido con dev apagado.
+
+  qa-networks:
+    name: qa / 2-networks
+    if: >-
+      ${{ !cancelled() && vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+      && needs.gate.outputs.qa == 'true' && needs.networks-hub.result == 'success'
+      && (needs.dev-smoke.result == 'success' || (needs.dev-smoke.result == 'skipped' && needs.gate.outputs.dev != 'true')) }}
+    needs: [gate, networks-hub, dev-smoke]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/2-networks/envs/qa
+      stage: 2-networks/qa
+      environment: qa
+
+  qa-workloads:
+    name: qa / 3-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs.gate.outputs.qa == 'true'
+    needs: [gate, qa-networks]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-workloads/envs/qa
+      stage: 3-workloads/qa
+      environment: qa
+
+  # --- prod (después de qa; entorno protegido `prod`, con revisores) --------------------
+  # Nunca se apaga. Espera a qa y a la prueba de humo de dev; cada una cuenta como lista si
+  # terminó con éxito o si su entorno está apagado.
+
+  prod-networks:
+    name: prod / 2-networks
+    if: >-
+      ${{ !cancelled() && vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+      && needs.networks-hub.result == 'success'
+      && (needs.dev-smoke.result == 'success' || (needs.dev-smoke.result == 'skipped' && needs.gate.outputs.dev != 'true'))
+      && (needs.qa-workloads.result == 'success' || (needs.qa-workloads.result == 'skipped' && needs.gate.outputs.qa != 'true')) }}
+    needs: [gate, networks-hub, dev-smoke, qa-workloads]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/2-networks/envs/prod
+      stage: 2-networks/prod
+      environment: prod
+
+  prod-workloads:
+    name: prod / 3-workloads
+    if: vars.GCP_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: prod-networks
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_terraform-root.yml
+    with:
+      root: stages/3-workloads/envs/prod
+      stage: 3-workloads/prod
+      environment: prod

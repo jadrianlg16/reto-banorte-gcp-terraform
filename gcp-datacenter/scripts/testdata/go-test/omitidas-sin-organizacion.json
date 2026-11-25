@@ -1,0 +1,19 @@
+{"Time":"2026-11-24T13:12:53.5895293-06:00","Action":"start","Package":"gcp-datacenter/tests/integration"}
+{"Time":"2026-11-24T13:12:54.020491-06:00","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestGKE"}
+{"Time":"2026-11-24T13:12:54.020491-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Output":"=== RUN   TestGKE\n"}
+{"Time":"2026-11-24T13:12:54.020491-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Output":"    gke_test.go:18: se omite: TestGKE es lenta o cara; exporta TEST_ALLOW_EXPENSIVE=true para correrla (ver tests/README.md)\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Output":"--- SKIP: TestGKE (0.00s)\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"skip","Package":"gcp-datacenter/tests/integration","Test":"TestGKE","Elapsed":0}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestOrg"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestOrg","Output":"=== RUN   TestOrg\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestOrg","Output":"    org_test.go:39: se omite [sin-organizacion]: TestOrg solo vale con organización y TERRATEST_ORG_ID está vacío (ver tests/README.md)\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestOrg","Output":"--- SKIP: TestOrg (0.00s)\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"skip","Package":"gcp-datacenter/tests/integration","Test":"TestOrg","Elapsed":0}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"run","Package":"gcp-datacenter/tests/integration","Test":"TestVPCSC"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestVPCSC","Output":"=== RUN   TestVPCSC\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestVPCSC","Output":"    vpc_sc_test.go:18: se omite [sin-organizacion]: TestVPCSC solo vale con organización y TERRATEST_ORG_ID está vacío (ver tests/README.md)\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Test":"TestVPCSC","Output":"--- SKIP: TestVPCSC (0.00s)\n"}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"skip","Package":"gcp-datacenter/tests/integration","Test":"TestVPCSC","Elapsed":0}
+{"Time":"2026-11-24T13:12:54.0210059-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Output":"PASS\n"}
+{"Time":"2026-11-24T13:12:54.0251256-06:00","Action":"output","Package":"gcp-datacenter/tests/integration","Output":"ok  \tgcp-datacenter/tests/integration\t0.435s\n"}
+{"Time":"2026-11-24T13:12:54.0251256-06:00","Action":"pass","Package":"gcp-datacenter/tests/integration","Elapsed":0.436}

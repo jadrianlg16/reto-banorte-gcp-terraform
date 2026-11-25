@@ -1,0 +1,165 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_secret_manager_secret_iam_member.runtime[\"app-api-token/run\"]",
+          "mode": "managed",
+          "type": "google_secret_manager_secret_iam_member",
+          "name": "runtime",
+          "index": "app-api-token/run",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "secret_id": "projects/example-project/secrets/bnt-dev-sec-app-api-token",
+            "role": "roles/secretmanager.secretAccessor",
+            "member": "serviceAccount:bnt-dev-app-run@example-project.iam.gserviceaccount.com",
+            "condition": []
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "google_project_iam_member.runtime[\"run/roles/logging.logWriter\"]",
+          "mode": "managed",
+          "type": "google_project_iam_member",
+          "name": "runtime",
+          "index": "run/roles/logging.logWriter",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "role": "roles/logging.logWriter",
+            "condition": []
+          },
+          "sensitive_values": {}
+        }
+      ],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.cloud_run.google_cloud_run_v2_service_iam_member.invoker[\"mig\"]",
+              "mode": "managed",
+              "type": "google_cloud_run_v2_service_iam_member",
+              "name": "invoker",
+              "index": "mig",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "location": "us-central1",
+                "name": "bnt-dev-app-run-usc1",
+                "role": "roles/run.invoker",
+                "member": "serviceAccount:bnt-dev-app-mig@example-project.iam.gserviceaccount.com",
+                "condition": []
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.cloud_run"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "module.cloud_run.google_cloud_run_v2_service_iam_member.invoker[\"mig\"]",
+      "module_address": "module.cloud_run",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_service_iam_member",
+      "name": "invoker",
+      "index": "mig",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "location": "us-central1",
+          "name": "bnt-dev-app-run-usc1",
+          "role": "roles/run.invoker",
+          "member": "serviceAccount:bnt-dev-app-mig@example-project.iam.gserviceaccount.com",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_secret_manager_secret_iam_member.runtime[\"app-api-token/run\"]",
+      "mode": "managed",
+      "type": "google_secret_manager_secret_iam_member",
+      "name": "runtime",
+      "index": "app-api-token/run",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "secret_id": "projects/example-project/secrets/bnt-dev-sec-app-api-token",
+          "role": "roles/secretmanager.secretAccessor",
+          "member": "serviceAccount:bnt-dev-app-run@example-project.iam.gserviceaccount.com",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_project_iam_member.runtime[\"run/roles/logging.logWriter\"]",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "runtime",
+      "index": "run/roles/logging.logWriter",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "role": "roles/logging.logWriter",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true,
+          "member": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0"
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-24T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

@@ -1,0 +1,44 @@
+#!/bin/bash
+# Arranque de la VM DNS de onprem-sim. Lo genera Terraform (stages/2-networks/onprem_dns.tf) y lo
+# corre el agente de invitado en cada arranque. Instala el servidor DNS de prueba
+# (files/onprem-dns.py, solo Python 3 de la imagen: la VPC no sale a internet) como servicio de
+# systemd con un usuario dinámico que solo puede abrir el puerto 53.
+set -euo pipefail
+
+install -d -m 0755 /opt/onprem-dns
+
+cat > /opt/onprem-dns/onprem-dns.py <<'ONPREM_DNS_PY'
+${server}
+ONPREM_DNS_PY
+
+cat > /opt/onprem-dns/config.json <<'ONPREM_DNS_CONFIG'
+${config}
+ONPREM_DNS_CONFIG
+
+chmod 0644 /opt/onprem-dns/onprem-dns.py /opt/onprem-dns/config.json
+
+cat > /etc/systemd/system/onprem-dns.service <<'ONPREM_DNS_UNIT'
+[Unit]
+Description=Servidor DNS de prueba de onprem-sim
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/onprem-dns/onprem-dns.py /opt/onprem-dns/config.json
+Restart=always
+RestartSec=5
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+ONPREM_DNS_UNIT
+
+systemctl daemon-reload
+systemctl enable onprem-dns.service
+systemctl restart onprem-dns.service

@@ -1,0 +1,275 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "variables": {
+    "environment": {
+      "value": "dev"
+    },
+    "prefix": {
+      "value": "bnt"
+    },
+    "project_id": {
+      "value": "example-project"
+    },
+    "primary_region": {
+      "value": "us-central1"
+    }
+  },
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_project_service.extra",
+          "mode": "managed",
+          "type": "google_project_service",
+          "name": "extra",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "service": "deploymentmanager.googleapis.com",
+            "disable_on_destroy": true,
+            "disable_dependent_services": null,
+            "timeouts": null
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "google_project_iam_audit_config.all",
+          "mode": "managed",
+          "type": "google_project_iam_audit_config",
+          "name": "all",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "service": "allServices",
+            "audit_log_config": [
+              {
+                "log_type": "ADMIN_READ",
+                "exempted_members": [
+                  "serviceAccount:bnt-tf-wl-dev@example-project.iam.gserviceaccount.com"
+                ]
+              }
+            ]
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "google_project_iam_member.pipeline",
+          "mode": "managed",
+          "type": "google_project_iam_member",
+          "name": "pipeline",
+          "provider_name": "registry.terraform.io/hashicorp/google",
+          "schema_version": 0,
+          "values": {
+            "project": "example-project",
+            "role": "roles/run.admin",
+            "member": "serviceAccount:bnt-tf-wl-dev@example-project.iam.gserviceaccount.com",
+            "condition": []
+          },
+          "sensitive_values": {}
+        }
+      ],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.kms.google_kms_key_ring.this",
+              "mode": "managed",
+              "type": "google_kms_key_ring",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "name": "bnt-dev-sec-kr-usc1",
+                "location": "us-central1"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.kms"
+        },
+        {
+          "resources": [
+            {
+              "address": "module.spoke.google_compute_network.this",
+              "mode": "managed",
+              "type": "google_compute_network",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "project": "example-project",
+                "name": "bnt-net-spoke",
+                "auto_create_subnetworks": false,
+                "routing_mode": "GLOBAL"
+              },
+              "sensitive_values": {}
+            }
+          ],
+          "address": "module.spoke"
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "google_project_service.extra",
+      "mode": "managed",
+      "type": "google_project_service",
+      "name": "extra",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "service": "deploymentmanager.googleapis.com",
+          "disable_on_destroy": true,
+          "disable_dependent_services": null,
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_project_iam_audit_config.all",
+      "mode": "managed",
+      "type": "google_project_iam_audit_config",
+      "name": "all",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "service": "allServices",
+          "audit_log_config": [
+            {
+              "log_type": "ADMIN_READ",
+              "exempted_members": [
+                "serviceAccount:bnt-tf-wl-dev@example-project.iam.gserviceaccount.com"
+              ]
+            }
+          ]
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_project_iam_member.pipeline",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "pipeline",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "role": "roles/run.admin",
+          "member": "serviceAccount:bnt-tf-wl-dev@example-project.iam.gserviceaccount.com",
+          "condition": []
+        },
+        "after_unknown": {
+          "id": true,
+          "etag": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.kms.google_kms_key_ring.this",
+      "module_address": "module.kms",
+      "mode": "managed",
+      "type": "google_kms_key_ring",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "name": "bnt-dev-sec-kr-usc1",
+          "location": "us-central1"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.spoke.google_compute_network.this",
+      "module_address": "module.spoke",
+      "mode": "managed",
+      "type": "google_compute_network",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "project": "example-project",
+          "name": "bnt-net-spoke",
+          "auto_create_subnetworks": false,
+          "routing_mode": "GLOBAL"
+        },
+        "after_unknown": {
+          "id": true,
+          "self_link": true,
+          "gateway_ipv4": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "google": {
+        "name": "google",
+        "full_name": "registry.terraform.io/hashicorp/google",
+        "version_constraint": "~> 6.0",
+        "expressions": {
+          "project": {
+            "constant_value": "example-project"
+          },
+          "region": {
+            "references": [
+              "var.primary_region"
+            ]
+          }
+        }
+      }
+    },
+    "root_module": {}
+  },
+  "timestamp": "2026-11-24T12:00:00Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}
