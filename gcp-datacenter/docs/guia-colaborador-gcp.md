@@ -77,7 +77,7 @@ cubren las reglas de Conftest y los pasos manuales del runbook 01.
 
 1. El dueño del repositorio te agrega como colaborador (GitHub → Settings → Collaborators). Según
    la documentación de GitHub (consultada el 24 nov 2026), en un repositorio de cuenta personal:
-   - **Tú, como colaborador**, puedes subir ramas, abrir PR, crear variables de
+   - **Tú, como colaborador**, puedes subir ramas, abrir e integrar PR, crear variables de
      repositorio (`gh variable set`) y lanzar flujos a mano (`gh workflow run`, que exige acceso
      de escritura y que el flujo esté en la rama por defecto, `main`).
    - **Solo el dueño** configura los entornos y sus reglas (sección D.1), y la protección de
@@ -116,6 +116,10 @@ cubren las reglas de Conftest y los pasos manuales del runbook 01.
 Sigue el [runbook 01](runbooks/01-arranque-etapa-0.md), pasos 5 a 8, al pie de la letra. En
 resumen: llenar `stages/0-bootstrap/terraform.tfvars`, aplicar con estado local, migrar el estado
 al bucket que se crea, sacar las salidas y activar SCC en el proyecto.
+
+- **Graba la terminal desde aquí.** El `terraform apply` de `0-bootstrap` es la escena 0 del video
+  y solo ocurre una vez (sección J). Antes de aplicar, empieza a grabar con un perfil limpio y sin
+  enseñar `terraform.tfvars`.
 
 - **Decide antes del primer apply** la ubicación del bucket de estado (`US` por defecto): no se
   cambia después.
@@ -156,6 +160,12 @@ los `plan` corren sin entorno.
 - **"Deployment branches: `main`"** en los cuatro: es la segunda barrera, por si el mapeo de WIF
   no se comporta como se espera (pendientes 121, 123 y 124).
 
+- **Estado en el equipo 2 (25 nov 2026).** El dueño hizo público el repositorio de forma temporal
+  para poder tener entornos con GitHub Free. Los cuatro entornos ya existen, solo para `main`,
+  **sin revisores** (decisión del dueño, para que cualquier colaborador despliegue), y `main` sin
+  protección. Lo de abajo es el diseño completo, para cuando el equipo lo quiera endurecer. Antes
+  de volver a privado, destruye dev y qa (sección I): en privado con GitHub Free las reglas de los
+  entornos se ignoran.
 - **Revisores.** Pon "Required reviewers" en `common` y `prod`. En un repositorio **privado**, que
   esa regla exista depende del plan de GitHub ([`pipeline.md`](pipeline.md) §4); sin ella,
   `apply.yml` aplica todo seguido, sin pausa. Anota en el pendiente 12 lo que GitHub haga de
@@ -493,6 +503,18 @@ Además:
 
 ## J. Grabar el video
 
+Banorte pidió un video de la ejecución que demuestre dos cosas:
+
+1. **En la terminal y en GitHub Actions**, que el despliegue se lanza y corre de principio a fin
+   sin errores: `0-bootstrap` aplicado y `apply.yml` lanzado con `gh workflow run` y seguido
+   hasta el final, con cada etapa y la prueba de humo en verde.
+2. **En la consola de Google Cloud**, que todo lo creado está ahí y funciona: las VPC y sus
+   peerings, la VPN, Cloud Run detrás del balanceador, Cloud SQL con IP privada, KMS, Secret
+   Manager, los buckets, las alertas y los logs.
+
+La ejecución que se graba tiene que salir entera en verde, así que es la de la sección F y no la
+rebanada de la sección E, que termina en rojo en `prod / 2-networks` a propósito.
+
 El guion está en [`plan-presentacion-final.md`](plan-presentacion-final.md) §2, con las reglas de
 **qué no mostrar** (la cuenta de facturación, tokens, `terraform.tfvars`, `GCP_TFVARS_JSON`, el
 correo de la cuenta, los miembros `user:` y `group:`, la página de variables del repositorio). Se
@@ -514,7 +536,7 @@ del equipo 2. Mi proyecto es <ID del proyecto> (<sin organización | dentro de l
 <org_id>>). Mi presupuesto es de <monto> USD. Dónde estoy: <por ejemplo: ya creé el proyecto y
 borré la red default; no he corrido 0-bootstrap | todavía no tengo cuenta de Google Cloud>.
 El dueño del repositorio en GitHub es <usuario del dueño>: él configura los entornos y la
-protección de main e integra los PR a main (sección B de la guía).
+protección de main (sección B de la guía).
 
 Lee primero, en este orden:
 1. CLAUDE.md de la raíz del repositorio. Sus reglas mandan.
