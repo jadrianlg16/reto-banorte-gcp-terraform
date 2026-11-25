@@ -65,6 +65,23 @@ todos crear llaves y el rol del apagado limitado a su entorno).
 
 ## 2. Guion del video (4 a 6 min ya editado)
 
+**Qué tiene que demostrar el video** (pedido de Banorte del 23 nov 2026), en dos partes:
+
+1. **La terminal y el pipeline:** el despliegue se lanza y corre **de principio a fin sin
+   errores**. Se ve `0-bootstrap` aplicado en la terminal, `apply.yml` lanzado desde la terminal y
+   seguido hasta el final, con cada etapa en verde y la prueba de humo en verde.
+2. **La consola de Google Cloud:** que todo lo creado está ahí y funciona. Es un recorrido por
+   los recursos del proyecto (escena 4, lista abajo).
+
+Las escenas 1, 2, 6 y 7 completan la historia (el código, el control por PR, la deriva y el
+destroy). Si falta tiempo de grabación, lo mínimo son las escenas 0, 3 y 4.
+
+**La ejecución que se graba tiene que salir entera en verde.** La rebanada vertical de la
+[guía](guia-colaborador-gcp.md) (sección E) termina en rojo en `prod / 2-networks` a propósito,
+así que no sirve para la escena 3. Se graba con el despliegue de la sección F: qa y prod con sus
+valores en `GCP_TFVARS_JSON` y sin `GCP_DISABLED_ENVS`. Si solo se despliega dev, se corta antes
+de prod y se dice en la narración.
+
 El despliegue completo puede tardar hasta 90 minutos, así que se graba entero y se edita con
 cortes y cámara rápida. Escenas:
 
@@ -73,11 +90,27 @@ cortes y cámara rápida. Escenas:
 | 0 | La terminal arranca todo | `terraform apply` de `0-bootstrap` en la terminal: el plan recortado y el resultado (bucket de estado, cuentas del pipeline, WIF). `0-bootstrap` se aplica una sola vez, así que esta escena **se graba en la primera ejecución** (R4), no en el ensayo | 40 s |
 | 1 | El repositorio | Árbol de `gcp-datacenter/`, un módulo y `bash scripts/check.sh` en verde | 30 s |
 | 2 | Un cambio por PR | PR con el plan en un comentario; un PR que viola una política y queda bloqueado | 45 s |
-| 3 | Despliegue | `apply.yml` en GitHub Actions, etapa por etapa (cámara rápida) | 60 s |
-| 4 | La consola | VPC y peerings, túneles de VPN arriba, Cloud Run respondiendo, Cloud SQL con IP privada, KMS, logs y alertas | 90 s |
+| 3 | Despliegue | En la terminal, `gh workflow run apply.yml --ref main` y `gh run watch` hasta el final; después, la ejecución en GitHub Actions con todas las etapas en verde, de `1-base` a la prueba de humo (cámara rápida). Si los entornos `common` o `prod` tienen revisores, la pausa de aprobación se corta en la edición | 60 s |
+| 4 | La consola | Recorrido por los recursos del proyecto (lista abajo) | 90 s |
 | 5 | Conectividad | La prueba de humo, una Connectivity Test hacia on-premises o, con la VM DNS de prueba (`onprem_dns_vm = true`), `dig dns.<dominio>` desde una VM de un spoke | 30 s |
 | 6 | Sin cambios | `drift.yml` en verde: el segundo plan no cambia nada | 20 s |
 | 7 | Destroy de dev | `destroy.yml` y la búsqueda de huérfanos en verde; antes del siguiente merge, `dev` en `GCP_DISABLED_ENVS` para que `apply.yml` no lo vuelva a crear | 30 s |
+
+**Recorrido por la consola (escena 4).** Unos segundos por producto, en este orden:
+
+| Producto | Qué se enseña |
+|---|---|
+| Redes de VPC | Las VPC del hub, de cada entorno desplegado y de `onprem-sim`, con sus subredes, y los peerings del hub con cada entorno activos |
+| Cloud VPN y Cloud Router | Los túneles de HA VPN entre el hub y `onprem-sim` establecidos y sus sesiones de BGP arriba |
+| Cloud Run y balanceo de cargas | El servicio de dev (solo acepta tráfico del balanceador: `modules/cloud-run`) y el balanceador respondiendo en su IP o en el dominio de prueba, con la política de Cloud Armor |
+| Cloud SQL | La instancia de dev con IP privada y sin IP pública |
+| Seguridad | Llaveros y llaves de Cloud KMS; Secret Manager (solo los nombres, nunca un valor); la imagen en Artifact Registry |
+| Operación | Los buckets (estado y logs), las políticas de alerta de Cloud Monitoring y una consulta en Cloud Logging |
+| Opcional, si se encendió | GKE, el grupo de instancias, la VM DNS de prueba de `onprem-sim` y la región de DR |
+
+Los nombres de las pantallas de la consola pueden cambiar. Lo que importa es que se vea cada
+producto con los recursos del proyecto, y nada de lo que la lista de "No mostrar" de abajo
+excluye. No se abre la página de IAM: enseña los miembros `user:` y `group:`.
 
 **Antes de grabar:**
 

@@ -11,6 +11,9 @@ pipeline en `.github/workflows/`. Las carpetas `labs/` y `entregas/` son de fase
   `gcp-datacenter/docs/guia-colaborador-gcp.md` (guía paso a paso y prompt de arranque).
 - `gcp-datacenter/docs/pendientes-apply.md` lista lo que solo un despliegue real confirma;
   `gcp-datacenter/docs/backlog.md`, lo que falta para terminar el proyecto.
+- El video de la demo que pidió Banorte (qué grabar en la terminal y en la consola de Google
+  Cloud, en qué orden y qué no mostrar) está en `gcp-datacenter/docs/plan-presentacion-final.md`
+  §2. `0-bootstrap` solo se aplica una vez: se graba la primera vez que se corre.
 - Las reglas de construcción (estilo, pruebas, marcadores `VERIFICAR-EN-APPLY`, documentación)
   están en `gcp-datacenter/docs/CONTRATO.md`.
 
