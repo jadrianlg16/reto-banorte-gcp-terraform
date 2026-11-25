@@ -75,8 +75,18 @@ cubren las reglas de Conftest y los pasos manuales del runbook 01.
 
 ## B. Herramientas y acceso al repositorio
 
-1. El dueño del repositorio te agrega como colaborador (GitHub → Settings → Collaborators). Si no
-   tienes permiso para algo de Settings (entornos, protección de `main`), pídeselo a él.
+1. El dueño del repositorio te agrega como colaborador (GitHub → Settings → Collaborators). Según
+   la documentación de GitHub (consultada el 24 nov 2026), en un repositorio de cuenta personal:
+   - **Tú, como colaborador**, puedes subir ramas, abrir PR, crear variables de
+     repositorio (`gh variable set`) y lanzar flujos a mano (`gh workflow run`, que exige acceso
+     de escritura y que el flujo esté en la rama por defecto, `main`).
+   - **Solo el dueño** configura los entornos y sus reglas (sección D.1), y la protección de
+     `main` (D.4) la pone él.
+
+   Fuentes: [variables](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables),
+   [entornos](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
+   [permisos de colaborador](https://docs.github.com/en/account-and-profile/reference/permission-levels-for-a-personal-account-repository)
+   y [lanzar un flujo a mano](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
 2. Instala Git (en Windows, con Git Bash), **Terraform 1.16.5** (la versión del pipeline; mínimo
    1.11, ADR 0021), Google Cloud CLI, GitHub CLI, `jq`, Python 3 y Docker (para la imagen de la
    sección E). Para las revisiones locales, también TFLint, checkov, Conftest y terraform-docs
@@ -130,7 +140,13 @@ al bucket que se crea, sacar las salidas y activar SCC en el proyecto.
 
 ### D.1 Entornos
 
-En Settings → Environments, crea `common`, `dev`, `qa` y `prod`. Los trabajos `apply` de
+**Primero, el plan de GitHub.** Con GitHub Free, un repositorio privado no puede tener entornos:
+hace falta GitHub Pro en la cuenta del dueño (o GitHub Team, si el repositorio pasa a una
+organización) ([`pipeline.md`](pipeline.md) §4, backlog D7). Sin los entornos, los `apply`
+probablemente no obtengan credenciales (HYPOTHESIS). Resuélvelo con el dueño antes de poner
+`GCP_ENABLED`.
+
+El dueño, en Settings → Environments, crea `common`, `dev`, `qa` y `prod`. Los trabajos `apply` de
 `apply.yml` corren en ellos y cada cuenta que aplica solo acepta tokens del trabajo `apply` de
 `_terraform-root.yml` en `main`, disparado por `push` o `workflow_dispatch`, y de su entorno
 (`attribute.deploy`, ADR 0029 §3; [`pipeline.md`](pipeline.md) §5): `common` para `1-base` y el hub; `dev`, `qa` y `prod` para su
@@ -496,7 +512,9 @@ Abre Claude Code en la raíz del repositorio clonado y pega esto, cambiando lo q
 Vas a ayudarme a desplegar y probar este proyecto en un proyecto de Google Cloud. Soy <nombre>,
 del equipo 2. Mi proyecto es <ID del proyecto> (<sin organización | dentro de la organización
 <org_id>>). Mi presupuesto es de <monto> USD. Dónde estoy: <por ejemplo: ya creé el proyecto y
-borré la red default; no he corrido 0-bootstrap>.
+borré la red default; no he corrido 0-bootstrap | todavía no tengo cuenta de Google Cloud>.
+El dueño del repositorio en GitHub es <usuario del dueño>: él configura los entornos y la
+protección de main e integra los PR a main (sección B de la guía).
 
 Lee primero, en este orden:
 1. CLAUDE.md de la raíz del repositorio. Sus reglas mandan.
@@ -506,7 +524,11 @@ Lee primero, en este orden:
 4. gcp-datacenter/docs/adr/0029-un-solo-proyecto.md y los cinco documentos de
    gcp-datacenter/docs/diagramas/.
 5. gcp-datacenter/docs/pendientes-apply.md y gcp-datacenter/docs/backlog.md.
-Después dime en qué sección de la guía estoy y qué sigue, con su costo.
+Después dime en qué sección de la guía estoy y qué sigue, con su costo. Si todavía no tengo
+cuenta de Google Cloud, empieza por ahí: explícame paso a paso cómo crearla y cómo activar una
+cuenta de facturación de pago (sección A de la guía), con la documentación oficial de Google.
+Antes de la sección D, confirma con el dueño el plan de GitHub (sección D.1): con GitHub Free y
+el repositorio privado no hay entornos.
 
 Reglas:
 - Respeta todo lo de CLAUDE.md: el repositorio es privado; no abras ni copies la carpeta docs/ de

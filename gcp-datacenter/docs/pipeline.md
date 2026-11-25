@@ -810,6 +810,18 @@ repositorio.
    del equipo antes de contar con estos controles (pendiente 12 del primer apply). Sin
    revisores obligatorios, `common` y `prod` se aplicarían sin aprobación.
 
+   **Los entornos mismos dependen del plan.** Según
+   [Managing environments for deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+   (consultada el 24 nov 2026), con GitHub Free solo se configuran entornos en repositorios
+   públicos; en uno privado hacen falta GitHub Pro (cuenta personal) o GitHub Team
+   (organización), y en un repositorio de cuenta personal solo el dueño los configura. Las ramas
+   de despliegue también exigen Pro o Team en privados
+   ([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
+   Como `attribute.deploy` exige el claim `environment` (§5), con el repositorio privado en
+   GitHub Free los trabajos `apply` probablemente no obtengan credenciales: que el token traiga
+   ese claim sin un entorno configurado es HYPOTHESIS. Resolver el plan antes de encender
+   `GCP_ENABLED` (backlog D7).
+
 ## 5. WIF de escritura solo desde `_terraform-root.yml` en `main`
 
 Documentado en el README de `stages/0-bootstrap` y en el ADR 0029 §3 (antes, ADR
